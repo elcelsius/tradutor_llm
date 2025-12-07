@@ -1,0 +1,15 @@
+# Ambiente Python
+__pycache__/
+*.py[cod]
+*.log
+.venv/
+venv/
+
+# Dados e saídas grandes
+data/
+saida/
+
+# Configuração local
+.env
+.DS_Store
+Thumbs.db
