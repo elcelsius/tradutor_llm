@@ -8,6 +8,7 @@ venv/
 # Dados e saídas grandes
 data/
 saida/
+.cache/
 
 # Configuração local
 .env
