@@ -1,204 +1,127 @@
-# Tradutor Automático de PDFs com IA (Gemini / Ollama)
+# Tradutor e Refinador de PDFs com IA (Gemini / Ollama)
 
-Script em Python para traduzir livros e documentos PDF do inglês para o português do Brasil (PT-BR) usando modelos de linguagem (LLMs). Funciona com dois backends:
+Pipeline em Python para traduzir light novels e outros PDFs do inglês para PT-BR usando LLMs. Agora há **dois passos distintos**:
+- **Passo 1 – Tradução**: `tradutor.py` gera `<nome>_pt.md` e `<nome>_pt.pdf`.
+- **Passo 2 – Refine opcional**: `refinador.py` revisa capítulo a capítulo o `.md` e gera `<nome>_pt_refinado.md` e `<nome>_pt_refinado.pdf` sem sobrescrever o original.
 
-- Ollama (local, custo zero) – padrão
-- Gemini (Google, via API) – opcional
-
-Foco em qualidade literária alta, ideal para light novels, romances e manuais longos.
-
----
-
-## Principais recursos
-
-- Leitura automática de PDFs na pasta `data/`
-- Pré-processamento avançado:
-  - remove cabeçalhos/rodapés típicos de livro
-  - remove hifenização de quebra de linha (`infor-\nmação` -> `informação`)
-  - reconstrói parágrafos quebrados
-- Divisão inteligente em lotes (chunks):
-  - tenta cortar em quebras de parágrafo
-  - se não der, corta em fim de frase (`. ? !`)
-  - fallback no limite bruto de caracteres
-- Tradução com LLM:
-  - prompt ajustado para tradução literária de light novel
-  - não resume, não altera ordem, não inventa conteúdo
-- Segunda passada de revisão em PT-BR (refine):
-  - melhora fluidez, coesão e pontuação
-  - preserva sentido e nomes próprios
-  - roda localmente (Ollama) ou via Gemini
-- Geração automática:
-  - `saida/<nome>_pt.md` – texto traduzido em Markdown
-  - `saida/<nome>_pt.pdf` – versão PDF pronta para leitura
+Tom técnico, pensado para usuários avançados/devs (Python + Ollama + Gemini).
 
 ---
 
-## Estrutura do projeto
-
-```
-seu-projeto/
-  data/        PDFs de entrada (originais em inglês)
-  saida/       Arquivos traduzidos (.md e .pdf)
-  tradutor.py  Script principal de tradução
-  README.md
-```
-
-Pipeline por PDF:
-1. Extrai texto com `PyPDF2`.
-2. Pré-processa (limpeza + parágrafos).
-3. Divide em chunks (`chunk_size` caracteres).
-4. Tradução lote a lote com LLM.
-5. Junta tudo em um `.md`.
-6. (Opcional) Refine: revisão global em PT-BR.
-7. Converte o `.md` final em `.pdf` usando `FPDF` + fonte Unicode (DejaVu).
+## Visão geral
+- Lê PDFs em `data/`.
+- Pré-processa (remove cabeçalhos/rodapés, desfaz hifenização, junta linhas).
+- Faz chunking (~9000 caracteres para tradução).
+- Tradução por LLM (padrão `qwen3:14b` via Ollama).
+- Gera Markdown e PDF em `saida/`.
+- Refine opcional capítulo a capítulo (~5000 caracteres) usando headings `## ` como delimitadores.
 
 ---
 
 ## Requisitos
-
-### Python
-- Python 3.10+ recomendado
-
-### Bibliotecas Python
-Instale:
-```bash
-pip install google-generativeai PyPDF2 fpdf requests
-```
-
-Se usar apenas Ollama (local) e não quiser Gemini, `google-generativeai` só é necessária para o backend em nuvem.
+- Python 3.10+.
+- Bibliotecas: `google-generativeai`, `PyPDF2`, `fpdf`, `requests`.
+  ```bash
+  pip install google-generativeai PyPDF2 fpdf requests
+  ```
+- Ollama instalado para uso local (padrão). Para Gemini, definir `GEMINI_API_KEY`.
 
 ---
 
-## Backends suportados
+## Como traduzir PDFs (tradutor.py)
 
-### 1. Ollama (local – padrão)
-Site: https://ollama.com
-
-Modelos recomendados:
-- Tradutor principal: `ollama pull qwen3:14b`
-- Revisor PT-BR (segunda passada): `ollama pull cnmoro/Qwen2.5-0.5B-Portuguese-v2:fp16`
-- Opções de fallback:  
-  `cnmoro/Qwen2.5-0.5B-Portuguese-v1:q4_k_m`  
-  `cnmoro/Qwen2.5-0.5B-Portuguese-v1:q8_0`  
-  `cnmoro/Qwen2.5-0.5B-Portuguese-v1:fp16`  
-  `cnmoro/gemma3-gaia-ptbr-4b:q4_k_m` (revisão “de luxo” opcional)
-
-### 2. Gemini (Google – opcional)
-1. Crie/pegue sua API key no painel Google AI.
-2. Defina a variável de ambiente:
-   - Linux/macOS: `export GEMINI_API_KEY="SUA_CHAVE_AQUI"`
-   - Windows (PowerShell): `setx GEMINI_API_KEY "SUA_CHAVE_AQUI"`
-3. Instale a biblioteca: `pip install google-generativeai`
-
-Modelo padrão: `gemini-3-pro-preview` (ajustável via `--model`).
-
----
-
-## Como usar
-
-1) Coloque os PDFs na pasta `data/`.
-```
-data/
-  failure_frame_vol4.pdf
-  light_novel_x.pdf
-```
-
-2) Rode o script no modo padrão (qualidade máxima local):
+Padrão local (Ollama, qualidade máxima):
 ```bash
 python tradutor.py
 ```
-Equivale a:
-- `--backend ollama`
-- `--model qwen3:14b`
-- `--refine` ligado
-- `--refine-model auto` (tenta a cadeia de modelos PT-BR listada acima)
+- Backend: `ollama`
+- Modelo: `qwen3:14b`
+- Refine interno: ligado por padrão (`--refine-model auto` usa cadeia PT-BR interna)
 
-Saída esperada para `meulivro.pdf`:
-```
-saida/
-  meulivro_pt.md
-  meulivro_pt.pdf
-```
-
-### Somente tradução (sem refine)
-```bash
-python tradutor.py --no-refine
-```
-
-### Mudar o modelo local
-```bash
-python tradutor.py --backend ollama --model qwen2.5:14b
-```
-
-### Forçar modelo específico de refine
-```bash
-python tradutor.py \
-  --backend ollama \
-  --model qwen3:14b \
-  --refine-model "cnmoro/Qwen2.5-0.5B-Portuguese-v2:fp16"
-```
-
-### Usar Gemini como backend
+Gemini:
 ```bash
 python tradutor.py --backend gemini --model gemini-3-pro-preview
 ```
-Requer `GEMINI_API_KEY` configurada. O mesmo modelo é usado no refine, a menos que `--no-refine` seja informado.
+- Requer `GEMINI_API_KEY`.
+- O mesmo modelo é usado na passada de refine, exceto se `--no-refine`.
 
-### Ajustar tamanho dos chunks
-```bash
-python tradutor.py --chunk_size 7000   # textos longos
-python tradutor.py --chunk_size 12000  # se o modelo aguentar
+Flags principais:
+- `--no-refine` desativa a revisão interna do tradutor.
+- `--chunk_size N` ajusta o tamanho dos lotes (padrão 9000).
+- `--temperature X` (Gemini) controla fidelidade/variação (padrão 0.3).
+- `--model NOME` troca o modelo principal (ex.: `qwen2.5:14b`).
+- `--refine-model NOME|auto` fixa ou alterna a cadeia de revisão interna (Ollama).
+
+Saída típica para `livro.pdf`:
+```
+saida/
+  livro_pt.md
+  livro_pt.pdf
 ```
 
-### Ajustar temperatura (Gemini)
+---
+
+## Como refinar as traduções (refinador.py)
+
+Objetivo: revisão em PT-BR capítulo a capítulo sobre um `.md` já traduzido.
+- Lê `*_pt.md` da pasta `saida/` (ou um arquivo único via `--input`).
+- Separa por headings `## ` (capítulos/partes).
+- Refina cada seção em chunks ~5000 caracteres.
+- Backend padrão: Ollama, com cadeia auto (Gaia principal + Qwen2.5 PT-BR de fallback).
+- Opcional: `--backend gemini` para usar Gemini.
+- Não sobrescreve o arquivo original; escreve `_pt_refinado`.
+
+Refinar todos os arquivos `*_pt.md`:
 ```bash
-python tradutor.py --backend gemini --temperature 0.2
+python refinador.py
 ```
-Temperaturas baixas (0.1–0.3) são mais fiéis; mais altas (0.4–0.6) dão mais liberdade estilística.
 
----
-
-## Parâmetros da linha de comando
-
+Refinar só um arquivo específico:
 ```bash
-python tradutor.py [opções]
+python refinador.py --input "saida/MEU_ARQUIVO_pt.md"
 ```
 
-- `--backend {gemini,ollama}`: backend de LLM (padrão: ollama)
-- `--model NOME`: modelo principal de tradução (ex.: gemini-3-pro-preview, qwen3:14b, qwen2.5:14b, aya:8b)
-- `--refine-model NOME|auto`: modelo de revisão PT-BR. Para Ollama:
-  - `auto`: usa a cadeia de modelos recomendados
-  - `NOME`: usa apenas o modelo indicado  
-  Para Gemini, o mesmo modelo da tradução é usado no refine.
-- `--chunk_size N`: tamanho de cada lote em caracteres (padrão: 9000)
-- `--temperature X`: temperatura (usada no backend Gemini; padrão: 0.3)
-- `--no-refine`: desativa a segunda passada de revisão
+Saída típica para `livro_pt.md`:
+```
+saida/
+  livro_pt_refinado.md
+  livro_pt_refinado.pdf
+```
 
 ---
 
-## Resumo técnico do código
-
-1) `extract_text_from_pdf`: lê texto página a página com `PyPDF2.PdfReader`.
-2) `preprocess_text`: remove cabeçalhos/rodapés, desfaz hifenização e junta linhas em parágrafos.
-3) `chunk_text`: corta por parágrafo, depois por fim de frase, depois pelo limite bruto.
-4) `translate_chunk_ollama` / `translate_chunk_gemini`: traduz cada chunk com prompt de tradutor literário; inclui retry com backoff.
-5) `refine_text_ollama` / `refine_text_gemini`: revisão global em PT-BR, preservando sentido e nomes.
-6) `markdown_to_pdf`: garante a fonte DejaVuSans.ttf e converte Markdown simples em PDF.
-
----
-
-## Dicas práticas
-
-- Para livros longos, deixe rodando; modelos locais grandes podem consumir VRAM/CPU.
-- Se o modelo começar a se perder, reduza `--chunk_size`.
-- Se quiser apenas `.md` (por exemplo, para exportar via Calibre/EPUB), ignore o `.pdf`.
+## Modelos recomendados (Ollama)
+- **Tradução**: `qwen3:14b`
+- **Refine** (cadeia auto, nessa ordem):
+  1) `cnmoro/gemma3-gaia-ptbr-4b:q4_k_m` (principal)
+  2) Qwen2.5 PT-BR como fallback:
+     - `cnmoro/Qwen2.5-0.5B-Portuguese-v2:fp16`
+     - `cnmoro/Qwen2.5-0.5B-Portuguese-v1:q4_k_m`
+     - `cnmoro/Qwen2.5-0.5B-Portuguese-v1:q8_0`
+     - `cnmoro/Qwen2.5-0.5B-Portuguese-v1:fp16`
 
 ---
 
-## Licença / uso
+## Boas práticas
+- Rode sempre o tradutor primeiro; refine depois.
+- Para o refine, priorize capítulos/partes (headings `## `) em vez do livro inteiro de uma vez.
+- Mantenha uma cópia do `*_pt.md` original antes de refinar.
+- Ajuste `--chunk_size` se notar perda de contexto: diminua para estabilidade; aumente só se o modelo suportar.
+- Monitore VRAM/CPU no primeiro uso de modelos grandes.
 
-Uso pessoal, estudo e adaptação livres. Para fins comerciais ou integração em sistemas maiores, revise as licenças:
-- dos modelos (Qwen, Gemini, Gemma etc.)
-- do Ollama
-- das obras que você traduz (direitos autorais).
+---
 
+## Exemplos rápidos
+```bash
+# Tradução padrão local (Ollama, qwen3:14b)
+python tradutor.py
+
+# Tradução usando Gemini
+python tradutor.py --backend gemini --model gemini-3-pro-preview
+
+# Refine de todos os arquivos *_pt.md
+python refinador.py
+
+# Refine de um arquivo específico
+python refinador.py --input "saida/MEU_ARQUIVO_pt.md"
+```
