@@ -2,26 +2,41 @@
 """
 Tradutor de Livros PDF com IA - Versão Híbrida (Gemini / Ollama)
 
-Recursos:
-- Backend GEMINI (nuvem) ou OLLAMA (local) selecionável via CLI.
+Recursos principais
+-------------------
+- Backend GEMINI (nuvem) ou OLLAMA (local), selecionável via CLI.
 - Pipeline completo:
-  - leitura e extração de texto de PDFs (data/)
-  - pré-processamento (remover cabeçalho/rodapé, hifenização, parágrafos)
-  - chunking inteligente (~N caracteres, quebra em parágrafo/fim de frase)
+  - leitura e extração de texto de PDFs (pasta data/)
+  - pré-processamento:
+      * remoção de cabeçalho/rodapé (ex.: "Page X Goldenagato | mp4directs.com")
+      * remoção de hifenização entre linhas
+      * reconstrução de parágrafos
+      * marcação de títulos/capítulos em Markdown (Prologue, Chapter X, etc.)
+  - chunking inteligente (~N caracteres, cortando em parágrafos/fim de frase)
   - tradução em lotes
-  - segunda passada de revisão em PT-BR (refine) opcional
+  - segunda passada de revisão em PT-BR (refine) OPCIONAL
   - geração de .md + .pdf na pasta saida/
 
-Defaults (Qualidade Máxima Local):
-- backend = "ollama"
-- modelo de tradução = "qwen3:14b"
-- refine = ligado por padrão (use --no-refine para desativar)
-- refine_model = "auto" -> tenta cadeia de modelos PT-BR:
-    1) cnmoro/Qwen2.5-0.5B-Portuguese-v2:fp16
-    2) cnmoro/Qwen2.5-0.5B-Portuguese-v1:q4_k_m
-    3) cnmoro/Qwen2.5-0.5B-Portuguese-v1:q8_0
-    4) cnmoro/Qwen2.5-0.5B-Portuguese-v1:fp16
-    5) cnmoro/gemma3-gaia-ptbr-4b:q4_k_m   (revisão de “luxo”, se disponível)
+Defaults (Qualidade Máxima Local)
+---------------------------------
+- backend        = "ollama"
+- modelo tradução= "qwen3:14b"
+- refine         = DESLIGADO por padrão (use --refine para ativar)
+- refine_model   = "auto" -> cadeia de modelos PT-BR no Ollama:
+
+    1) cnmoro/gemma3-gaia-ptbr-4b:q4_k_m      (principal)
+    2) cnmoro/Qwen2.5-0.5B-Portuguese-v2:fp16
+    3) cnmoro/Qwen2.5-0.5B-Portuguese-v1:q4_k_m
+    4) cnmoro/Qwen2.5-0.5B-Portuguese-v1:q8_0
+    5) cnmoro/Qwen2.5-0.5B-Portuguese-v1:fp16
+
+Observação importante sobre "refine"
+------------------------------------
+A segunda passada (refine) pode, em alguns modelos, tentar "resumir" ou
+reescrever demais o texto. O prompt foi reforçado para desencorajar isso,
+mas ainda assim, para segurança, o refine vem DESLIGADO por padrão.
+Use apenas se quiser testar melhoria de estilo e estiver pronto para conferir
+o resultado com atenção, ou para trechos menores (capítulos, cenas, etc.).
 """
 
 import os
@@ -72,12 +87,13 @@ class Config:
 
     # Cadeia de modelos PT-BR para refine local (na ordem de prioridade)
     OLLAMA_REFINE_MODEL_CHAIN = [
+        # 1) Gaia como refinador principal
+        "cnmoro/gemma3-gaia-ptbr-4b:q4_k_m",
+        # 2) Qwen2.5 como fallbacks
         "cnmoro/Qwen2.5-0.5B-Portuguese-v2:fp16",
         "cnmoro/Qwen2.5-0.5B-Portuguese-v1:q4_k_m",
         "cnmoro/Qwen2.5-0.5B-Portuguese-v1:q8_0",
         "cnmoro/Qwen2.5-0.5B-Portuguese-v1:fp16",
-        # Revisão extra opcional, se o modelo estiver disponível:
-        "cnmoro/gemma3-gaia-ptbr-4b:q4_k_m",
     ]
 
     # Chunking / retry
@@ -96,31 +112,76 @@ class Config:
 # --- 3. PRÉ-PROCESSAMENTO DE TEXTO ---
 
 
+_HEADER_FOOTER_CONTAINS = [
+    "Goldenagato | mp4directs.com",
+    "mp4directs.com",
+    "zerobooks",
+    "jnovels.com",
+    "download all your favorite light novels",
+    "stay up to date on light novels",
+    "join our discord",
+    "newsletter",
+]
+
+_HEADER_FOOTER_REGEXES = [
+    re.compile(r"^page\s+\d+\s+goldenagato\s*\|\s*mp4directs\.com$", re.IGNORECASE),
+    re.compile(r"^table of contents$", re.IGNORECASE),
+]
+
+
 def _remove_headers_footers(text: str) -> str:
     """
-    Remove padrões típicos de cabeçalho/rodapé:
-    - número de página isolado
-    - linhas muito curtas em caixa alta
-    - linhas com título fixo conhecido (ajustável)
+    Remove padrões típicos de cabeçalho/rodapé do PDF original:
+    - linhas tipo "Page 5 Goldenagato | mp4directs.com"
+    - propagandas de app/site (Zerobooks, Jnovels, etc.)
+    - números de página isolados
+    - linhas curtas TODAS em caixa alta (candidatos a cabeçalho)
+
+    A ideia é preservar ao máximo o conteúdo do romance, mas
+    limpar lixo visual recorrente.
     """
     linhas_filtradas = []
+    removidas = 0
+
     for line in text.splitlines():
         l = line.strip()
+        if not l:
+            linhas_filtradas.append(line)
+            continue
+
+        skip = False
 
         # Número de página isolado
         if re.fullmatch(r"\d{1,4}", l):
-            continue
+            skip = True
 
-        # Linha curta e toda em maiúsculas (provável cabeçalho)
-        if len(l) <= 30 and l.isupper():
-            continue
+        # Linha curta TODA em maiúsculas (provável cabeçalho genérico)
+        if not skip and len(l) <= 30 and l.isupper():
+            skip = True
 
-        # Exemplo de filtro específico (edite conforme o livro)
-        if "FAILURE FRAME" in l.upper():
+        # Padrões específicos (regex)
+        if not skip:
+            for rgx in _HEADER_FOOTER_REGEXES:
+                if rgx.match(l):
+                    skip = True
+                    break
+
+        # Trechos que contêm domínios/propagandas
+        if not skip:
+            low = l.lower()
+            for frag in _HEADER_FOOTER_CONTAINS:
+                if frag in low:
+                    skip = True
+                    break
+
+        if skip:
+            removidas += 1
+            logging.debug(f"[PRE] Removendo cabeçalho/rodapé: {repr(l)}")
             continue
 
         linhas_filtradas.append(line)
 
+    logging.info(f"Removidas {removidas} linhas de cabeçalho/rodapé.")
     return "\n".join(linhas_filtradas)
 
 
@@ -135,7 +196,7 @@ def _join_broken_lines(text: str) -> str:
     Mantém parágrafos separados por linha em branco.
     """
     lines = text.split("\n")
-    reconstituted_lines = []
+    reconstituted_lines: List[str] = []
     buffer = ""
 
     for line in lines:
@@ -149,7 +210,7 @@ def _join_broken_lines(text: str) -> str:
 
         buffer += (" " + stripped_line) if buffer else stripped_line
 
-        # Heurística simples: fim de frase ou linha muito curta
+        # Heurística simples: fim de frase ou linha muito curta (título)
         if stripped_line.endswith((".", "!", "?", '"', ":")) or len(
             stripped_line.split()
         ) < 5:
@@ -162,11 +223,46 @@ def _join_broken_lines(text: str) -> str:
     return "\n\n".join(reconstituted_lines)
 
 
+def _mark_headings(text: str) -> str:
+    """
+    Converte títulos de capítulos em headings Markdown para leitura melhor
+    em celular (ex.: "Prologue", "Chapter 1: The Forbidden Witch", "Epilogue").
+    """
+    linhas = text.split("\n")
+    novas_linhas: List[str] = []
+
+    chapter_re = re.compile(r"^(Prologue|Epilogue|Afterword)$", re.IGNORECASE)
+    chapter_full_re = re.compile(r"^Chapter\s+\d+[:.].*$", re.IGNORECASE)
+
+    for line in linhas:
+        stripped = line.strip()
+        if chapter_re.match(stripped) or chapter_full_re.match(stripped):
+            # Evita duplicar '#' se já tiver
+            if not stripped.startswith("#"):
+                new_line = "## " + stripped
+            else:
+                new_line = stripped
+            novas_linhas.append(new_line)
+        else:
+            novas_linhas.append(line)
+
+    return "\n".join(novas_linhas)
+
+
 def preprocess_text(raw_text: str) -> str:
     logging.info("Iniciando pré-processamento do texto...")
     text = _remove_headers_footers(raw_text)
+    logging.debug("Após _remove_headers_footers (500 chars): %r", text[:500])
+
     text = _remove_hyphenation(text)
+    logging.debug("Após _remove_hyphenation (500 chars): %r", text[:500])
+
     text = _join_broken_lines(text)
+    logging.debug("Após _join_broken_lines (500 chars): %r", text[:500])
+
+    text = _mark_headings(text)
+    logging.debug("Após _mark_headings (500 chars): %r", text[:500])
+
     logging.info("Pré-processamento concluído.")
     return text
 
@@ -184,7 +280,8 @@ Traduza o TRECHO abaixo de forma FIEL, NATURAL e COMPLETA.
 
 REGRAS GERAIS:
 - Traduza TODO o conteúdo. NÃO RESUMA, NÃO CORTE e NÃO ADICIONE nada.
-- NÃO adicione comentários, notas do tradutor, explicações ou títulos extras.
+- NÃO transforme o trecho em sinopse, análise ou comentário sobre a história.
+- NÃO escreva em primeira pessoa sobre "o romance", "a obra", "a história" etc.
 - NÃO mude a ordem das frases ou parágrafos.
 - A saída deve ser APENAS o texto traduzido, sem qualquer texto adicional.
 
@@ -222,17 +319,28 @@ def _create_refine_prompt(translated_markdown: str) -> str:
 Você é um REVISOR LITERÁRIO PROFISSIONAL de português do Brasil.
 
 TAREFA:
-Revise o texto abaixo, que já está em PT-BR, mas pode conter:
-- frases literais demais,
-- pequenas falhas de coesão ou concordância,
-- pontuação que pode ser melhorada.
+Revise o texto abaixo, que já está em PT-BR, corrigindo apenas:
+- coesão e fluidez,
+- pequenos deslizes de concordância,
+- pontuação ou escolha de palavras que fiquem pouco naturais.
 
-REGRAS:
-- NÃO altere o sentido das frases nem mude informações.
-- NÃO RESUMA nada.
-- NÃO troque nomes próprios, termos de magia, técnicas ou nomes de lugares.
-- Mantenha o estilo de light novel: fluido, envolvente e natural.
-- A saída deve ser APENAS o texto revisado, sem comentários.
+REGRAS IMPORTANTES:
+- NÃO RESUMA e NÃO CORTE cenas, frases ou parágrafos.
+- NÃO transforme o texto em resumo, sinopse ou análise crítica.
+- NÃO escreva comentários externos sobre "o romance", "a obra" ou "a história".
+- Mantenha a MESMA estrutura do texto: número aproximado de parágrafos e falas.
+- Mantenha nomes próprios, magias, golpes e termos específicos como estão,
+  a menos que haja um claro erro de português.
+- Se tiver dúvida, PREFIRA manter o trecho quase igual ao original, apenas
+  ajustando pontuação e detalhes de estilo.
+
+ESTILO:
+- Light novel em PT-BR: envolvente, claro e natural.
+- Diálogos devem continuar soando como fala natural de personagens.
+
+SAÍDA:
+- Entregue APENAS o texto revisado, sem explicações, sem comentários e sem
+  nenhum texto adicional antes ou depois.
 
 TEXTO A REVISAR:
 ---
@@ -273,6 +381,9 @@ def translate_chunk_ollama(
             logging.info(
                 f"[OLLAMA] Enviando lote {chunk_num}/{total_chunks} "
                 f"({len(text_chunk)} caracteres) para o modelo '{model_name}'..."
+            )
+            logging.debug(
+                f"[OLLAMA] Prévia do lote {chunk_num}: {repr(text_chunk[:300])}"
             )
             translated = call_ollama(model_name, prompt)
             if not translated:
@@ -320,7 +431,7 @@ def refine_text_ollama(refine_model_spec: str, markdown_text: str) -> str:
             try:
                 logging.info(
                     f"[OLLAMA] Revisão com '{model_name}', tentativa "
-                    f"{retries+1}/{Config.MAX_RETRIES}..."
+                    f"{retries + 1}/{Config.MAX_RETRIES}..."
                 )
                 refined = call_ollama(model_name, prompt)
                 if not refined:
@@ -361,7 +472,7 @@ def init_gemini_model(model_name: str, temperature: float) -> Any:
     Faz import tardio para evitar dependência quando rodar só com Ollama.
     """
     try:
-        import google.generativeai as genai  # import local
+        import google.generativeai as genai  # type: ignore
     except ImportError as e:
         logging.critical(
             "O pacote 'google-generativeai' não está instalado. "
@@ -396,6 +507,9 @@ def translate_chunk_gemini(
             logging.info(
                 f"[GEMINI] Enviando lote {chunk_num}/{total_chunks} "
                 f"({len(text_chunk)} caracteres)..."
+            )
+            logging.debug(
+                f"[GEMINI] Prévia do lote {chunk_num}: {repr(text_chunk[:300])}"
             )
             response = gem_model.generate_content(prompt, request_options={"timeout": 1000})
             if not getattr(response, "text", None):
@@ -469,6 +583,7 @@ def extract_text_from_pdf(pdf_path: str) -> str:
                 if extracted_text:
                     text += extracted_text + "\n"
         logging.info(f"Texto extraído com sucesso de {len(reader.pages)} páginas.")
+        logging.debug("Primeiros 800 caracteres do texto bruto: %r", text[:800])
         return text
     except Exception as e:
         logging.error(f"Falha ao ler o arquivo PDF '{pdf_path}'. Erro: {e}")
@@ -515,6 +630,10 @@ def chunk_text(text: str, chunk_size: int) -> List[str]:
         current_pos = corte
 
     logging.info(f"Texto dividido em {len(chunks)} lotes.")
+    logging.debug(
+        "Tamanhos dos 5 primeiros lotes: %s",
+        [len(c) for c in chunks[:5]],
+    )
     return chunks
 
 
@@ -544,19 +663,19 @@ def markdown_to_pdf(markdown_text: str, pdf_path: str):
 
         for line in markdown_text.split("\n"):
             if line.startswith("# "):
-                pdf.set_font(Config.FONT_NAME, "B", 16)
-                pdf.cell(0, 10, line[2:], 0, 1)
+                pdf.set_font(Config.FONT_NAME, "B", 18)
+                pdf.multi_cell(0, 10, line[2:], 0, 1)
             elif line.startswith("## "):
                 pdf.set_font(Config.FONT_NAME, "B", 14)
-                pdf.cell(0, 10, line[3:], 0, 1)
+                pdf.multi_cell(0, 8, line[3:], 0, 1)
             elif line.startswith("**") and line.endswith("**"):
                 pdf.set_font(Config.FONT_NAME, "B", 12)
-                pdf.multi_cell(0, 10, line[2:-2], 0, 1)
+                pdf.multi_cell(0, 7, line[2:-2], 0, 1)
             else:
                 pdf.set_font(Config.FONT_NAME, "", 12)
                 pdf.multi_cell(0, 5, line)
             if not line.startswith(("**", "# ")):
-                pdf.ln(5)
+                pdf.ln(3)
 
         pdf.output(pdf_path)
         logging.info(f"PDF final salvo em: {pdf_path}")
@@ -613,7 +732,7 @@ def process_pdf_translation(
         with open(paths["md"], "r", encoding="utf-8") as f:
             full_markdown = f.read()
 
-        # Segunda passada (refine)
+        # Segunda passada (refine) – opcional
         final_markdown = full_markdown
         if refine_enabled:
             logging.info("Iniciando segunda passada de revisão da tradução (refine)...")
@@ -680,15 +799,29 @@ def main():
         help="Temperatura da geração (usada para Gemini; Ollama costuma ignorar).",
     )
     parser.add_argument(
-        "--no-refine",
+        "--refine",
         action="store_true",
-        help="Desativa a segunda passada de revisão da tradução.",
+        help=(
+            "Ativa a segunda passada de revisão da tradução. "
+            "DESLIGADO por padrão (recomendado deixar off para livros inteiros; "
+            "use apenas para trechos/capítulos se quiser testar)."
+        ),
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Ativa logs detalhados (DEBUG) sobre pré-processamento e chunking.",
     )
 
     args = parser.parse_args()
 
+    # Ajusta nível de log se --debug
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+        logging.debug("Modo DEBUG ativado.")
+
     backend = args.backend
-    refine_enabled = not args.no_refine
+    refine_enabled = args.refine
 
     # Garante diretórios
     os.makedirs(Config.DATA_DIR, exist_ok=True)
