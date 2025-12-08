@@ -1,0 +1,5 @@
+google-generativeai
+PyPDF2
+fpdf
+requests
+sacrebleu>=2.0.0

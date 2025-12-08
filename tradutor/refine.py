@@ -18,16 +18,20 @@ from .utils import read_text, timed, write_text
 
 
 def build_refine_prompt(section: str) -> str:
-    """Prompt de refine com foco em fluidez sem alterar sentido."""
+    """Prompt de refine literário focado em qualidade da versão em PT-BR."""
     return f"""
-Você é um revisor literário profissional em PT-BR.
-- Melhore fluidez, coesão e pontuação mantendo sentido.
-- Não resuma, não invente, não troque nomes.
-- Preserve Markdown básico (títulos, negrito) se houver.
-- Não adicione comentários nem instruções.
-- Não use <think>.
+Você é um revisor literário profissional de romances, light novels e webnovels em PT-BR.
+Sua tarefa é melhorar a versão traduzida, não traduzir do zero.
+Regras:
+- Melhorar fluidez, coesão, pontuação e naturalidade do português.
+- Deixar diálogos soarem como conversas reais, com gírias leves quando fizer sentido.
+- Manter o sentido, o enredo, a ordem dos eventos e os nomes dos personagens.
+- Não resumir, não adicionar conteúdo, não censurar cenas.
+- Preservar headings Markdown (#, ##, etc.) e estrutura de parágrafos.
+- Não adicionar comentários sobre o texto, nem falar em primeira pessoa como modelo.
+- Não usar <think>.
 
-Texto para refinar:
+Texto para revisar:
 \"\"\"{section}\"\"\"
 """
 

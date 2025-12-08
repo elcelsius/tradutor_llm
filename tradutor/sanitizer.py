@@ -19,6 +19,11 @@ META_PATTERNS = [
     r"não posso ajudar",
     r"eu sou apenas",
     r"como um assistente",
+    r"as an ai language model",
+    r"i am an ai",
+    r"i cannot provide",
+    r"i'm just an ai",
+    r"as a language model",
 ]
 
 

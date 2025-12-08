@@ -20,16 +20,22 @@ from .utils import timed
 
 
 def build_translation_prompt(chunk: str) -> str:
-    """Prompt focado em tradução literal para PT-BR, sem alucinação."""
+    """Prompt especializado para tradução literária de novels para PT-BR."""
     return f"""
-Você é um tradutor literário de alto nível. Traduza fielmente para PT-BR.
-- Mantenha sentido, nomes próprios e estilo.
-- Não adicione comentários, notas, explicações ou metas.
-- Não use <think> nem conteúdo fora do original.
-- Se o texto estiver incompleto, traduza só o que recebeu.
-- Não resuma. Não invente.
+Você é um tradutor literário profissional especializado em light novels e webnovels.
+Idioma de origem: inglês (funcione mesmo se vier outra língua).
+Idioma de destino: português brasileiro.
+Regras:
+- Mantenha sentido, enredo, tom emocional, ritmo da cena e personalidade dos personagens.
+- Preserve nomes próprios, termos importantes e a formatação básica, incluindo quebras de parágrafo.
+- Em diálogos, faça soar como fala natural em PT-BR, sem travar e sem literalidade robótica.
+- Piadas e expressões idiomáticas podem ser adaptadas para algo natural em PT-BR, mas não adicione fatos novos e não remova o efeito cômico.
+- Em conteúdo pesado, traduza de forma fiel, sem censura ou suavização.
+- Se o trecho estiver incompleto, traduza apenas o que recebeu, sem inventar continuação.
+- Proibido resumir, comentar, explicar piadas ou falar como modelo.
+- Não use <think> nem qualquer marcação fora do texto original.
 
-Texto a traduzir:
+Texto original:
 \"\"\"{chunk}\"\"\"
 """
 

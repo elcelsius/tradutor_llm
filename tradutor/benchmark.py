@@ -1,0 +1,109 @@
+"""
+Benchmark simples para comparar modelos de tradução em trechos de novel.
+
+Aviso: este benchmark chama LLMs reais e pode ser caro/variável a cada execução.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from pathlib import Path
+from typing import Dict, List
+
+from sacrebleu import corpus_bleu, corpus_chrf
+
+from .config import AppConfig
+from .llm_backend import LLMBackend
+from .translate import translate_document
+from .utils import setup_logging, timed
+
+
+def _load_samples(path: Path) -> List[Dict[str, str]]:
+    if not path.exists():
+        raise FileNotFoundError(f"Arquivo de amostras não encontrado: {path}")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def run_benchmark(models: List[Dict]) -> None:
+    """
+    Executa benchmark de tradução comparando múltiplos modelos.
+
+    models: lista de dicts com chaves name, backend, model, temperature.
+    """
+    samples_path = Path("tests/benchmark_samples.json")
+    samples = _load_samples(samples_path)
+    logger = setup_logging(logging.INFO)
+
+    results = []
+    for model_cfg in models:
+        cfg = AppConfig()
+        backend = LLMBackend(
+            backend=model_cfg["backend"],
+            model=model_cfg["model"],
+            temperature=model_cfg["temperature"],
+            logger=logger,
+            request_timeout=cfg.request_timeout,
+        )
+
+        hypotheses: List[str] = []
+        references: List[str] = []
+        latencies: List[float] = []
+
+        for sample in samples:
+            latency, translation = timed(
+                translate_document,
+                pdf_text=sample["source"],
+                backend=backend,
+                cfg=cfg,
+                logger=logger,
+            )
+            latencies.append(latency)
+            hypotheses.append(translation)
+            references.append(sample["reference"])
+
+        bleu = corpus_bleu(hypotheses, [references]).score
+        chrf = corpus_chrf(hypotheses, [references]).score
+        avg_latency = sum(latencies) / len(latencies) if latencies else 0.0
+
+        results.append(
+            {
+                "model_name": model_cfg["name"],
+                "backend": model_cfg["backend"],
+                "bleu": bleu,
+                "chrf": chrf,
+                "avg_latency": avg_latency,
+            }
+        )
+
+    header = f"{'model_name':20} {'backend':10} {'BLEU':>8} {'chrF':>8} {'avg_latency_sec':>16}"
+    print(header)
+    print("-" * len(header))
+    for res in results:
+        print(
+            f"{res['model_name']:20} "
+            f"{res['backend']:10} "
+            f"{res['bleu']:8.2f} "
+            f"{res['chrf']:8.3f} "
+            f"{res['avg_latency']:16.2f}"
+        )
+
+
+DEFAULT_MODELS = [
+    {
+        "name": "qwen3-14b-q4",
+        "backend": "ollama",
+        "model": "qwen3:14b-q4_K_M",
+        "temperature": 0.15,
+    },
+    {
+        "name": "gemma3-gaia-ptbr-4b",
+        "backend": "ollama",
+        "model": "gemma3-gaia-ptbr-4b:q4_k_m",
+        "temperature": 0.30,
+    },
+]
+
+
+if __name__ == "__main__":
+    run_benchmark(DEFAULT_MODELS)
