@@ -1,6 +1,5 @@
-
 """
-Benchmark simples para comparar modelos Ollama na tradução usando o prompt do pipeline.
+Benchmark simples para comparar modelos Ollama no refine usando o prompt do pipeline.
 """
 
 from __future__ import annotations
@@ -14,7 +13,7 @@ from typing import List
 
 import requests
 
-from tradutor.translate import build_translation_prompt
+from tradutor.refine import build_refine_prompt
 
 DEFAULT_MODELS: List[str] = [
     "huihui_ai/qwen3-abliterated:14b-q4_K_M",
@@ -35,7 +34,7 @@ def call_ollama(model: str, prompt: str, endpoint: str) -> tuple[str, float]:
         "model": model,
         "prompt": prompt,
         "stream": False,
-        "options": {"temperature": 0.15},
+        "options": {"temperature": 0.30},
     }
     start = time.monotonic()
     resp = requests.post(endpoint, json=payload, timeout=300)
@@ -54,17 +53,17 @@ def read_input(path: Path, max_chars: int) -> str:
     return text.strip()
 
 
-def write_model_output(out_dir: Path, slug: str, model: str, translated: str, elapsed: float, input_path: Path) -> str:
+def write_model_output(out_dir: Path, slug: str, model: str, refined: str, elapsed: float, input_path: Path) -> str:
     model_slug = slugify_model(model)
-    out_path = out_dir / f"{slug}_{model_slug}.md"
+    out_path = out_dir / f"{slug}_{model_slug}_refine.md"
     header = [
-        f"# Benchmark de tradução — {model}",
+        f"# Benchmark de refine — {model}",
         f"- Modelo: {model}",
         f"- Arquivo de origem: {input_path}",
         f"- Tempo de resposta: {elapsed:.2f} s",
         "",
     ]
-    out_path.write_text("\n".join(header) + "\n" + translated, encoding="utf-8")
+    out_path.write_text("\n".join(header) + "\n" + refined, encoding="utf-8")
     return out_path.name
 
 
@@ -77,7 +76,7 @@ def write_summary(
     rows: list[tuple[str, str, float]],
 ) -> None:
     lines = [
-        f"# Resumo de benchmark de tradução — {slug}",
+        f"# Resumo de benchmark de refine — {slug}",
         "",
         f"- Arquivo de origem: {input_path}",
         f"- Caracteres usados: {used_chars}",
@@ -88,12 +87,12 @@ def write_summary(
     ]
     for model, fname, elapsed in rows:
         lines.append(f"| {model} | {fname} | {elapsed:.2f} |")
-    (out_dir / f"resumo_{slug}.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (out_dir / f"resumo_refine_{slug}.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Benchmark de tradução com vários modelos Ollama.")
-    parser.add_argument("--input", required=True, help="Arquivo de entrada em inglês (.txt ou .md)")
+    parser = argparse.ArgumentParser(description="Benchmark de refine com vários modelos Ollama.")
+    parser.add_argument("--input", required=True, help="Arquivo de entrada em português (.txt ou .md)")
     parser.add_argument("--models", nargs="*", help="Lista de modelos Ollama a usar")
     parser.add_argument("--max-chars", type=int, default=1500, help="Máximo de caracteres do texto de entrada")
     parser.add_argument("--out-dir", default="benchmark", help="Diretório de saída para resultados")
@@ -116,14 +115,14 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     text = read_input(input_path, max_chars=args.max_chars)
-    prompt = build_translation_prompt(text)
+    prompt = build_refine_prompt(text)
 
     slug = input_path.stem.lower()
     rows: list[tuple[str, str, float]] = []
 
     for model in models:
-        translated, elapsed = call_ollama(model=model, prompt=prompt, endpoint=args.endpoint)
-        fname = write_model_output(out_dir, slug, model, translated, elapsed, input_path)
+        refined, elapsed = call_ollama(model=model, prompt=prompt, endpoint=args.endpoint)
+        fname = write_model_output(out_dir, slug, model, refined, elapsed, input_path)
         rows.append((model, fname, elapsed))
 
     write_summary(out_dir, slug, input_path, len(text), args.endpoint, rows)

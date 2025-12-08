@@ -7,8 +7,8 @@ Pipeline de traducao/refine para novels adultas e PDFs em PT-BR, com foco em **z
 Compatibilidade: Windows 11. Wrappers legados (`tradutor.py`, `refinador.py`) apenas redirecionam para o novo CLI.
 
 Prompts especializados para novels:
-- Traducao: preserva sentido/enredo/ritmo, dialogos naturais em PT-BR, adapta piadas sem inventar fatos, sem meta-comentarios.
-- Refine: melhora fluidez/coerencia/pontuacao em PT-BR sem mudar enredo ou headings Markdown.
+- Traducao: prompt adulto (dark fantasy, violencia/blasfemia), preserva tom, genero, numero, sem suavizar.
+- Refine: prompt adulto para fluidez/coerencia, sem cortar conteudo, corrige genero/plural/naturalidade.
 - Sanitizacao: remove `<think>` e meta-texto em PT/EN (ex.: "as an ai language model").
 
 ---
@@ -28,6 +28,7 @@ tradutor/
   pdf_reader.py    # extracao de texto com PyMuPDF (fitz)
   benchmark.py     # benchmark BLEU/chrF entre modelos
   bench_llms.py    # benchmark rapido de modelos Ollama no prompt de traducao
+  bench_refine_llms.py # benchmark rapido de modelos Ollama no prompt de refine
   utils.py         # logging, IO, helpers
 tests/
   benchmark_samples.json  # amostras para benchmark
@@ -112,7 +113,9 @@ O original `*_pt.md` nunca e sobrescrito.
   - Usa `tests/benchmark_samples.json`.
   - Calcula BLEU/chrF (sacrebleu) e latencia media por modelo; ajuste lista em `DEFAULT_MODELS`.
 - Benchmark rapido de LLMs no prompt de traducao: `python -m tradutor.bench_llms --input data/meu_texto.md [--models ...] [--max-chars 1500]`
-  - Gera uma traducao por modelo (Ollama) em `benchmarks/` + um `resumo_<slug>.md` com tempos.
+  - Gera uma traducao por modelo (Ollama) em `benchmark/` + um `resumo_<slug>.md` com tempos.
+- Benchmark rapido de LLMs no prompt de refine (texto em PT): `python -m tradutor.bench_refine_llms --input data/meu_texto_pt.md [--models ...] [--max-chars 1500]`
+  - Gera uma revisao por modelo (Ollama) em `benchmark/` + um `resumo_refine_<slug>.md` com tempos.
 
 ---
 
