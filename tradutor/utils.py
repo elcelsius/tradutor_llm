@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
-from typing import Iterable, List, Sequence, Tuple
+from typing import Any, Iterable, List, Sequence, Tuple
 
 
 def setup_logging(level: int = logging.INFO) -> logging.Logger:
@@ -96,7 +96,7 @@ def chunk_by_paragraphs(
     return safe_chunks
 
 
-def timed(fn, *args, **kwargs) -> Tuple[float, any]:
+def timed(fn, *args, **kwargs) -> Tuple[float, Any]:
     """Executa função e retorna (segundos, resultado)."""
     start = time.perf_counter()
     result = fn(*args, **kwargs)
