@@ -114,6 +114,34 @@ def _remove_repeated_sequences(text: str) -> Tuple[str, int]:
     return new_text, count
 
 
+def remove_leading_noise(text: str) -> str:
+    """
+    Remove contaminações típicas de topo de chunk, como:
+    'Apertem!', '起來！', 'Vamos!', 'Go!', etc.
+    Apenas remove até o primeiro parágrafo real.
+    """
+    lines = text.splitlines()
+    cleaned: List[str] = []
+    started = False
+
+    for line in lines:
+        stripped = line.strip()
+
+        if not started:
+            if (
+                len(stripped) <= 20
+                and not stripped.endswith((".", "?", '!"', ".”"))
+                and not any(ch in stripped for ch in "abcdefghijklmnopqrstuvwxyz")
+            ):
+                continue
+
+            started = True
+
+        cleaned.append(line)
+
+    return "\n".join(cleaned)
+
+
 def sanitize_text(
     text: str,
     logger: logging.Logger | None = None,
@@ -143,6 +171,8 @@ def sanitize_text(
 
     text, empty = _strip_empty_lines(text)
     report.removed_empty_lines = empty
+    text = remove_leading_noise(text)
+    text = text.replace("<think>", "").replace("</think>", "")
 
     text = text.strip()
     if not text:

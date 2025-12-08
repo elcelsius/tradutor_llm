@@ -12,7 +12,8 @@ from typing import Iterable
 from .config import AppConfig, ensure_paths
 from .llm_backend import LLMBackend
 from .pdf_export import markdown_to_pdf
-from .preprocess import extract_text_from_pdf, preprocess_text
+from .pdf_reader import extract_pdf_text
+from .preprocess import preprocess_text
 from .refine import refine_markdown_file
 from .translate import translate_document
 from .utils import setup_logging, write_text, read_text
@@ -21,7 +22,11 @@ from .utils import setup_logging, write_text, read_text
 def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
     """Constroi o parser de argumentos com subcomandos traduz/refina."""
     parser = argparse.ArgumentParser(description="Tradutor e refinador de PDFs com LLMs.")
-    parser.add_argument("--debug", action="store_true", help="Ativa logs de depuração.")
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Ativa logs detalhados e artefatos intermediários.",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     # Subcomando: traduzir
@@ -78,15 +83,20 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
 
     for pdf in pdfs:
         logger.info("Traduzindo PDF: %s", pdf.name)
-        raw_text = extract_text_from_pdf(pdf, logger)
-        raw_out = cfg.output_dir / f"{pdf.stem}_raw_extract.md"
-        write_text(raw_out, raw_text)
-        logger.info("Texto bruto salvo em %s", raw_out)
+        raw_text = extract_pdf_text(pdf, logger)
+        if not raw_text.strip():
+            raise SystemExit(f"PDF {pdf.name} não possui texto extraído (pode ser imagem/scan).")
+        if args.debug:
+            logger.debug("Debug ativado: salvando também raw_extract e preprocessed.")
+            raw_out = cfg.output_dir / f"{pdf.stem}_raw_extract.md"
+            write_text(raw_out, raw_text)
+            logger.info("Texto bruto salvo em %s", raw_out)
 
         pre_text = preprocess_text(raw_text, logger)
-        pre_out = cfg.output_dir / f"{pdf.stem}_preprocessed.md"
-        write_text(pre_out, pre_text)
-        logger.info("Texto preprocessado salvo em %s", pre_out)
+        if args.debug:
+            pre_out = cfg.output_dir / f"{pdf.stem}_preprocessed.md"
+            write_text(pre_out, pre_text)
+            logger.info("Texto preprocessado salvo em %s", pre_out)
 
         translated_md = translate_document(
             pdf_text=pre_text,
@@ -102,7 +112,9 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
 
         logger.info("Conversão para PDF desativada temporariamente; saída principal é o arquivo .md.")
 
-        if not args.no_refine:
+        if args.no_refine:
+            logger.info("Refinamento desabilitado (--no-refine); apenas *_pt.md será gerado.")
+        else:
             logger.info("Executando refine opcional para %s", md_path.name)
             refine_backend = LLMBackend(
                 backend=cfg.refine_backend,

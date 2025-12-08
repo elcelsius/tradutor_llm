@@ -1,5 +1,5 @@
 google-generativeai
-PyPDF2
+PyMuPDF
 fpdf
 requests
 sacrebleu>=2.0.0

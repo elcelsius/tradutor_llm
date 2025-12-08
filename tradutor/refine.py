@@ -18,50 +18,48 @@ from .utils import read_text, timed, write_text
 
 
 def build_refine_prompt(section: str) -> str:
-    """Prompt rígido para revisão literária em PT-BR, sem comentários adicionais."""
     return f"""
-Você é um revisor literário profissional especializado em novels, light novels e webnovels em PORTUGUÊS BRASILEIRO.
+Você é um REVISOR LITERÁRIO PROFISSIONAL especializado em novels adultas, dark fantasy e narrativa intensa.
 
-Você receberá um trecho de texto JÁ TRADUZIDO para o português brasileiro.
-Sua tarefa é APENAS revisar o estilo, mantendo TODAS as informações do texto original.
+Sua função é revisar o texto abaixo MELHORANDO:
 
-Regras OBRIGATÓRIAS:
+– fluidez,  
+– coesão,  
+– naturalidade literária,  
+– ortografia,  
+– concordância verbal e nominal,  
+– ritmo e legibilidade.
 
-1. NÃO adicione, NÃO remova e NÃO resuma conteúdo.
-   - Não invente falas, cenas, emoções ou pensamentos.
-   - Não corte frases, não junte várias frases em uma só.
-   - Cada informação presente no texto de entrada deve continuar presente no texto de saída.
+REGRAS ABSOLUTAS:
 
-2. NÃO EXPLIQUE NADA.
-   - É proibido escrever seções como "Mudanças e justificativas", "Alterações realizadas", "Resumo", "Notas", "Explicação" ou similares.
-   - É proibido listar bullets com o que foi alterado.
-   - É proibido comentar a revisão em primeira pessoa.
+1) NÃO apagar, cortar, omitir ou resumir nenhuma informação do texto original.  
+   Cada frase importante deve continuar existindo.  
+   Se algo parecer ambíguo, mantenha.
 
-3. Sua resposta deve conter APENAS o texto revisado, sem qualquer comentário antes ou depois.
-   - Nada de títulos adicionais.
-   - Nada de linhas separadas por '---'.
-   - Nada de observações fora da história.
+2) NÃO adicionar conteúdo, frases novas, explicações, notas, análises ou qualquer texto que não esteja no original.
 
-4. O foco da revisão é:
-   - Melhorar fluidez, coesão e naturalidade do português.
-   - Ajustar pontuação e quebras de frase para um ritmo mais literário.
-   - Deixar diálogos soarem naturais em PT-BR (sem gíria forçada).
+3) NÃO suavizar xingamentos, insultos, blasfêmias, agressões, violência verbal.  
+   O tom adulto deve ser preservado integralmente.
 
-5. Preserve:
-   - Todos os parágrafos.
-   - A ordem das frases.
-   - Qualquer marcação de capítulo ou heading em Markdown (por exemplo, linhas começando com "#", "##", etc.).
+4) Corrigir erros de português e frases quebradas:
+   – “E essa é a fim dela.” deve ser corrigido para algo natural como:
+     “E é aí que tudo termina.” ou “E esse é o fim disso.”
 
-6. Não aplique formatação extra (negrito, itálico, listas) além da que já existir no texto.
-   - Se o texto de entrada não tiver negrito, não crie negrito.
-   - Se o texto tiver headings Markdown, mantenha-os.
+5) Corrigir concordância de gênero do narrador:
+   – Se o narrador é masculino, use “pronto”, “determinado”, etc.
 
-7. NÃO use <think> ou qualquer marcação de raciocínio oculto.
+6) Corrigir plural indevido:
+   – Não transformar singular em plural:
+     “você” NÃO deve virar “vocês”.
 
-IMPORTANTE:
-Responda SOMENTE com a versão revisada do texto, sem comentários, sem explicações, sem listas, sem títulos adicionais.
+7) Naturalizar expressões rígidas:
+   – “através da floresta” → “pela floresta”.
 
-Texto para revisar:
+8) Manter estrutura e quebras de parágrafo exatamente como no original.
+
+9) A resposta deve ser APENAS o texto revisado.
+
+Texto a revisar:
 \"\"\"{section}\"\"\"
 """
 
@@ -105,6 +103,7 @@ def refine_section(
 
     for c_idx, chunk in enumerate(chunks, start=1):
         prompt = build_refine_prompt(chunk)
+        logger.debug("Refinando seção com %d caracteres...", len(chunk))
         text = _call_with_retry(
             backend=backend,
             prompt=prompt,
@@ -112,6 +111,15 @@ def refine_section(
             logger=logger,
             label=f"ref-{index}/{total}-{c_idx}/{len(chunks)}",
         )
+        if len(text.strip()) < len(chunk.strip()) * 0.80:
+            logger.warning(
+                "Refinador devolveu texto menor do que deveria; mantendo texto original (chunk %d/%d da seção %s).",
+                c_idx,
+                len(chunks),
+                title or f"#{index}",
+            )
+            text = chunk
+        logger.debug("Seção refinada com %d caracteres.", len(text))
         refined_parts.append(text)
 
     refined_section = "\n\n".join(refined_parts).strip()

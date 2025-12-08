@@ -23,62 +23,38 @@ from .utils import timed
 def build_translation_prompt(chunk: str) -> str:
     """Prompt especializado para tradução literária de novels para PT-BR."""
     return f"""
-Você é um tradutor literário profissional especializado em novels, light novels e webnovels.
-Sua tarefa é traduzir o texto abaixo do INGLÊS para o PORTUGUÊS BRASILEIRO de forma absolutamente fiel.
+Você é um TRADUTOR LITERÁRIO PROFISSIONAL especializado em novels adultas, com violência, vingança, blasfêmias e narrativa emocional intensa.
 
-Regras OBRIGATÓRIAS (leia atentamente):
+Seu trabalho é traduzir do INGLÊS para o PORTUGUÊS BRASILEIRO com:
 
-1. **Nenhuma frase do original pode ser omitida. NUNCA.**  
-   Para cada frase existente no texto original, você deve produzir uma frase correspondente em português.
+– fidelidade total,  
+– preservação do tom adulto,  
+– zero suavização,  
+– zero censura.
 
-2. **É proibido resumir, parafrasear, interpretar, suavizar ou alterar o impacto emocional.**  
-   Nada de "resumir a ideia". Tudo deve aparecer claramente na tradução.
+REGRAS:
 
-3. **Não altere intensidade emocional, violência, ameaças, votos de vingança, hostilidade ou dramaticidade.**  
-   Exemplo:  
-   - “I won’t stop until you’re dead.” deve aparecer explicitamente em PT-BR com o mesmo peso.  
-   - Não transformar frases fortes em versões neutras ou genéricas.
+1) NÃO adicionar frases novas.  
+   NÃO inventar interjeições como “Apertem!”, “Vamos!”, “起來！” e similares.
 
-4. **Mantenha a ordem, estrutura e segmentação do texto.**  
-   - Respeite todos os parágrafos.  
-   - Não una parágrafos diferentes.  
-   - Não quebre frases que não estão quebradas.
+2) NÃO deixar nada em inglês, exceto nomes próprios.
 
-5. **Preserve TODAS as informações do texto.**  
-   - Nomes, emoções, metáforas, termos mágicos, títulos, referências culturais.  
-   - Nada deve desaparecer.
+3) NÃO suavizar agressões, insultos, xingamentos ou blasfêmias.
+   Pode usar termos fortes como:
+   “desgraçada”, “imunda”, “nojenta”, “maldito”, etc.
 
-6. **Preserve e traduza fielmente todos os DIÁLOGOS.**  
-   - Se houver falas, todas devem aparecer.  
-   - Não pule nenhuma linha de diálogo.  
-   - Não resuma falas.  
-   - Não altere o conteúdo dito pelos personagens.
+4) Preservar o gênero do narrador:
+   – “When I’m ready” → “Quando eu estiver pronto”.
 
-7. **Adaptações são permitidas APENAS para naturalidade do português brasileiro**, NÃO para alterar o conteúdo.  
-   - Ajustes de ordem das palavras são OK.  
-   - Suavizar, retirar ou inventar informações NÃO é permitido.
+5) Preservar o número original:
+   – Não transformar “you” singular em “vocês”.
 
-8. **NÃO ADICIONE NADA.**  
-   - Não explique.  
-   - Não comente.  
-   - Não coloque notas.  
-   - Não insira pensamentos extras.  
-   - Sua resposta deve conter APENAS a tradução, nada mais.
+6) Preservar estrutura de parágrafos e diálogos.
 
-Quando encontrar a expressão **“Foul Goddess…”**, traduza como **“Deusa desgraçada…”**. Não use versões suaves como “Deusa Maldosa”, “Deusa Malvada” ou equivalentes. O tom deve ser agressivo, carregado de rancor e hostilidade.
+7) Responder APENAS com a tradução.
 
-9. **NÃO USE `<think>` ou qualquer forma de raciocínio oculto.**
-
-10. **O resultado deve ser um texto literário natural, fluente e emocionalmente fiel ao original.**
-
----
-
-TEXTO ORIGINAL A SER TRADUZIDO:
-\"\"\"
-{chunk}
-\"\"\"
-
-APENAS produza a tradução completa e fiel do texto — sem comentários, sem introduções, sem explicações.
+Texto original:
+\"\"\"{chunk}\"\"\"
 """
 
 

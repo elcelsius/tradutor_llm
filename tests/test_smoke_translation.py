@@ -3,13 +3,23 @@ import re
 import sys
 import types
 
-# Stub minimal PyPDF2 to avoid external dependency in the smoke test environment.
-if "PyPDF2" not in sys.modules:
-    class _DummyPdfReader:
-        def __init__(self, *args, **kwargs) -> None:
-            self.pages = []
+# Stub minimal PyMuPDF to avoid external dependency in the smoke test environment.
+if "fitz" not in sys.modules:
+    class _DummyDoc:
+        def __enter__(self):
+            return self
 
-    sys.modules["PyPDF2"] = types.SimpleNamespace(PdfReader=_DummyPdfReader)
+        def __exit__(self, *args, **kwargs):
+            return False
+
+        def __iter__(self):
+            return iter([])
+
+    class _DummyFitz:
+        def open(self, *args, **kwargs):
+            return _DummyDoc()
+
+    sys.modules["fitz"] = _DummyFitz()
 
 from tradutor.config import AppConfig
 from tradutor.llm_backend import LLMResponse

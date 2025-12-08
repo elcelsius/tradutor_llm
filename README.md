@@ -1,8 +1,8 @@
 # Tradutor Literario com LLMs (Ollama/Gemini)
 
-Pipeline de traducao/refine para light novels e PDFs em PT-BR, com foco em **zero alucinacao**. Fluxo principal:
-- **Passo 1 - Traducao** (`tradutor/main.py` subcomando `traduz`): le PDFs, pre-processa, faz chunking seguro, traduz em lotes e gera Markdown/PDF.
-- **Passo 2 - Refine opcional** (`tradutor/main.py` subcomando `refina`): le `*_pt.md` em `saida/`, detecta capitulos (`## `) e refina capitulo a capitulo gerando `*_pt_refinado.md` e PDF sem sobrescrever o original.
+Pipeline de traducao/refine para novels adultas e PDFs em PT-BR, com foco em **zero alucinacao**. Fluxo principal:
+- **Passo 1 - Traducao** (`tradutor/main.py` subcomando `traduz`): le PDFs, pre-processa, faz chunking seguro, traduz em lotes e gera Markdown.
+- **Passo 2 - Refine opcional** (`tradutor/main.py` subcomando `refina`): le `*_pt.md` em `saida/`, detecta capitulos (`## `) e refina capitulo a capitulo gerando `*_pt_refinado.md` sem sobrescrever o original.
 
 Compatibilidade: Windows 11. Wrappers legados (`tradutor.py`, `refinador.py`) apenas redirecionam para o novo CLI.
 
@@ -24,8 +24,10 @@ tradutor/
   refine.py        # refine capitulo a capitulo em Markdown
   llm_backend.py   # chamadas Ollama/Gemini com retry
   sanitizer.py     # sanitizacao agressiva contra alucinacao/loops/meta
-  pdf_export.py    # conversao Markdown -> PDF
+  pdf_export.py    # conversao Markdown -> PDF (desativada no fluxo principal)
+  pdf_reader.py    # extracao de texto com PyMuPDF (fitz)
   benchmark.py     # benchmark BLEU/chrF entre modelos
+  bench_llms.py    # benchmark rapido de modelos Ollama no prompt de traducao
   utils.py         # logging, IO, helpers
 tests/
   benchmark_samples.json  # amostras para benchmark
@@ -40,13 +42,13 @@ tests/
   ```bash
   pip install -r requirements.txt
   ```
-  Principais libs: `google-generativeai`, `PyPDF2`, `fpdf`, `requests`, `sacrebleu`.
+ Principais libs: `google-generativeai`, `PyMuPDF`, `fpdf`, `requests`, `sacrebleu`.
 - Ollama instalado (padrao). Para Gemini, defina `GEMINI_API_KEY`.
 
 ---
 
 ## Modelos e parametros padrao
-- Traducao: backend `ollama`, modelo `qwen3:14b-q4_K_M`, temperatura `0.15`, chunk `3800` caracteres.
+- Traducao: backend `ollama`, modelo `huihui_ai/qwen3-abliterated:14b-q4_K_M`, temperatura `0.15`, chunk `3800` caracteres.
 - Refine: backend `ollama`, modelo `gemma3-gaia-ptbr-4b:q4_k_m`, temperatura `0.30`, chunk `10000` caracteres.
 - Retry: 3 tentativas, backoff exponencial.
 - Sanitizacao: remove `<think>...</think>`, meta-comentarios (PT/EN), repeticoes/loops e respostas vazias ou contaminadas (falha e re-tenta).
@@ -60,6 +62,8 @@ tests/
 python -m tradutor.main traduz
 # ou um PDF especifico
 python -m tradutor.main traduz --input "data/meu_livro.pdf"
+# modo debug (salva raw/preprocessed)
+python -m tradutor.main traduz --debug --input "data/meu_livro.pdf"
 # usando Gemini
 python -m tradutor.main traduz --backend gemini --model gemini-3-pro-preview
 # pular refine automatico ao final
@@ -68,13 +72,10 @@ python -m tradutor.main traduz --no-refine
 # modo legados (wrappers):
 python tradutor.py --input "data/meu_livro.pdf"
 ```
-Saidas na pasta `saida/`:
-```
-<nome>_pt.md
-<nome>_pt.pdf
-<nome>_pt_refinado.md   (se refine automatico estiver ligado)
-<nome>_pt_refinado.pdf  (se refine automatico estiver ligado)
-```
+Saidas na pasta `saida/` (sem PDF):
+- Sempre: `<nome>_pt.md`
+- Se debug: `<nome>_raw_extract.md`, `<nome>_preprocessed.md`
+- Se refine habilitado: `<nome>_pt_refinado.md`
 
 ### Passo 2 - Refine opcional (capitulo a capitulo)
 ```bash
@@ -106,10 +107,12 @@ O original `*_pt.md` nunca e sobrescrito.
 ---
 
 ## Testes e benchmark
-- Smoke test sem LLM real (backend fake e stub de PyPDF2): `pytest -q`
+- Smoke test sem LLM real (backend fake e stub de PyMuPDF): `pytest -q`
 - Benchmark (custa tempo/tokens, chama LLM real): `python -m tradutor.benchmark`
   - Usa `tests/benchmark_samples.json`.
   - Calcula BLEU/chrF (sacrebleu) e latencia media por modelo; ajuste lista em `DEFAULT_MODELS`.
+- Benchmark rapido de LLMs no prompt de traducao: `python -m tradutor.bench_llms --input data/meu_texto.md [--models ...] [--max-chars 1500]`
+  - Gera uma traducao por modelo (Ollama) em `benchmarks/` + um `resumo_<slug>.md` com tempos.
 
 ---
 

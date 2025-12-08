@@ -25,7 +25,7 @@ class AppConfig:
 
     # Modelos
     translate_backend: BackendType = "ollama"
-    translate_model: str = "cnmoro/gemma3-gaia-ptbr-4b:q4_k_m"
+    translate_model: str = "huihui_ai/qwen3-abliterated:14b-q4_K_M"
     refine_backend: BackendType = "ollama"
     refine_model: str = "cnmoro/gemma3-gaia-ptbr-4b:q4_k_m"
     dump_chunks: bool = False

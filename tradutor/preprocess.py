@@ -7,24 +7,48 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import List
+from typing import Final, List, Optional
 
-import PyPDF2
+try:
+    import fitz  # PyMuPDF
+except ImportError:  # pragma: no cover - fallback para ambientes sem PyMuPDF
+    class _DummyDoc:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args, **kwargs):
+            return False
+
+        def __iter__(self):
+            return iter([])
+
+        @property
+        def pages(self):
+            return []
+
+        def __len__(self):
+            return 0
+
+    class _DummyFitz:
+        def open(self, *args, **kwargs):
+            return _DummyDoc()
+
+    fitz = _DummyFitz()  # type: ignore
 
 from .utils import chunk_by_paragraphs
 
 # Watermarks de sites/grupos de scan.
-WATERMARK_PATTERNS = [
-    r"goldenagato\s*\|\s*mp4directs\.com",
+FOOTER_PATTERNS: Final[list[str]] = [
+    r"\bPage\s+\d+\b",
+    r"Goldenagato \| mp4directs\.com",
     r"mp4directs\.com",
 ]
 
 
 def extract_text_from_pdf(path: Path, logger: logging.Logger) -> str:
-    """Extrai texto de um PDF usando PyPDF2."""
-    with path.open("rb") as f:
-        reader = PyPDF2.PdfReader(f)
-        pages = [page.extract_text() or "" for page in reader.pages]
+    """Extrai texto de um PDF usando PyMuPDF."""
+    with fitz.open(path) as doc:
+        pages = [page.get_text() or "" for page in doc]
     text = "\n".join(pages)
     logger.debug("PDF %s extraído: %d caracteres", path.name, len(text))
     return text
@@ -78,25 +102,28 @@ def _join_broken_lines(text: str) -> str:
     return "\n\n".join(joined)
 
 
-def preprocess_text(raw_text: str, logger: logging.Logger) -> str:
-    """Pipeline de limpeza antes do chunking/tradução."""
-    text = _remove_headers_footers(raw_text)
-    text = _remove_hyphenation(text)
-    text = _join_broken_lines(text)
-    lines = text.splitlines()
-    filtered: List[str] = []
-    exact_watermarks = {
-        "goldenagato | mp4directs.com",
-        "mp4directs.com",
-        "page 190",
-        "page 191",
-    }
-    for line in lines:
-        if line.strip().lower() in exact_watermarks:
-            continue
-        filtered.append(line)
-    text = "\n".join(filtered)
-    logger.debug("Texto pré-processado: %d caracteres", len(text))
+def preprocess_text(raw_text: str, logger: Optional[logging.Logger] = None) -> str:
+    """
+    Pré-processa o texto bruto extraído do PDF:
+    - Normaliza quebras de linha
+    - Remove rodapés/watermarks
+    - Mantém todo o conteúdo original
+    """
+
+    text = raw_text.replace("\r\n", "\n").replace("\r", "\n")
+
+    for pattern in FOOTER_PATTERNS:
+        text = re.sub(pattern, " ", text, flags=re.IGNORECASE)
+
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r" +([,.;:!?])", r"\1", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+
+    text = text.strip()
+
+    if logger is not None:
+        logger.debug("Texto pré-processado: %d caracteres", len(text))
+
     return text
 
 
