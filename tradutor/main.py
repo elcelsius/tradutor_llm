@@ -68,6 +68,13 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
         logger=logger,
         request_timeout=cfg.request_timeout,
     )
+    logger.info(
+        "LLM de tradução: backend=%s model=%s temp=%.2f chunk=%d",
+        args.backend,
+        args.model,
+        cfg.translate_temperature,
+        cfg.translate_chunk_chars,
+    )
 
     for pdf in pdfs:
         logger.info("Traduzindo PDF: %s", pdf.name)
@@ -97,6 +104,13 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                 temperature=cfg.refine_temperature,
                 logger=logger,
                 request_timeout=cfg.request_timeout,
+            )
+            logger.info(
+                "LLM de refine (opcional): backend=%s model=%s temp=%.2f chunk=%d",
+                cfg.refine_backend,
+                cfg.refine_model,
+                cfg.refine_temperature,
+                cfg.refine_chunk_chars,
             )
             output_refined = cfg.output_dir / f"{pdf.stem}_pt_refinado.md"
             output_refined_pdf = cfg.output_dir / f"{pdf.stem}_pt_refinado.pdf"
@@ -131,6 +145,13 @@ def run_refine(args, cfg: AppConfig, logger: logging.Logger) -> None:
         temperature=cfg.refine_temperature,
         logger=logger,
         request_timeout=cfg.request_timeout,
+    )
+    logger.info(
+        "LLM de refine: backend=%s model=%s temp=%.2f chunk=%d",
+        args.backend,
+        args.model,
+        cfg.refine_temperature,
+        cfg.refine_chunk_chars,
     )
 
     for md in md_files:

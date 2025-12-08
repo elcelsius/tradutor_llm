@@ -101,6 +101,7 @@ O original `*_pt.md` nunca e sobrescrito.
 - Falha e re-tenta em caso de contaminacao ou resposta vazia.
 - Chunking seguro (3800/10000 chars) com cortes duros se necessario; evita chunks gigantes.
 - Logs detalhados por chunk, sanitizacao e tempo de processamento.
+- Logs informam backend/model/temperatura/chunk usados em traducao e refine (inclusive opcional).
 
 ---
 

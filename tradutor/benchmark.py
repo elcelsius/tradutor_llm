@@ -45,6 +45,14 @@ def run_benchmark(models: List[Dict]) -> None:
             logger=logger,
             request_timeout=cfg.request_timeout,
         )
+        logger.info(
+            "Benchmark com LLM: name=%s backend=%s model=%s temp=%.2f chunk=%d",
+            model_cfg["name"],
+            model_cfg["backend"],
+            model_cfg["model"],
+            model_cfg["temperature"],
+            cfg.translate_chunk_chars,
+        )
 
         hypotheses: List[str] = []
         references: List[str] = []
