@@ -4,7 +4,7 @@ Arquitetura modular para tradução e refine de light novels e PDFs para PT-BR c
 - **Passo 1 – Tradução** (`tradutor/main.py` subcomando `traduz`): lê PDFs, pré-processa, faz chunking seguro, traduz em lotes e gera Markdown/PDF.
 - **Passo 2 – Refine opcional** (`tradutor/main.py` subcomando `refina`): lê `*_pt.md` da pasta `saida/`, detecta capítulos (`## `), refina capítulo a capítulo e gera `*_pt_refinado.md` e PDF sem sobrescrever o original.
 
-Compatível com Windows 11.
+Compatível com Windows 11. Wrappers de compatibilidade (`tradutor.py` e `refinador.py`) permitem chamar no modo antigo; eles apenas redirecionam para o novo CLI.
 
 ---
 
@@ -54,6 +54,9 @@ python -m tradutor.main traduz --input "data/meu_livro.pdf"
 python -m tradutor.main traduz --backend gemini --model gemini-3-pro-preview
 # pular refine automático ao final
 python -m tradutor.main traduz --no-refine
+
+# modo compatível (wrappers legados):
+python tradutor.py --input "data/meu_livro.pdf"
 ```
 Saídas na pasta `saida/`:
 ```
@@ -70,6 +73,9 @@ python -m tradutor.main refina
 
 # refina um arquivo específico
 python -m tradutor.main refina --input "saida/MEU_ARQUIVO_pt.md"
+
+# modo compatível (wrappers legados):
+python refinador.py --input "saida/MEU_ARQUIVO_pt.md"
 ```
 Saídas:
 ```
@@ -81,7 +87,7 @@ O original `*_pt.md` nunca é sobrescrito.
 ---
 
 ## Sanitização e robustez
-- Remove `<think>`/`</think>`, meta-texto (“parece que você está...”), loops e blocos repetidos.
+- Remove `<think>`/`</think>`, meta-texto ("parece que você está..."), loops e blocos repetidos.
 - Falha e re-tenta em caso de contaminação ou resposta vazia.
 - Chunking seguro (3800/10000 chars) com cortes duros se necessário; proíbe chunks gigantes.
 - Logs detalhados por chunk, sanitização e tempo de processamento.
@@ -109,6 +115,10 @@ python -m tradutor.main refina
 
 # Refine de um arquivo específico
 python -m tradutor.main refina --input "saida/MEU_ARQUIVO_pt.md"
+
+# Modo compatível com wrappers
+python tradutor.py
+python refinador.py
 ```
 
 ---
