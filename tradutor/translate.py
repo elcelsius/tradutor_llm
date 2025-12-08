@@ -46,8 +46,8 @@ REGRAS:
 4) Preservar o gênero do narrador:
    – “When I’m ready” → “Quando eu estiver pronto”.
 
-5) Preservar o número original:
-   – Não transformar “you” singular em “vocês”.
+5) Preservar o número original e evitar plural indevido:
+   - Não transformar "you" singular em "vocês" (não criar plural sem motivo).
 
 6) Preservar estrutura de parágrafos e diálogos.
 

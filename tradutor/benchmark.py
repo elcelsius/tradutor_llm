@@ -99,17 +99,11 @@ def run_benchmark(models: List[Dict]) -> None:
 
 DEFAULT_MODELS = [
     {
-        "name": "qwen3-14b-q4",
-        "backend": "ollama",
-        "model": "qwen3:14b-q4_K_M",
-        "temperature": 0.15,
-    },
-    {
         "name": "gemma3-gaia-ptbr-4b",
         "backend": "ollama",
-        "model": "gemma3-gaia-ptbr-4b:q4_k_m",
-        "temperature": 0.30,
-    },
+        "model": "cnmoro/gemma3-gaia-ptbr-4b:q4_k_m",
+        "temperature": 0.15,
+    }
 ]
 
 

@@ -13,53 +13,55 @@ from typing import List, Tuple
 from .config import AppConfig
 from .llm_backend import LLMBackend
 from .preprocess import chunk_for_refine, paragraphs_from_text
-from .sanitizer import sanitize_text, log_report
+from .sanitizer import sanitize_refine_output
 from .utils import read_text, timed, write_text
 
 
 def build_refine_prompt(section: str) -> str:
     return f"""
-Você é um REVISOR LITERÁRIO PROFISSIONAL especializado em novels adultas, dark fantasy e narrativa intensa.
+Você é um REVISOR LITERÁRIO PROFISSIONAL especializado em romances adultos, dark fantasy e narrativa intensa.
 
-Sua função é revisar o texto abaixo MELHORANDO:
+Sua tarefa é REVISAR o texto abaixo (já em português brasileiro), elevando-o para um registro MAIS LITERÁRIO, sem perder o tom emocional, a agressividade ou a personalidade do narrador.
 
-– fluidez,  
-– coesão,  
-– naturalidade literária,  
-– ortografia,  
-– concordância verbal e nominal,  
-– ritmo e legibilidade.
+FOCO PRINCIPAL:
+- Melhorar fluidez, coesão e ritmo.
+- Corrigir ortografia, pontuação e concordância verbal/nominal.
+- Tornar o texto mais natural e elegante para publicação, em estilo de romance adulto.
+
+REGRA DE ESTILO (OPÇÃO B):
+- Reduza gírias e marcas de oralidade quando elas NÃO forem essenciais.
+  Exemplos:
+    - "tá" → "está"
+    - "tô" → "estou"
+    - "a gente" → "nós" (quando fizer sentido no contexto)
+- Mantenha expressões informais APENAS quando forem claramente parte da voz do personagem ou do efeito cômico/dramático pretendido.
+- Preserve o tom adulto, o sarcasmo e a ironia.
 
 REGRAS ABSOLUTAS:
 
-1) NÃO apagar, cortar, omitir ou resumir nenhuma informação do texto original.  
-   Cada frase importante deve continuar existindo.  
-   Se algo parecer ambíguo, mantenha.
+1) NÃO apagar, cortar, resumir nem omitir informações.
+   Todas as frases relevantes devem continuar existindo no texto revisado.
 
-2) NÃO adicionar conteúdo, frases novas, explicações, notas, análises ou qualquer texto que não esteja no original.
+2) NÃO adicionar explicações, comentários, análises, notas de rodapé ou frases novas que mudem o conteúdo.
 
-3) NÃO suavizar xingamentos, insultos, blasfêmias, agressões, violência verbal.  
-   O tom adulto deve ser preservado integralmente.
+3) NÃO suavizar xingamentos, insultos, blasfêmias ou ameaças.
+   Se o texto ofende uma deusa, mantém a ofensa em grau equivalente (como "desgraçada", "imunda", "nojenta", etc.).
 
-4) Corrigir erros de português e frases quebradas:
-   – “E essa é a fim dela.” deve ser corrigido para algo natural como:
-     “E é aí que tudo termina.” ou “E esse é o fim disso.”
+4) Corrigir frases estruturalmente erradas, mantendo o sentido.
+   Exemplo:
+   - "E essa é a fim dela." → "E é assim que tudo termina." ou "E esse é o fim disso."
 
-5) Corrigir concordância de gênero do narrador:
-   – Se o narrador é masculino, use “pronto”, “determinado”, etc.
+5) Manter o gênero e o número corretos:
+   - Se o narrador é masculino, use "pronto" (não "pronta").
+   - Não transformar "você" singular em "vocês" sem motivo.
 
-6) Corrigir plural indevido:
-   – Não transformar singular em plural:
-     “você” NÃO deve virar “vocês”.
+6) Manter as quebras de parágrafo.
+   A estrutura de parágrafos deve ser igual à do texto original.
 
-7) Naturalizar expressões rígidas:
-   – “através da floresta” → “pela floresta”.
+7) Não retornar instruções, explicações ou qualquer coisa além do texto revisado.
+   A resposta deve ser APENAS o texto final revisado.
 
-8) Manter estrutura e quebras de parágrafo exatamente como no original.
-
-9) A resposta deve ser APENAS o texto revisado.
-
-Texto a revisar:
+Texto para revisão:
 \"\"\"{section}\"\"\"
 """
 
@@ -157,8 +159,7 @@ def refine_markdown_file(
     if not final_md:
         raise ValueError(f"Refine produziu texto vazio para {input_path}")
 
-    final_md, final_report = sanitize_text(final_md, logger=logger)
-    log_report(final_report, logger, prefix="ref-final")
+    final_md = sanitize_refine_output(final_md)
 
     write_text(output_path, final_md)
     logger.info("Refine concluído: %s", output_path.name)
@@ -176,16 +177,9 @@ def _call_with_retry(
     for attempt in range(1, cfg.max_retries + 1):
         try:
             latency, response = timed(backend.generate, prompt)
-            text, report = sanitize_text(response.text, logger=logger, fail_on_contamination=False)
-            log_report(report, logger, prefix=label)
+            text = sanitize_refine_output(response.text)
             if not text.strip():
-                raise ValueError("Texto vazio após sanitização.")
-            if report.contamination_detected:
-                logger.warning(
-                    "%s: contaminação detectada; texto limpo será usado (%d chars)",
-                    label,
-                    len(text),
-                )
+                raise ValueError("Texto vazio após sanitização do refine.")
             logger.info("%s ok (%.2fs, %d chars)", label, latency, len(text))
             return text
         except Exception as exc:

@@ -25,9 +25,9 @@ class AppConfig:
 
     # Modelos
     translate_backend: BackendType = "ollama"
-    translate_model: str = "huihui_ai/qwen3-abliterated:14b-q4_K_M"
+    translate_model: str = "cnmoro/gemma3-gaia-ptbr-4b:q4_k_m"
     refine_backend: BackendType = "ollama"
-    refine_model: str = "cnmoro/gemma3-gaia-ptbr-4b:q4_k_m"
+    refine_model: str = "brunoconterato/Gemma-3-Gaia-PT-BR-4b-it:f16"
     dump_chunks: bool = False
 
     # Temperaturas

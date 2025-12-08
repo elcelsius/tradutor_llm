@@ -186,6 +186,17 @@ def sanitize_text(
     return text, report
 
 
+def sanitize_refine_output(text: str) -> str:
+    """
+    Sanitização leve para saída do refinador:
+    - remove tags <think> e </think>
+    - remove espaços extras nas extremidades
+    Não aplica regras agressivas nem corta parágrafos.
+    """
+    cleaned = text.replace("<think>", "").replace("</think>", "")
+    return cleaned.strip()
+
+
 def log_report(report: SanitizationReport, logger: logging.Logger, prefix: str) -> None:
     """Registra o relatório de sanitização com prefixo."""
     logger.debug(
