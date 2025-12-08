@@ -65,6 +65,8 @@ Regras OBRIGATÓRIAS (leia atentamente):
    - Não insira pensamentos extras.  
    - Sua resposta deve conter APENAS a tradução, nada mais.
 
+Quando encontrar a expressão **“Foul Goddess…”**, traduza como **“Deusa desgraçada…”**. Não use versões suaves como “Deusa Maldosa”, “Deusa Malvada” ou equivalentes. O tom deve ser agressivo, carregado de rancor e hostilidade.
+
 9. **NÃO USE `<think>` ou qualquer forma de raciocínio oculto.**
 
 10. **O resultado deve ser um texto literário natural, fluente e emocionalmente fiel ao original.**
@@ -105,7 +107,7 @@ def translate_document(
             parts.append(chunk)
             parts.append("")  # linha em branco entre chunks
         debug_path.write_text("\n".join(parts).strip() + "\n", encoding="utf-8")
-        logger.info("Chunks de tradução salvos em %s", debug_path)
+        logger.info("Chunks salvos em %s", debug_path)
 
     translated_chunks: List[str] = []
     for idx, chunk in enumerate(chunks, start=1):
@@ -122,6 +124,14 @@ def translate_document(
     result = "\n\n".join(translated_chunks).strip()
     if not result:
         raise ValueError("Tradução resultou em texto vazio.")
+
+    translated_paragraphs = [p for p in result.split("\n\n") if p.strip()]
+    if len(translated_paragraphs) < len(paragraphs):
+        logger.warning(
+            "Parágrafos ausentes após tradução: original=%d traduzido=%d",
+            len(paragraphs),
+            len(translated_paragraphs),
+        )
 
     # Sanitização final
     result, final_report = sanitize_text(result, logger=logger)

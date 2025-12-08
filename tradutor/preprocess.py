@@ -85,8 +85,14 @@ def preprocess_text(raw_text: str, logger: logging.Logger) -> str:
     text = _join_broken_lines(text)
     lines = text.splitlines()
     filtered: List[str] = []
+    exact_watermarks = {
+        "goldenagato | mp4directs.com",
+        "mp4directs.com",
+        "page 190",
+        "page 191",
+    }
     for line in lines:
-        if any(re.search(pat, line, re.IGNORECASE) for pat in WATERMARK_PATTERNS):
+        if line.strip().lower() in exact_watermarks:
             continue
         filtered.append(line)
     text = "\n".join(filtered)

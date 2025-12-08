@@ -12,7 +12,7 @@ from typing import Iterable
 from .config import AppConfig, ensure_paths
 from .llm_backend import LLMBackend
 from .pdf_export import markdown_to_pdf
-from .preprocess import extract_text_from_pdf
+from .preprocess import extract_text_from_pdf, preprocess_text
 from .refine import refine_markdown_file
 from .translate import translate_document
 from .utils import setup_logging, write_text, read_text
