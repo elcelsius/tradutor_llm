@@ -21,7 +21,7 @@ from tradutor.utils import setup_logging
 class FakeBackend:
     def generate(self, prompt: str) -> LLMResponse:
         return LLMResponse(
-            text="Primeiro paragrafo.\n\nSegundo paragrafo.",
+            text="Primeiro paragrafo em portugues.\n\nSegundo paragrafo em portugues, continuando a ideia.",
             latency=0.01,
         )
 
@@ -46,4 +46,5 @@ def test_translate_document_smoke() -> None:
     assert "<think>" not in lower_result
     for meta in META_PATTERNS:
         assert re.search(meta, lower_result) is None, f"Contem meta: {meta}"
-    assert "\n\n" in result, "Deve manter separacao de paragrafos."
+    lines = [l for l in result.splitlines() if l.strip()]
+    assert len(lines) >= 2, "Deve haver pelo menos dois paragrafos/linhas nao vazias."

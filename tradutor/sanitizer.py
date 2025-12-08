@@ -24,6 +24,12 @@ META_PATTERNS = [
     r"i cannot provide",
     r"i'm just an ai",
     r"as a language model",
+    r"^\s*mudanc(a|ç)as e justificativas[:]?.*$",
+    r"^\s*alterac(ao|ão|oes|ões) realizadas[:]?.*$",
+    r"^\s*(nesta|nessa) revis(ao|ão).*$",
+    r"^\s*(justificativa|racionalidade|rationale).*$",
+    r"^\s*em resumo.*$",
+    r"^\s*resumo[: ].*$",
 ]
 
 

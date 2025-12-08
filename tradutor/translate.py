@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import time
+from pathlib import Path
 from typing import Iterable, List, Sequence
 
 from .config import AppConfig
@@ -22,21 +23,60 @@ from .utils import timed
 def build_translation_prompt(chunk: str) -> str:
     """Prompt especializado para tradução literária de novels para PT-BR."""
     return f"""
-Você é um tradutor literário profissional especializado em light novels e webnovels.
-Idioma de origem: inglês (funcione mesmo se vier outra língua).
-Idioma de destino: português brasileiro.
-Regras:
-- Mantenha sentido, enredo, tom emocional, ritmo da cena e personalidade dos personagens.
-- Preserve nomes próprios, termos importantes e a formatação básica, incluindo quebras de parágrafo.
-- Em diálogos, faça soar como fala natural em PT-BR, sem travar e sem literalidade robótica.
-- Piadas e expressões idiomáticas podem ser adaptadas para algo natural em PT-BR, mas não adicione fatos novos e não remova o efeito cômico.
-- Em conteúdo pesado, traduza de forma fiel, sem censura ou suavização.
-- Se o trecho estiver incompleto, traduza apenas o que recebeu, sem inventar continuação.
-- Proibido resumir, comentar, explicar piadas ou falar como modelo.
-- Não use <think> nem qualquer marcação fora do texto original.
+Você é um tradutor literário profissional especializado em novels, light novels e webnovels.
+Sua tarefa é traduzir o texto abaixo do INGLÊS para o PORTUGUÊS BRASILEIRO de forma absolutamente fiel.
 
-Texto original:
-\"\"\"{chunk}\"\"\"
+Regras OBRIGATÓRIAS (leia atentamente):
+
+1. **Nenhuma frase do original pode ser omitida. NUNCA.**  
+   Para cada frase existente no texto original, você deve produzir uma frase correspondente em português.
+
+2. **É proibido resumir, parafrasear, interpretar, suavizar ou alterar o impacto emocional.**  
+   Nada de "resumir a ideia". Tudo deve aparecer claramente na tradução.
+
+3. **Não altere intensidade emocional, violência, ameaças, votos de vingança, hostilidade ou dramaticidade.**  
+   Exemplo:  
+   - “I won’t stop until you’re dead.” deve aparecer explicitamente em PT-BR com o mesmo peso.  
+   - Não transformar frases fortes em versões neutras ou genéricas.
+
+4. **Mantenha a ordem, estrutura e segmentação do texto.**  
+   - Respeite todos os parágrafos.  
+   - Não una parágrafos diferentes.  
+   - Não quebre frases que não estão quebradas.
+
+5. **Preserve TODAS as informações do texto.**  
+   - Nomes, emoções, metáforas, termos mágicos, títulos, referências culturais.  
+   - Nada deve desaparecer.
+
+6. **Preserve e traduza fielmente todos os DIÁLOGOS.**  
+   - Se houver falas, todas devem aparecer.  
+   - Não pule nenhuma linha de diálogo.  
+   - Não resuma falas.  
+   - Não altere o conteúdo dito pelos personagens.
+
+7. **Adaptações são permitidas APENAS para naturalidade do português brasileiro**, NÃO para alterar o conteúdo.  
+   - Ajustes de ordem das palavras são OK.  
+   - Suavizar, retirar ou inventar informações NÃO é permitido.
+
+8. **NÃO ADICIONE NADA.**  
+   - Não explique.  
+   - Não comente.  
+   - Não coloque notas.  
+   - Não insira pensamentos extras.  
+   - Sua resposta deve conter APENAS a tradução, nada mais.
+
+9. **NÃO USE `<think>` ou qualquer forma de raciocínio oculto.**
+
+10. **O resultado deve ser um texto literário natural, fluente e emocionalmente fiel ao original.**
+
+---
+
+TEXTO ORIGINAL A SER TRADUZIDO:
+\"\"\"
+{chunk}
+\"\"\"
+
+APENAS produza a tradução completa e fiel do texto — sem comentários, sem introduções, sem explicações.
 """
 
 
@@ -45,6 +85,7 @@ def translate_document(
     backend: LLMBackend,
     cfg: AppConfig,
     logger: logging.Logger,
+    source_slug: str | None = None,
 ) -> str:
     """
     Executa pré-processamento, chunking e tradução por lotes com sanitização.
@@ -53,6 +94,18 @@ def translate_document(
     paragraphs = paragraphs_from_text(clean)
     chunks = chunk_for_translation(paragraphs, max_chars=cfg.translate_chunk_chars, logger=logger)
     logger.info("Iniciando tradução: %d chunks", len(chunks))
+
+    if cfg.dump_chunks and chunks:
+        slug = source_slug or "document"
+        debug_path = Path(cfg.output_dir) / f"{slug}_chunks_debug.md"
+        total = len(chunks)
+        parts = []
+        for idx, chunk in enumerate(chunks, start=1):
+            parts.append(f"=== CHUNK {idx}/{total} ===")
+            parts.append(chunk)
+            parts.append("")  # linha em branco entre chunks
+        debug_path.write_text("\n".join(parts).strip() + "\n", encoding="utf-8")
+        logger.info("Chunks de tradução salvos em %s", debug_path)
 
     translated_chunks: List[str] = []
     for idx, chunk in enumerate(chunks, start=1):
@@ -89,8 +142,16 @@ def _call_with_retry(
     for attempt in range(1, cfg.max_retries + 1):
         try:
             latency, response = timed(backend.generate, prompt)
-            text, report = sanitize_text(response.text, logger=logger)
+            text, report = sanitize_text(response.text, logger=logger, fail_on_contamination=False)
             log_report(report, logger, prefix=label)
+            if not text.strip():
+                raise ValueError("Texto vazio após sanitização.")
+            if report.contamination_detected:
+                logger.warning(
+                    "%s: contaminação detectada; texto limpo será usado (%d chars)",
+                    label,
+                    len(text),
+                )
             logger.info("%s ok (%.2fs, %d chars)", label, latency, len(text))
             return text
         except Exception as exc:

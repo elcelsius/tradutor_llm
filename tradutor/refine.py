@@ -18,18 +18,48 @@ from .utils import read_text, timed, write_text
 
 
 def build_refine_prompt(section: str) -> str:
-    """Prompt de refine literário focado em qualidade da versão em PT-BR."""
+    """Prompt rígido para revisão literária em PT-BR, sem comentários adicionais."""
     return f"""
-Você é um revisor literário profissional de romances, light novels e webnovels em PT-BR.
-Sua tarefa é melhorar a versão traduzida, não traduzir do zero.
-Regras:
-- Melhorar fluidez, coesão, pontuação e naturalidade do português.
-- Deixar diálogos soarem como conversas reais, com gírias leves quando fizer sentido.
-- Manter o sentido, o enredo, a ordem dos eventos e os nomes dos personagens.
-- Não resumir, não adicionar conteúdo, não censurar cenas.
-- Preservar headings Markdown (#, ##, etc.) e estrutura de parágrafos.
-- Não adicionar comentários sobre o texto, nem falar em primeira pessoa como modelo.
-- Não usar <think>.
+Você é um revisor literário profissional especializado em novels, light novels e webnovels em PORTUGUÊS BRASILEIRO.
+
+Você receberá um trecho de texto JÁ TRADUZIDO para o português brasileiro.
+Sua tarefa é APENAS revisar o estilo, mantendo TODAS as informações do texto original.
+
+Regras OBRIGATÓRIAS:
+
+1. NÃO adicione, NÃO remova e NÃO resuma conteúdo.
+   - Não invente falas, cenas, emoções ou pensamentos.
+   - Não corte frases, não junte várias frases em uma só.
+   - Cada informação presente no texto de entrada deve continuar presente no texto de saída.
+
+2. NÃO EXPLIQUE NADA.
+   - É proibido escrever seções como "Mudanças e justificativas", "Alterações realizadas", "Resumo", "Notas", "Explicação" ou similares.
+   - É proibido listar bullets com o que foi alterado.
+   - É proibido comentar a revisão em primeira pessoa.
+
+3. Sua resposta deve conter APENAS o texto revisado, sem qualquer comentário antes ou depois.
+   - Nada de títulos adicionais.
+   - Nada de linhas separadas por '---'.
+   - Nada de observações fora da história.
+
+4. O foco da revisão é:
+   - Melhorar fluidez, coesão e naturalidade do português.
+   - Ajustar pontuação e quebras de frase para um ritmo mais literário.
+   - Deixar diálogos soarem naturais em PT-BR (sem gíria forçada).
+
+5. Preserve:
+   - Todos os parágrafos.
+   - A ordem das frases.
+   - Qualquer marcação de capítulo ou heading em Markdown (por exemplo, linhas começando com "#", "##", etc.).
+
+6. Não aplique formatação extra (negrito, itálico, listas) além da que já existir no texto.
+   - Se o texto de entrada não tiver negrito, não crie negrito.
+   - Se o texto tiver headings Markdown, mantenha-os.
+
+7. NÃO use <think> ou qualquer marcação de raciocínio oculto.
+
+IMPORTANTE:
+Responda SOMENTE com a versão revisada do texto, sem comentários, sem explicações, sem listas, sem títulos adicionais.
 
 Texto para revisar:
 \"\"\"{section}\"\"\"
@@ -138,8 +168,16 @@ def _call_with_retry(
     for attempt in range(1, cfg.max_retries + 1):
         try:
             latency, response = timed(backend.generate, prompt)
-            text, report = sanitize_text(response.text, logger=logger)
+            text, report = sanitize_text(response.text, logger=logger, fail_on_contamination=False)
             log_report(report, logger, prefix=label)
+            if not text.strip():
+                raise ValueError("Texto vazio após sanitização.")
+            if report.contamination_detected:
+                logger.warning(
+                    "%s: contaminação detectada; texto limpo será usado (%d chars)",
+                    label,
+                    len(text),
+                )
             logger.info("%s ok (%.2fs, %d chars)", label, latency, len(text))
             return text
         except Exception as exc:

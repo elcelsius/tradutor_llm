@@ -5,6 +5,7 @@ Funções utilitárias compartilhadas.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from pathlib import Path
 from typing import Any, Iterable, List, Sequence, Tuple
@@ -42,58 +43,54 @@ def chunk_by_paragraphs(
     label: str,
 ) -> List[str]:
     """
-    Agrupa parágrafos até `max_chars`, evitando chunks gigantes.
-
-    Se um parágrafo exceder max_chars, faz corte duro dentro dele para manter o limite.
+    Agrupa texto em chunks respeitando parágrafos e limites seguros de frase, sem perda de texto.
     """
+    text = "\n\n".join(p.strip() for p in paragraphs if p.strip())
+    if not text:
+        return []
+
+    boundary_re = re.compile(r"\n\n|[.!?][\"'”’)]?(?=\s|\n|$)")
     chunks: List[str] = []
-    buffer: List[str] = []
-    current_len = 0
+    start = 0
+    total_len = len(text)
 
-    for para in paragraphs:
-        para = para.strip()
-        if not para:
-            continue
-        para_len = len(para)
-        if para_len > max_chars:
-            logger.warning("%s: parágrafo > max_chars (%d). Corta duro.", label, para_len)
-            start = 0
-            while start < para_len:
-                end = min(start + max_chars, para_len)
-                slice_text = para[start:end].strip()
-                if slice_text:
-                    chunks.append(slice_text)
-                start = end
-            continue
+    while start < total_len:
+        max_end = start + max_chars
+        if max_end >= total_len:
+            chunks.append(text[start:])
+            break
 
-        if current_len + para_len + 2 <= max_chars:
-            buffer.append(para)
-            current_len += para_len + 2
+        window = text[start:max_end]
+        end: int | None = None
+
+        # Preferir o último limite seguro dentro da janela
+        for match in boundary_re.finditer(window):
+            end = start + match.end()
+
+        if end is not None and end > start:
+            chunk_len = end - start
+            logger.debug("%s: chunk cortado em limite seguro (len=%d)", label, chunk_len)
         else:
-            if buffer:
-                chunks.append("\n\n".join(buffer))
-            buffer = [para]
-            current_len = para_len + 2
+            # Busca próximo limite seguro à frente; pode ultrapassar max_chars para não quebrar frases
+            next_match = boundary_re.search(text, pos=max_end)
+            if next_match:
+                end = next_match.end()
+                chunk_len = end - start
+                logger.warning(
+                    "%s: chunk excede max_chars para respeitar limite seguro (%d > %d)",
+                    label,
+                    chunk_len,
+                    max_chars,
+                )
+            else:
+                end = total_len
+                chunk_len = end - start
+                logger.warning("%s: sem limite seguro; consumindo resto (%d chars)", label, chunk_len)
 
-    if buffer:
-        chunks.append("\n\n".join(buffer))
+        chunks.append(text[start:end])
+        start = end
 
-    # Garantir nenhum chunk vazio e nenhum chunk gigante
-    safe_chunks = []
-    for c in chunks:
-        c = c.strip()
-        if not c:
-            continue
-        if len(c) > max_chars:
-            logger.warning("%s: chunk > max_chars pós-montagem (%d). Cortando.", label, len(c))
-            start = 0
-            while start < len(c):
-                end = min(start + max_chars, len(c))
-                safe_chunks.append(c[start:end].strip())
-                start = end
-        else:
-            safe_chunks.append(c)
-    return safe_chunks
+    return chunks
 
 
 def timed(fn, *args, **kwargs) -> Tuple[float, Any]:

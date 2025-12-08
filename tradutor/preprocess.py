@@ -13,6 +13,12 @@ import PyPDF2
 
 from .utils import chunk_by_paragraphs
 
+# Watermarks de sites/grupos de scan.
+WATERMARK_PATTERNS = [
+    r"goldenagato\s*\|\s*mp4directs\.com",
+    r"mp4directs\.com",
+]
+
 
 def extract_text_from_pdf(path: Path, logger: logging.Logger) -> str:
     """Extrai texto de um PDF usando PyPDF2."""
@@ -77,6 +83,13 @@ def preprocess_text(raw_text: str, logger: logging.Logger) -> str:
     text = _remove_headers_footers(raw_text)
     text = _remove_hyphenation(text)
     text = _join_broken_lines(text)
+    lines = text.splitlines()
+    filtered: List[str] = []
+    for line in lines:
+        if any(re.search(pat, line, re.IGNORECASE) for pat in WATERMARK_PATTERNS):
+            continue
+        filtered.append(line)
+    text = "\n".join(filtered)
     logger.debug("Texto pré-processado: %d caracteres", len(text))
     return text
 

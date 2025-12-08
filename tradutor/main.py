@@ -79,22 +79,28 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
     for pdf in pdfs:
         logger.info("Traduzindo PDF: %s", pdf.name)
         raw_text = extract_text_from_pdf(pdf, logger)
-        translated_md = translate_document(pdf_text=raw_text, backend=backend, cfg=cfg, logger=logger)
+        raw_out = cfg.output_dir / f"{pdf.stem}_raw_extract.md"
+        write_text(raw_out, raw_text)
+        logger.info("Texto bruto salvo em %s", raw_out)
+
+        pre_text = preprocess_text(raw_text, logger)
+        pre_out = cfg.output_dir / f"{pdf.stem}_preprocessed.md"
+        write_text(pre_out, pre_text)
+        logger.info("Texto preprocessado salvo em %s", pre_out)
+
+        translated_md = translate_document(
+            pdf_text=pre_text,
+            backend=backend,
+            cfg=cfg,
+            logger=logger,
+            source_slug=pdf.stem,
+        )
 
         md_path = cfg.output_dir / f"{pdf.stem}_pt.md"
-        pdf_path = cfg.output_dir / f"{pdf.stem}_pt.pdf"
         write_text(md_path, translated_md)
         logger.info("Markdown salvo em %s", md_path)
 
-        markdown_to_pdf(
-            markdown_text=translated_md,
-            output_path=pdf_path,
-            font_dir=cfg.font_dir,
-            title_size=cfg.pdf_title_font_size,
-            heading_size=cfg.pdf_heading_font_size,
-            body_size=cfg.pdf_body_font_size,
-            logger=logger,
-        )
+        logger.info("Conversão para PDF desativada temporariamente; saída principal é o arquivo .md.")
 
         if not args.no_refine:
             logger.info("Executando refine opcional para %s", md_path.name)
@@ -113,7 +119,6 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                 cfg.refine_chunk_chars,
             )
             output_refined = cfg.output_dir / f"{pdf.stem}_pt_refinado.md"
-            output_refined_pdf = cfg.output_dir / f"{pdf.stem}_pt_refinado.pdf"
             refine_markdown_file(
                 input_path=md_path,
                 output_path=output_refined,
@@ -121,15 +126,7 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                 cfg=cfg,
                 logger=logger,
             )
-            markdown_to_pdf(
-                markdown_text=read_text(output_refined),
-                output_path=output_refined_pdf,
-                font_dir=cfg.font_dir,
-                title_size=cfg.pdf_title_font_size,
-                heading_size=cfg.pdf_heading_font_size,
-                body_size=cfg.pdf_body_font_size,
-                logger=logger,
-            )
+            logger.info("Conversão para PDF desativada temporariamente; saída principal é o arquivo .md refinado.")
 
 
 def run_refine(args, cfg: AppConfig, logger: logging.Logger) -> None:
