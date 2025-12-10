@@ -8,23 +8,14 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import time
 from pathlib import Path
-from typing import List
 
 import requests
 
 from tradutor.pdf_reader import extract_pdf_text
 from tradutor.translate import build_translation_prompt
-
-DEFAULT_MODELS: List[str] = [
-    "cnmoro/gemma3-gaia-ptbr-4b:q4_k_m",
-    "brunoconterato/Gemma-3-Gaia-PT-BR-4b-it:f16",
-    "huihui_ai/qwen3-abliterated:14b-q4_K_M",
-    "qwen3:14b-q4_K_M",
-    "cnmoro/Qwen2.5-0.5B-Portuguese-v2:fp16",
-    "dolphin3:8b-llama3.1-q4_K_M",
-]
 
 
 def slugify_model(name: str) -> str:
@@ -54,10 +45,45 @@ def call_ollama(model: str, prompt: str, endpoint: str) -> tuple[str, float]:
     return data["response"], elapsed
 
 
-def list_installed_models(endpoint: str) -> set[str]:
+def _list_models_via_cli() -> list[str]:
     """
-    Obtém a lista de modelos instalados no Ollama a partir de /api/tags.
-    Se falhar, retorna conjunto vazio para não bloquear a execução.
+    Usa `ollama list` para obter modelos instalados. Retorna lista vazia em caso de falha.
+    """
+    cmd_json = ["ollama", "list", "--format", "json"]
+    for cmd in (cmd_json, ["ollama", "list"]):
+        try:
+            result = subprocess.run(
+                cmd, check=True, capture_output=True, text=True, timeout=10
+            )
+        except Exception:
+            continue
+        output = result.stdout.strip()
+        if not output:
+            continue
+        try:
+            data = json.loads(output)
+            names = [item["name"] for item in data if isinstance(item, dict) and "name" in item]
+            if names:
+                return names
+        except Exception:
+            pass
+        names: list[str] = []
+        for line in output.splitlines():
+            line = line.strip()
+            if not line or line.lower().startswith("name"):
+                continue
+            parts = line.split()
+            if parts:
+                names.append(parts[0])
+        if names:
+            return names
+    return []
+
+
+def _list_models_via_api(endpoint: str) -> set[str]:
+    """
+    Obtem a lista de modelos instalados no Ollama a partir de /api/tags.
+    Se falhar, retorna conjunto vazio para nao bloquear a execucao.
     """
     tags_url = endpoint.rstrip("/")
     if tags_url.endswith("/generate"):
@@ -68,10 +94,19 @@ def list_installed_models(endpoint: str) -> set[str]:
         resp = requests.get(tags_url, timeout=10)
         resp.raise_for_status()
         data = resp.json()
-        models = {m["name"] for m in data.get("models", []) if "name" in m}
-        return models
+        return {m["name"] for m in data.get("models", []) if "name" in m}
     except Exception:
         return set()
+
+
+def list_installed_models(endpoint: str) -> list[str]:
+    """
+    Descobre modelos usando `ollama list` (preferencial) ou /api/tags.
+    """
+    models = _list_models_via_cli()
+    if models:
+        return models
+    return sorted(_list_models_via_api(endpoint))
 
 
 def read_input(path: Path, max_chars: int) -> str:
@@ -141,15 +176,24 @@ def main() -> None:
     if not input_path.exists():
         raise SystemExit(f"Arquivo de entrada não encontrado: {input_path}")
 
-    models = args.models if args.models else DEFAULT_MODELS
     installed = list_installed_models(args.endpoint)
-    if installed:
-        filtered = [m for m in models if m in installed]
-        missing = [m for m in models if m not in installed]
-        if filtered:
-            models = filtered
-        if missing:
-            print(f"Atenção: ignorando modelos não instalados: {', '.join(missing)}")
+    if args.models:
+        models = args.models
+        if installed:
+            missing = [m for m in models if m not in installed]
+            available = [m for m in models if m in installed]
+            if missing:
+                print(f"Atencao: ignorando modelos nao instalados: {', '.join(missing)}")
+            if available:
+                models = available
+            elif missing:
+                raise SystemExit("Nenhum dos modelos informados esta instalado segundo o Ollama.")
+    else:
+        models = installed
+        if not models:
+            raise SystemExit(
+                "Nenhum modelo Ollama foi encontrado. Rode `ollama list` para confirmar as instalacoes ou use --models."
+            )
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

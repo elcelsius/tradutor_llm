@@ -4,8 +4,10 @@ Pipeline de tradução em lotes.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable, List, Sequence
 
@@ -64,6 +66,8 @@ def translate_document(
     cfg: AppConfig,
     logger: logging.Logger,
     source_slug: str | None = None,
+    progress_path: Path | None = None,
+    resume_manifest: dict | None = None,
 ) -> str:
     """
     Executa pré-processamento, chunking e tradução por lotes com sanitização.
@@ -86,16 +90,107 @@ def translate_document(
         logger.info("Chunks salvos em %s", debug_path)
 
     translated_chunks: List[str] = []
+    total_chunks = len(chunks)
+    translated_ok: set[int] = set()
+    failed_chunks: set[int] = set()
+    chunk_outputs: dict[int, str] = {}
+
+    if resume_manifest:
+        manifest_total = resume_manifest.get("total_chunks")
+        if isinstance(manifest_total, int) and manifest_total != total_chunks:
+            logger.warning(
+                "Manifesto indica %d chunks, mas chunking atual gerou %d; usando chunking atual.",
+                manifest_total,
+                total_chunks,
+            )
+        raw_chunks = resume_manifest.get("chunks") or {}
+        if isinstance(raw_chunks, dict):
+            for key, val in raw_chunks.items():
+                try:
+                    idx = int(key)
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(val, str):
+                    chunk_outputs[idx] = val
+
+        raw_translated = resume_manifest.get("translated_chunks") or []
+        for idx in raw_translated:
+            try:
+                idx_int = int(idx)
+            except (TypeError, ValueError):
+                continue
+            if idx_int in chunk_outputs:
+                translated_ok.add(idx_int)
+            else:
+                logger.warning(
+                    "Manifesto marca chunk %s como traduzido, mas não há conteúdo salvo; retraduzindo.",
+                    idx_int,
+                )
+
+        raw_failed = resume_manifest.get("failed_chunks") or []
+        for idx in raw_failed:
+            try:
+                failed_chunks.add(int(idx))
+            except (TypeError, ValueError):
+                continue
+
+    def _write_progress() -> None:
+        if progress_path is None:
+            return
+        data = {
+            "total_chunks": total_chunks,
+            "translated_chunks": sorted(translated_ok),
+            "failed_chunks": sorted(failed_chunks),
+            "timestamp": datetime.now().isoformat(),
+            "chunks": {str(idx): text for idx, text in chunk_outputs.items()},
+        }
+        try:
+            progress_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as exc:  # pragma: no cover - I/O edge case
+            logger.warning("Falha ao gravar manifesto de progresso em %s: %s", progress_path, exc)
+
+    _write_progress()
+
     for idx, chunk in enumerate(chunks, start=1):
+        if idx in translated_ok and idx in chunk_outputs:
+            logger.info("Reusando tradução salva para chunk trad-%d/%d", idx, total_chunks)
+            translated_chunks.append(chunk_outputs[idx])
+            _write_progress()
+            continue
+
         prompt = build_translation_prompt(chunk)
-        text = _call_with_retry(
-            backend=backend,
-            prompt=prompt,
-            cfg=cfg,
-            logger=logger,
-            label=f"trad-{idx}/{len(chunks)}",
-        )
-        translated_chunks.append(text)
+        try:
+            text = _call_with_retry(
+                backend=backend,
+                prompt=prompt,
+                cfg=cfg,
+                logger=logger,
+                label=f"trad-{idx}/{len(chunks)}",
+            )
+            translated_chunks.append(text)
+            translated_ok.add(idx)
+            failed_chunks.discard(idx)
+            chunk_outputs[idx] = text
+        except RuntimeError as exc:
+            failed_chunks.add(idx)
+            placeholder = f"[ERRO: chunk {idx} não traduzido por timeout - revisar depois]"
+            logger.warning(
+                "Chunk trad-%d falhou após %d tentativas; adicionando placeholder. Erro: %s",
+                idx,
+                cfg.max_retries,
+                exc,
+            )
+            translated_chunks.append(placeholder)
+            chunk_outputs[idx] = placeholder
+        finally:
+            _write_progress()
+
+    logger.info(
+        "Resumo da tradução: total=%d sucesso=%d erro=%d",
+        total_chunks,
+        len(translated_ok),
+        len(failed_chunks),
+    )
 
     result = "\n\n".join(translated_chunks).strip()
     if not result:

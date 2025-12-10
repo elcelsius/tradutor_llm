@@ -18,6 +18,8 @@ python -m tradutor.bench_refine_llms \
   --out-dir benchmark/refine
 ```
 
+Sem `--models`, os scripts usam todos os modelos retornados por `ollama list`. Use `--models <m1> <m2>` para limitar a um subconjunto.
+
 Estrutura sugerida de arquivos:
 ```
 benchmark/

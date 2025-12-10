@@ -43,15 +43,22 @@ tests/
   ```bash
   pip install -r requirements.txt
   ```
- Principais libs: `google-generativeai`, `PyMuPDF`, `fpdf`, `requests`, `sacrebleu`.
+ Principais libs: `google-generativeai`, `PyMuPDF`, `fpdf`, `requests`, `sacrebleu`, `PyYAML`.
 - Ollama instalado (padrao). Para Gemini, defina `GEMINI_API_KEY`.
+
+## Configuracao
+- Opcional: crie um `config.yaml` na raiz (existe um `config.example.yaml` de referencia) para ajustar parametros sem editar codigo.
+- Parametros relevantes:
+  - `translate_chunk_chars`: tamanho maximo do chunk de traducao (padrao 3200).
+  - `request_timeout`: timeout HTTP (segundos) para chamadas ao LLM (padrao 60; aumente manualmente se precisar).
 
 ---
 
 ## Modelos e parametros padrao
-- Traducao: backend `ollama`, modelo `cnmoro/gemma3-gaia-ptbr-4b:q4_k_m`, temperatura `0.15`, chunk `3800` caracteres.
-- Refine: backend `ollama`, modelo `brunoconterato/Gemma-3-Gaia-PT-BR-4b-it:f16`, temperatura `0.30`, chunk `10000` caracteres.
+- Traducao: backend `ollama`, modelo `brunoconterato/Gemma-3-Gaia-PT-BR-4b-it:f16`, temperatura `0.15`, chunk `3200` caracteres.
+- Refine: backend `ollama`, modelo `cnmoro/gemma3-gaia-ptbr-4b:q4_k_m`, temperatura `0.30`, chunk `3200` caracteres.
 - Retry: 3 tentativas, backoff exponencial.
+- Timeout HTTP padrao: `60s` (usado nas chamadas LLM).
 - Sanitizacao: remove `<think>...</think>`, meta-comentarios (PT/EN), repeticoes/loops e respostas vazias ou contaminadas (falha e re-tenta).
 
 ---
@@ -101,7 +108,7 @@ O original `*_pt.md` nunca e sobrescrito.
 ## Sanitizacao e robustez
 - Remove `<think>`/`</think>`, meta-texto (inclusive ingles), loops e blocos repetidos.
 - Falha e re-tenta em caso de contaminacao ou resposta vazia.
-- Chunking seguro (3800/10000 chars) com cortes duros se necessario; evita chunks gigantes.
+- Chunking seguro (3200/3200 chars) com cortes duros se necessario; evita chunks gigantes.
 - Logs detalhados por chunk, sanitizacao e tempo de processamento.
 - Logs informam backend/model/temperatura/chunk usados em traducao e refine (inclusive opcional).
 
@@ -114,11 +121,13 @@ O original `*_pt.md` nunca e sobrescrito.
   - Calcula BLEU/chrF (sacrebleu) e latencia media por modelo; ajuste lista em `DEFAULT_MODELS`.
 - Benchmark rapido de LLMs no prompt de traducao: `python -m tradutor.bench_llms --input benchmark/teste_traducao_en.md --max-chars 1500 --out-dir benchmark/traducao`
   - Gera uma traducao por modelo (Ollama) em `benchmark/traducao/` + um `resumo_<slug>.md` com tempos.
+  - Sem `--models`, usa todos os modelos retornados por `ollama list`; passe `--models <m1> <m2>` para limitar.
 - Benchmark rapido de LLMs no prompt de refine (texto em PT): `python -m tradutor.bench_refine_llms --input benchmark/teste_refine_pt.md --max-chars 1500 --out-dir benchmark/refine`
   - Gera uma revisao por modelo (Ollama) em `benchmark/refine/` + um `resumo_refine_<slug>.md` com tempos.
+  - Mesma deteccao automatica de modelos via `ollama list` quando `--models` nao e informado.
 
 ---
 
 ## Modelos recomendados para Ollama
-- Traducao: `cnmoro/gemma3-gaia-ptbr-4b:q4_k_m`
-- Refine: `brunoconterato/Gemma-3-Gaia-PT-BR-4b-it:f16` (principal). Caso precise de backup mais conservador, use `cnmoro/gemma3-gaia-ptbr-4b:q4_k_m`.
+- Traducao: `brunoconterato/Gemma-3-Gaia-PT-BR-4b-it:f16`
+- Refine: `cnmoro/gemma3-gaia-ptbr-4b:q4_k_m` (principal). Como backup mais conservador, pode usar o mesmo modelo tambem para traducao se quiser menos variação.

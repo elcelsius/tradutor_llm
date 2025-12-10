@@ -35,7 +35,7 @@ class LLMBackend:
         temperature: float,
         logger: logging.Logger,
         base_url: str = "http://localhost:11434",
-        request_timeout: int = 120,
+        request_timeout: int = 60,
         gemini_api_key: Optional[str] = None,
     ) -> None:
         self.backend = backend

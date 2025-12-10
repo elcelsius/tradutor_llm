@@ -13,7 +13,7 @@ from typing import Dict, List
 
 from sacrebleu import corpus_bleu, corpus_chrf
 
-from .config import AppConfig
+from .config import AppConfig, load_config
 from .llm_backend import LLMBackend
 from .translate import translate_document
 from .utils import setup_logging, timed
@@ -35,9 +35,9 @@ def run_benchmark(models: List[Dict]) -> None:
     samples = _load_samples(samples_path)
     logger = setup_logging(logging.INFO)
 
+    cfg = load_config()
     results = []
     for model_cfg in models:
-        cfg = AppConfig()
         backend = LLMBackend(
             backend=model_cfg["backend"],
             model=model_cfg["model"],
