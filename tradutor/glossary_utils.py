@@ -25,6 +25,24 @@ def normalize_value(value: str) -> str:
     return value.strip().lower()
 
 
+def _is_valid_dynamic_term(candidate: str, logger: logging.Logger) -> bool:
+    """Aplica filtros de sanidade para evitar termos dinâmicos descritivos demais."""
+    cand = candidate.strip()
+    if not cand:
+        return False
+    if len(cand) > 80:
+        logger.info("Ignorando termo dinâmico muito longo: %r", cand)
+        return False
+    if len(cand.split()) > 6:
+        logger.info("Ignorando termo dinâmico com muitas palavras: %r", cand)
+        return False
+    lowered = f" {cand.lower()} "
+    if " que " in lowered or " uma " in lowered or " um " in lowered:
+        logger.info("Ignorando termo dinâmico com padrão de frase: %r", cand)
+        return False
+    return True
+
+
 def _build_index(terms: List[GlossaryEntry]) -> GlossaryIndex:
     return {normalize_key(str(term.get("key", ""))): term for term in terms if str(term.get("key", "")).strip()}
 
@@ -294,9 +312,13 @@ def apply_suggestions_to_state(
                 logger.info("Glossário dinâmico atualizado para '%s' -> %s", key_raw, pt)
             continue
 
+        candidate = term_pt.strip()
+        if not _is_valid_dynamic_term(candidate, logger):
+            continue
+
         new_entry: GlossaryEntry = {
-            "key": term_pt,
-            "pt": term_pt,
+            "key": candidate,
+            "pt": candidate,
             "category": category if category else None,
             "notes": notes if notes else None,
             "source": "dynamic",

@@ -130,8 +130,9 @@ def normalize_md_paragraphs(text: str) -> str:
         prev_line = paragraph[-1]
         join = False
 
-        # Título por palavra-chave explícita
-        if title_keyword.match(stripped) and len(stripped) < 100:
+        # Guardrails: separação obrigatória
+        # Título por palavra-chave explícita (<80 chars)
+        if title_keyword.match(stripped) and len(stripped) < 80:
             flush_paragraph()
             output.append(stripped)
             paragraph.clear()
@@ -139,17 +140,18 @@ def normalize_md_paragraphs(text: str) -> str:
 
         prev_upper_short = len(prev_line) < 100 and prev_line.isupper()
 
-        # Regra de Ouro: diálogos ou fim forte + próxima maiúscula => não junta
+        # Proteção de diálogo (aspas iniciais)
         if dialogue_prefix.match(stripped):
             join = False
-        elif ends_with_terminal.search(prev_line) and starts_upper.match(stripped):
-            join = False
-        # Travessão final: só junta se atual começa com minúscula (continuação)
+        # Proteção de travessão final: só junta se atual começa com minúscula
         elif ends_with_dash.search(prev_line):
             if starts_lower.match(stripped):
                 join = True
             else:
                 join = False
+        # Proteção de pontuação forte + próxima maiúscula
+        elif ends_with_terminal.search(prev_line) and starts_upper.match(stripped):
+            join = False
         # Título em maiúsculas curto sem pontuação => não junta
         elif len(stripped) < 40 and stripped.isupper() and not ends_with_terminal.search(stripped):
             join = False
