@@ -1,0 +1,1484 @@
+{
+  "terms": [
+    {
+      "key": "Acid Secretion",
+      "pt": "Secreção Ácida",
+      "category": "habilidade",
+      "notes": "Substância produzida pelas variantes das Ruínas. Capaz de derreter pedra e armas rapidamente.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Alion",
+      "pt": "Alion",
+      "category": "nação",
+      "notes": "Reino governado por Vicius; parte da Aliança Sagrada.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Alion Kingdom",
+      "pt": "Reino de Alion",
+      "category": "nação",
+      "notes": "Reino responsável por convocar heróis de outros mundos sempre que o Rei Demônio ressurge.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Ambush archers",
+      "pt": "arqueiros em emboscada",
+      "category": "força militar",
+      "notes": "Arqueiros posicionados nos penhascos acima do vale; parte da estratégia de Michaela.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Amia Plum Lynx",
+      "pt": "Amia Plum Lynx",
+      "category": "personagem",
+      "notes": "Uma das Quatro Guerreiras Resplandecentes; lamia de alto escalão.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Anael",
+      "pt": "Anael",
+      "category": "nome alternativo",
+      "notes": "Forma como Erika Anaorbael é conhecida no País no Fim do Mundo.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Ancient Magical Devices",
+      "pt": "dispositivos mágicos antigos",
+      "category": "tecnologia",
+      "notes": "Máquinas que sustentam a vida no País no Fim do Mundo, mantidas exclusivamente pelo Clã Onik.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Apply Status Effect",
+      "pt": "Aplicar Efeito de Status",
+      "category": "habilidade",
+      "notes": "Habilidade única de Mimori Touka. Considerada inútil pela Deusa.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Arachne",
+      "pt": "Arachne",
+      "category": "raça",
+      "notes": "Raça demi-humana com o torso humano e corpo inferior de aranha; politicamente influentes.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Asagi Ikusaba",
+      "pt": "Asagi Ikusaba",
+      "category": "personagem",
+      "notes": "Aliada oculta do Imperador Zine, observando a batalha. Surge pela primeira vez neste capítulo, associada à força militar de Mira.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Ayaka Sogou",
+      "pt": "Ayaka Sogou",
+      "category": "personagem",
+      "notes": "Heroína de classe E; subestimada, mas crucial em batalhas.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Bakoss Empire",
+      "pt": "Império Bakoss",
+      "category": "império",
+      "notes": "Império exausto por guerras recentes.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Band of the Sun",
+      "pt": "Bando do Sol",
+      "category": "força militar",
+      "notes": "Elite militar de Mira. Indiretamente mencionada durante investigação de cadáveres e armamentos no território dos monstros.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Baron Pollary",
+      "pt": "Barão Pollary",
+      "category": "personagem",
+      "notes": "Oficial de Alion; subordinado de Vicius.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Battle to Vanquish the Demon King",
+      "pt": "Batalha para Derrotar o Rei Demônio",
+      "category": "evento",
+      "notes": "Nome formal dado pela Deusa à futura operação militar no Nightwall para exterminar o Rei Demônio.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Battlefield deception plan",
+      "pt": "plano de engano no campo de batalha",
+      "category": "estratégia",
+      "notes": "Estratégia criada por Belzegea para manipular Geo, Kil, Amia e Lise e coordenar os ataques contra a Primeira Ordem.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Belzegea",
+      "pt": "Belzegea",
+      "category": "personagem",
+      "notes": "Usuário de magia amaldiçoada; derrotou o 'Homem Mais Forte do Mundo'.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Bird-headed Variant",
+      "pt": "Variante Cabeça-de-Pássaro",
+      "category": "criatura",
+      "notes": "Criatura humanoide com cabeça de pássaro, quatro braços e secreção ácida extremamente letal. Considerada mais rápida e agressiva que o minotauro variante.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Blue Dragonstones",
+      "pt": "pedras-dragão azuis",
+      "category": "item",
+      "notes": "Itens raríssimos que servem de médium para ativação de magia proibida. Consumidos ao serem usados.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Cerberus-type beast",
+      "pt": "besta tipo Cérbero",
+      "category": "criatura",
+      "notes": "Termo descritivo referente a Loa, um lobo de três cabeças.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Civit Gartland",
+      "pt": "Civit Gartland",
+      "category": "personagem",
+      "notes": "O 'Homem Mais Forte do Mundo'; morto previamente.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Class 2-C",
+      "pt": "Turma 2-C",
+      "category": "grupo",
+      "notes": "Classe completa transportada para o outro mundo pela Deusa Vicius.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Cocoroniko Doran",
+      "pt": "Cocoroniko Doran",
+      "category": "personagem",
+      "notes": "Membro dos Quatro Guerreiros Resplandecentes; raça: dragonkin.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Country at the End of the World",
+      "pt": "País no Fim do Mundo",
+      "category": "nação",
+      "notes": "Nação subterrânea, lar de várias raças demi-humanas e do Clã das Palavras Proibidas.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Cruelty complex",
+      "pt": "complexo de crueldade",
+      "category": "psicologia",
+      "notes": "Termo conceitual relacionado ao trauma passado de Belzegea e sua dificuldade em controlar impulsos violentos ao lembrar de abuso materno.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Cursed paralysis magic",
+      "pt": "magia amaldiçoada de paralisia",
+      "category": "magia",
+      "notes": "Versão avançada da magia amaldiçoada de Belzegea que permite paralisar alvos e modular intensidade (de bloquear fala a imobilizar o corpo inteiro).",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Dark elves",
+      "pt": "elfos negros",
+      "category": "raça",
+      "notes": "Povo do Clã Shanatilis, exterminados por Alion. Centrais ao trauma e motivação de Belzegea.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Demi-human",
+      "pt": "demi-humano",
+      "category": "raça",
+      "notes": "Raças meio-humanas, incluindo harpia, lamia, kobolds, centauros, etc.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Demon King",
+      "pt": "Rei Demônio",
+      "category": "entidade",
+      "notes": "Grande ameaça do mundo onde a classe 2-C foi invocada. Fonte de Demon King Essence. Grande inimigo da humanidade; força invasora do norte.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Demon King (direct presence)",
+      "pt": "Rei Demônio (presença direta)",
+      "category": "entidade",
+      "notes": "Primeira vez em que o Rei Demônio aparece fisicamente na narrativa, invadindo o castelo de Alion com sua essência avassaladora.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Demon King Essence",
+      "pt": "Essência do Rei Demônio",
+      "category": "energia",
+      "notes": "Recurso necessário para que a Deusa envie os heróis de volta ao mundo original. Energia liberada quando o Rei Demônio é destruído; pode ser coletada com o colar entregue pela Deusa.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Demon King Presence Surge",
+      "pt": "surto de presença do Rei Demônio",
+      "category": "conceito",
+      "notes": "Fenômeno em que a aura/essência do Rei Demônio se intensifica abruptamente, fazendo humanos desmaiarem instantaneamente.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Disciple of Vicius",
+      "pt": "Discípulo de Vicius",
+      "category": "título",
+      "notes": "Título oferecido pela Deusa Vicius a indivíduos que ela deseja controlar mais diretamente.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Dispel Bubble",
+      "pt": "Bolha de Dissipação",
+      "category": "magia",
+      "notes": "Barreira permanente da Deusa que anula efeitos de status.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Divine beast",
+      "pt": "besta divina",
+      "category": "criatura",
+      "notes": "Criatura lendária que acompanha a Espada da Coragem.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Divine Blade",
+      "pt": "Lâmina Divina",
+      "category": "arma",
+      "notes": "Arma empunhada pelo Imperador da Beleza Selvagem. Provavelmente de origem divina.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Divines",
+      "pt": "Divinos",
+      "category": "conceito",
+      "notes": "Entidades superiores às quais a Deusa pertence; pouco documentados, possivelmente regulados por um sistema.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Doran Clan",
+      "pt": "Clã Doran",
+      "category": "clã",
+      "notes": "Clã dragonkin ao qual Cocoroniko pertence. Possui dívida histórica com os arachne; Cocoroniko tende a apoiá-los.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Dragonic Buster",
+      "pt": "Impacto Dracônico",
+      "category": "habilidade",
+      "notes": "Habilidade Única de Kirihara Takuto. Extremamente destrutiva.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Dropped Adventurer Weapons",
+      "pt": "Armas Abandonadas de Aventureiros",
+      "category": "item",
+      "notes": "Armas deixadas por heróis e guerreiros mortos nas Ruínas. Frequentemente danificadas ou corroídas.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Elite Five",
+      "pt": "Cinco de Elite",
+      "category": "grupo",
+      "notes": "Força militar que Belzegea eliminou.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Erika Anaorbael",
+      "pt": "Erika Anaorbael",
+      "category": "personagem",
+      "notes": "A Bruxa Proibida; também chamada de 'Anael' pelos habitantes do País no Fim do Mundo.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Essence Capture Collar",
+      "pt": "Colar Capturador de Essência",
+      "category": "artefato",
+      "notes": "Item que coleta a essência quando o Rei Demônio é derrotado. Artefato entregue pela Deusa; captura a energia do Rei Demônio após sua morte.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Execution mentality of Alion Knights",
+      "pt": "mentalidade de execução dos cavaleiros de Alion",
+      "category": "conceito",
+      "notes": "Culturalmente veem demi-humanos como bens descartáveis ou 'sub-humanos', justificando atrocidades.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Execution of harpy messengers",
+      "pt": "execução das mensageiras harpias",
+      "category": "evento",
+      "notes": "A Primeira Ordem admite ter abatido as harpias enviadas por Lise para negociações.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Ferenoch Darden",
+      "pt": "Ferenoch Darden",
+      "category": "personagem",
+      "notes": "Vice-capitão da Sexta Ordem de Alion; personalidade intimidadora e fria, verdadeira liderança prática.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "First Order of Knights",
+      "pt": "Primeira Ordem de Cavaleiros",
+      "category": "ordem militar",
+      "notes": "Divisão militar comandada por Michaela; parte das Treze Ordens de Alion.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Fly Swordswoman",
+      "pt": "Espadachim da Mosca",
+      "category": "título",
+      "notes": "Título pelo qual Seras Ashrain é brevemente referida pelos humanos ao acompanharem Belzegea.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Forbidden magic",
+      "pt": "magia proibida",
+      "category": "magia",
+      "notes": "Tipo de magia secreta associada a artefatos antigos. Poder oculto contido nos Pergaminhos da Magia Proibida.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Forbidden Witch",
+      "pt": "Bruxa Proibida",
+      "category": "título",
+      "notes": "Título de Erika Anaorbael; especialista em magia proibida.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Forbidden Words Clan",
+      "pt": "Clã das Palavras Proibidas",
+      "category": "clã",
+      "notes": "Clã misterioso associado a magia antiga proibida. Clan misterioso capaz de ler e interpretar Magia Proibida; também chamados 'Kurosaga'.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Forbidden Words Mark",
+      "pt": "Marca das Palavras Proibidas",
+      "category": "símbolo",
+      "notes": "Símbolo gravado no corpo de membros do Clã Kurosaga; representa asas, braços, olhos, espada, escudo e correntes. Essencial para o uso de magia proibida sem morrer.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Fortress of Zoldo",
+      "pt": "Fortaleza de Zoldo",
+      "category": "fortaleza",
+      "notes": "Local estratégico ao sul de Ulza.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Fortress of Zoldo (recapture)",
+      "pt": "Fortaleza de Zoldo (recaptura)",
+      "category": "evento",
+      "notes": "Evento militar em que Mira captura a fortaleza. O capítulo destaca a retirada estratégica caso heróis S-class apareçam.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Four Shining Warriors",
+      "pt": "Quatro Guerreiros Resplandecentes",
+      "category": "título/grupo",
+      "notes": "Quatro campeões da elite militar do País no Fim do Mundo.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Geo Shadowblade",
+      "pt": "Geo Shadowblade",
+      "category": "personagem",
+      "notes": "Membro dos Quatro Guerreiros Resplandecentes; raça: leopardman.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "God-killer",
+      "pt": "Matador de Deuses",
+      "category": "lenda",
+      "notes": "Lenda mencionada pelo Imperador da Beleza Selvagem.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Goddess Messenger",
+      "pt": "mensageiro da Deusa",
+      "category": "função",
+      "notes": "Agente que porta ordens enviadas pela Deusa via ‘pombo de guerra mágico’. Morto por Johndoe no Capítulo 3.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Goddess Vicius",
+      "pt": "Deusa Vicius",
+      "category": "entidade",
+      "notes": "Deusa responsável pelo ritual de invocação dos heróis. Manipuladora e cruel.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Goddess's Iron Mask",
+      "pt": "máscara de ferro da Deusa",
+      "category": "item",
+      "notes": "Equipamento utilizado pela Sexta Ordem para impedir Yasu de usar sua habilidade única. Bloqueia ativação mágica pela boca.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Gratrah",
+      "pt": "Gratrah",
+      "category": "personagem",
+      "notes": "Harpia capitã da guarda pessoal do Rei Zect; extremamente rígida e desconfiada.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Great Wolves",
+      "pt": "Grandes Lobos",
+      "category": "criatura",
+      "notes": "Montarias velozes usadas pelo País no Fim do Mundo. Subordinam-se a Loa.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Harpy",
+      "pt": "Harpia",
+      "category": "raça",
+      "notes": "Demi-humanos com asas e características aviárias; compõem parte da guarda real.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Head trophy tradition",
+      "pt": "tradição de troféu de cabeça",
+      "category": "cultura militar",
+      "notes": "Prática mencionada entre ordens humanas de apresentar a cabeça de líderes sub-humanos como troféus militares.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Hero Mental Collapse Threshold",
+      "pt": "Limiar de Colapso Mental do Herói",
+      "category": "conceito",
+      "notes": "Estado psicológico crítico descrito por Mimori ao matar repetidamente monstros; início de sua transformação em Belzegea.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Hero of the Black Inferno",
+      "pt": "Herói do Inferno Negro",
+      "category": "título",
+      "notes": "Título de Yasu Tomohiro devido ao seu poder de chamas negras.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Hero of the Black Inferno (Yasu)",
+      "pt": "Herói do Inferno Negro (Yasu)",
+      "category": "título",
+      "notes": "Título depreciado ao longo do capítulo quando Yasu demonstra covardia e desequilíbrio psicológico.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Hero Punishment Mask",
+      "pt": "máscara de punição do herói",
+      "category": "item",
+      "notes": "Outro nome para a máscara de ferro da Deusa, criada para conter Yasu e heróis problemáticos.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Hero Rank System",
+      "pt": "Sistema de Rank de Heróis",
+      "category": "conceito",
+      "notes": "Classificação dos heróis: S, A, B, C, D, E. E-Class é considerado descartável.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Heroes from Another World",
+      "pt": "Heróis de Outro Mundo",
+      "category": "grupo",
+      "notes": "Grupo de heróis invocados de outro mundo (isekai).",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Hijiri Takao",
+      "pt": "Hijiri Takao",
+      "category": "personagem",
+      "notes": "Heroína convocada; extremamente poderosa.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Holy Empire of Neah",
+      "pt": "Sagrado Império de Neah",
+      "category": "império",
+      "notes": "Uma das grandes potências do continente.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "House of Eucalyon",
+      "pt": "Casa de Eucalyon",
+      "category": "família nobre",
+      "notes": "Família aristocrática de Alion; Michaela é o segundo filho.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Human negotiation protocol",
+      "pt": "protocolo de negociação humano",
+      "category": "conceito",
+      "notes": "Protocolo baseado no uso da bandeira branca; Lise acredita que representa intenção pacífica.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Humanoid Monster Slayer",
+      "pt": "Exterminadora de Monstros Humanoides",
+      "category": "título",
+      "notes": "Título adicional de Ayaka Sogou, usado pelo Império de Mira; reforça o reconhecimento internacional de suas façanhas.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Idatah Onik",
+      "pt": "Idatah Onik",
+      "category": "personagem",
+      "notes": "Membro do Clã Onik; assistente administrativa de Liselotte. Primeira a alertar sobre a fuga dos exércitos de Geo e Kil.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Immortal King",
+      "pt": "Rei Imortal",
+      "category": "título",
+      "notes": "Forma abreviada de se referir a King Zect.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Immortal King Zect",
+      "pt": "Rei Imortal Zect",
+      "category": "personagem",
+      "notes": "Rei esqueleto que governa o País no Fim do Mundo; figura sábia e respeitada.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Inner Circle Demon",
+      "pt": "Demônio do Círculo Interno",
+      "category": "demônio",
+      "notes": "Demônios de elite; muito acima do nível comum.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Inner Circle Essence threshold",
+      "pt": "limiar da essência do Círculo Interno",
+      "category": "conceito",
+      "notes": "Comparação feita por Ayaka e Hijiri ao perceberem que o efeito sentido no castelo é muito maior que o dos Demônios do Círculo Interno.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Johndoe",
+      "pt": "Johndoe",
+      "category": "personagem",
+      "notes": "Capitão oficial da Sexta Ordem; personalidade apagada; mantido pela nobreza apesar de ser fraco.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Johndoe (true personality)",
+      "pt": "Johndoe (verdadeira personalidade)",
+      "category": "personagem",
+      "notes": "Capitão da Sexta Ordem. Mostra comportamento frio, sádico e calculista; revelou-se extremamente perigoso neste capítulo.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Kil Mail",
+      "pt": "Kil Mail",
+      "category": "personagem",
+      "notes": "Membro dos Quatro Guerreiros Resplandecentes; raça: centauro.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Kirihara Takuto",
+      "pt": "Kirihara Takuto",
+      "category": "personagem",
+      "notes": "Aluno mais popular da turma; extremamente talentoso. Tornou-se herói Classe-S.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Kobold",
+      "pt": "Kobold",
+      "category": "raça",
+      "notes": "Demi-humanos com características caninas; habitantes do País no Fim do Mundo.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Kurosaga",
+      "pt": "Kurosaga",
+      "category": "clã",
+      "notes": "Nome interno do Clã das Palavras Proibidas; descendentes do sangue Kurosaga.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Kyokugen technique",
+      "pt": "técnica Kyokugen",
+      "category": "técnica",
+      "notes": "Técnica utilizada por Ayaka Sogou cuja sobrecarga no corpo está em recuperação neste capítulo.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Laevateinn",
+      "pt": "Laevateinn",
+      "category": "habilidade",
+      "notes": "Habilidade única de Yasu Tomohiro que manifesta chamas negras.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Lamia",
+      "pt": "Lâmia",
+      "category": "raça",
+      "notes": "Demi-humanas com corpo inferior serpentino e torso humano; presentes na guarda real.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Land of the Golden-eyed Monsters",
+      "pt": "Terra dos Monstros de Olhos Dourados",
+      "category": "região",
+      "notes": "Área habitada por monstros extremamente agressivos e hostis.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Leather Pouch (Mimori)",
+      "pt": "Bolsa de Couro (Mimori)",
+      "category": "item",
+      "notes": "Item único de Touka Mimori. Um cristal que produz luz ao receber mana e serve como sua única fonte de iluminação.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Leopardman",
+      "pt": "leopardman",
+      "category": "raça",
+      "notes": "Raça demi-humana felina. Geo e Yerma pertencem a esse grupo, com distinções como pelagem negra.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Leopardman concealment technique",
+      "pt": "técnica de ocultação dos leopardmen",
+      "category": "habilidade",
+      "notes": "Técnica de furtividade avançada usada pelos leopardmen para emboscadas; essencial à execução do plano.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Lewin Seale",
+      "pt": "Lewin Seale",
+      "category": "personagem",
+      "notes": "O Espada da Coragem; Guerreiro Sangue-Heróico.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Lion and Lily Crest",
+      "pt": "brasão do Leão e do Lírio",
+      "category": "símbolo",
+      "notes": "Brasão militar da unidade Bando do Sol, usado em armas cuja identidade foi raspada para ocultar participação em batalha.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Liselotte Onik",
+      "pt": "Liselotte Onik",
+      "category": "personagem",
+      "notes": "Primeira-ministra do País no Fim do Mundo; membro do clã Onik (arachne). Defende negociações pacíficas.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Loa",
+      "pt": "Loa",
+      "category": "criatura",
+      "notes": "Líder dos grandes lobos; cão de três cabeças capaz de fala parcial. Montaria utilizada por Liselotte.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Lord of the Flies Brigade",
+      "pt": "Brigada do Senhor das Moscas",
+      "category": "grupo",
+      "notes": "Grupo liderado por Belzegea; extremamente poderoso.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Lord of the Flies mask",
+      "pt": "máscara do Senhor das Moscas",
+      "category": "item",
+      "notes": "Máscara usada por Belzegea para ocultar sua identidade humana.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Luheit Mira",
+      "pt": "Luheit Mira",
+      "category": "personagem",
+      "notes": "Meio-irmão mais velho do Imperador Zine. Comandante das forças de Mira e estrategista militar supremo.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Magical war pigeon",
+      "pt": "pombo de guerra mágico",
+      "category": "item",
+      "notes": "Método usado pela Deusa para enviar ordens militares aos cavaleiros.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Magnar",
+      "pt": "Magnar",
+      "category": "nação",
+      "notes": "Região ao norte; severamente enfraquecida após batalhas.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Mail Clan",
+      "pt": "Clã Mail",
+      "category": "clã",
+      "notes": "Clã centauro ao qual Kil Mail pertence. Diferencia-se pela pele azulada e marca mágica na testa. Antigamente perseguidos por humanos.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Measurement Crystal",
+      "pt": "Cristal de Medição",
+      "category": "artefato",
+      "notes": "Cristal mágico usado para medir o rank de herói. Pode brilhar em diferentes cores ou quebrar.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Messenger disguise strategy",
+      "pt": "estratégia de disfarce de mensageiro",
+      "category": "estratégia",
+      "notes": "Tática de Belzegea para se infiltrar entre as ordens de Alion, falsificar relatórios e manipular movimentos do inimigo.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Michaela Eucalyon",
+      "pt": "Michaela Eucalyon",
+      "category": "personagem",
+      "notes": "Segundo filho da Casa Eucalyon, comandante das Treze Ordens de Alion e capitão da Primeira Ordem. Extremamente cruel e manipulador, apesar de aparência gentil.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Mimori Touka",
+      "pt": "Mimori Touka",
+      "category": "personagem",
+      "notes": "Protagonista. Classificado como herói Classe-E, considerado 'descartável' pela Deusa.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Minotaur Variant",
+      "pt": "Minotauro Variantes",
+      "category": "criatura",
+      "notes": "Monstro humanoide com cabeça bovina, olhos dourados, veias laranja e secreção ácida capaz de dissolver rocha e metal. Muito superior a um minotauro comum.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Mira",
+      "pt": "Mira",
+      "category": "império",
+      "notes": "Império governado pelo Imperador da Beleza Selvagem.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Monitoring System of the Divines",
+      "pt": "sistema de monitoramento dos Divinos",
+      "category": "conceito",
+      "notes": "Teoria de Hijiri: sistema que limita a interferência direta dos Divinos no mundo.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Monster Slayer King",
+      "pt": "Rei Exterminador de Monstros",
+      "category": "título",
+      "notes": "Rei de Ulza; aliado da Deusa Vicius.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Monster Slayer Knights",
+      "pt": "Cavaleiros Exterminadores de Monstros",
+      "category": "ordem",
+      "notes": "Força militar de Ulza.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Munin",
+      "pt": "Munin",
+      "category": "personagem",
+      "notes": "Líder do Clã Kurosaga; mulher adulta com asas negras.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Negotiation Strategy of Lise",
+      "pt": "estratégia de negociação de Lise",
+      "category": "conceito",
+      "notes": "Ideologia pacifista extrema defendida por Liselotte Onik para lidar com a invasão da Deusa; rejeita confronto militar.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Nightwall",
+      "pt": "Nightwall",
+      "category": "local",
+      "notes": "Região fortificada no norte onde ocorrerá a batalha decisiva contra o Rei Demônio.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Nyaki",
+      "pt": "Nyaki",
+      "category": "personagem",
+      "notes": "Besta divina infantil que acompanha Belzegea; chave viva para abrir o portão do País no Fim do Mundo.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Nyantan Kikipat",
+      "pt": "Nyantan Kikipat",
+      "category": "personagem",
+      "notes": "Guerreira extremamente poderosa de Alion; tratada como 'Nee-nya' por Nyaki.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Okito Academy",
+      "pt": "Academia Okito",
+      "category": "instituição",
+      "notes": "Escola onde estudam Kirihara, Mimori, Sogou e o restante da classe 2-C.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Onik Clan",
+      "pt": "Clã Onik",
+      "category": "clã",
+      "notes": "Clã de aranhas humanoides (arachne) responsáveis por tecnologia e política no País no Fim do Mundo.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Oyamada Shougo",
+      "pt": "Oyamada Shougo",
+      "category": "personagem",
+      "notes": "Delinquente da classe 2-C; agressivo e violento. Tornado herói Classe-A.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Paralyze",
+      "pt": "Paralisar",
+      "category": "magia",
+      "notes": "Efeito de status disponível para Mimori via sua habilidade única.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Paralyze (Cursed Magic)",
+      "pt": "Paralisar (Magia Amaldiçoada)",
+      "category": "magia",
+      "notes": "Habilidade específica de Belzegea usada repetidamente neste capítulo para imobilizar adversários e controlar intensidade.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Paralyze Gauge",
+      "pt": "Medidor de Paralisia",
+      "category": "sistema",
+      "notes": "Barra amarela que surge acima de monstros afetados pelo Paralyze de Mimori. Indica duração exata do efeito.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Piggymaru",
+      "pt": "Piggymaru",
+      "category": "personagem",
+      "notes": "Slime companheiro de Belzegea; capaz de compreender fala humana e transmitir mensagens.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Poison",
+      "pt": "Veneno",
+      "category": "magia",
+      "notes": "Efeito de status inicial de Mimori; considerado fraco pela Deusa.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Poison Foam Effect",
+      "pt": "Efeito de Espuma Venenosa",
+      "category": "habilidade",
+      "notes": "Forma visual do efeito Poison de Mimori. Cria bolhas translúcidas que corroem o alvo lentamente.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Pursuit of deserters (Geo and Kil)",
+      "pt": "perseguição aos desertores (Geo e Kil)",
+      "category": "evento",
+      "notes": "Evento desencadeado após a fuga das unidades de Geo e Kil; motivação central do capítulo.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Radice",
+      "pt": "Radice",
+      "category": "personagem",
+      "notes": "Besta divina de pelo rosa; membro da Sexta Ordem, impulsivo e agressivo.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Root of All Evil",
+      "pt": "Raiz de Todo o Mal",
+      "category": "entidade",
+      "notes": "Entidade primordial cuja invasão provocou caos continental e permitiu a fuga dos demi-humanos e do Clã das Palavras Proibidas.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Ruins of Disposal",
+      "pt": "Ruínas do Descarte",
+      "category": "local",
+      "notes": "Local onde os heróis Classe-E são enviados para morrer. Local para onde Mimori é banido. Local onde Belzegea encontrou as blue dragonstones no passado; associado a morte e abandono.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Ruins of Disposal Inner Zone",
+      "pt": "Zona Interna das Ruínas do Descarte",
+      "category": "local",
+      "notes": "Área profunda das Ruínas onde residem monstros altamente corrosivos e extremamente agressivos. Muito mais perigosa que a entrada superficial.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "S-class Hero unit",
+      "pt": "unidade dos Heróis Classe-S",
+      "category": "grupo",
+      "notes": "Grupo composto pelos heróis mais poderosos: Hijiri, Kirihara, Sogou Ayaka. Considerados ameaças significativas até por grandes potências militares.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Sacred Alliance",
+      "pt": "Aliança Sagrada",
+      "category": "organização",
+      "notes": "Coalizão de nações contra o Rei Demônio.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Scrolls of Forbidden Magic",
+      "pt": "Pergaminhos da Magia Proibida",
+      "category": "artefato",
+      "notes": "Arquivos antigos contendo magia proibida que só o Clã das Palavras Proibidas consegue ler.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Settling",
+      "pt": "assentamento",
+      "category": "processo",
+      "notes": "Processo de absorver um feitiço de magia proibida no corpo do usuário antes de poder ativá-lo.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Seven Lights",
+      "pt": "Sete Lumes",
+      "category": "grupo",
+      "notes": "Título coletivo: Rei Zect, os Quatro Guerreiros Resplandecentes, a guarda pessoal e o primeiro-ministro. Grupo máximo de liderança do País no Fim do Mundo; composto por Rei Zect, os Quatro Guerreiros Resplandecentes, a guarda pessoal e o primeiro-ministro. Amplamente destacado no Capítulo 3 nas reuniões estratégicas.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Shadowblade Clan",
+      "pt": "Clã Shadowblade",
+      "category": "clã",
+      "notes": "Clã de leopardmen de pelagem negra liderado por Geo Shadowblade. Tornou-se um dos pilares militares do País no Fim do Mundo.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Shadowblade Territory",
+      "pt": "Território Shadowblade",
+      "category": "local",
+      "notes": "Região habitada por leopardmen de pelagem negra; contém a casa de Geo onde ocorre a reunião secreta com Belzegea.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Shanatilis Clan",
+      "pt": "Clã Shanatilis",
+      "category": "clã",
+      "notes": "Clã dos elfos negros exterminado pela Sexta Ordem de Alion. Conectado pessoalmente a Belzegea, que busca vingança.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Shining Dragon Band",
+      "pt": "Bando do Dragão Resplandecente",
+      "category": "força militar",
+      "notes": "Um dos quatro exércitos principais, composto majoritariamente de raças dragonkin.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Shining Horse Band",
+      "pt": "Bando do Cavalo Resplandecente",
+      "category": "força militar",
+      "notes": "Exército formado principalmente por centauros, sob influência do Clã Mail. Comandado por Kil Mail; fortemente envolvido na retomada da batalha contra a Primeira Ordem.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Shining Leopard Band",
+      "pt": "Bando do Leopardo Resplandecente",
+      "category": "força militar",
+      "notes": "Exército subordinado a Cocoroniko e Geo; contém leopardmen de elite. Comandado por Geo. Neste capítulo, sofre deserção forçada e posteriormente engaja o inimigo com táticas de alto impacto.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Shining Snake Band",
+      "pt": "Bando da Serpente Resplandecente",
+      "category": "força militar",
+      "notes": "Um dos quatro exércitos principais do País no Fim do Mundo; subordinado aos Quatro Guerreiros Resplandecentes.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Shock of first kill",
+      "pt": "choque do primeiro abate",
+      "category": "conceito",
+      "notes": "Condição emocional mencionada por Belzegea como possível reação dos soldados do País no Fim do Mundo após matarem por primeira vez.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Silfigzea",
+      "pt": "Silfigzea",
+      "category": "espírito",
+      "notes": "Suposto espírito do vento capaz de detectar mentiras; possivelmente relacionado à habilidade de Hijiri.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Sixth Order of Knights",
+      "pt": "Sexta Ordem de Cavaleiros",
+      "category": "ordem militar",
+      "notes": "Força militar elite de Alion.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Sleep",
+      "pt": "Sono",
+      "category": "magia",
+      "notes": "Efeito de status pertencente ao conjunto de habilidades de Mimori.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Sleep Gauge",
+      "pt": "Medidor de Sono",
+      "category": "sistema",
+      "notes": "Barra azul que aparece quando o efeito Sleep é aplicado em um alvo.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Slei",
+      "pt": "Slei",
+      "category": "personagem",
+      "notes": "Monstro aliado de Belzegea, capaz de transformações em múltiplos estágios.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Sogou Ayaka",
+      "pt": "Sogou Ayaka",
+      "category": "personagem",
+      "notes": "Representante de classe; inteligente e treinada em artes marciais. Heroína Classe-S.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Sogude Sigmus",
+      "pt": "Sogude Sigmus",
+      "category": "personagem",
+      "notes": "Líder dos White Wolf Riders e comandante das forças aliadas para a batalha final contra o Rei Demônio.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Sound spheres",
+      "pt": "esferas sonoras",
+      "category": "item",
+      "notes": "Dispositivos mágicos usados para transmitir sinais auditivos entre unidades em campo. Funcionam com ativação de mana.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Special Abilities of the Marked",
+      "pt": "habilidades especiais dos Marcados",
+      "category": "habilidade",
+      "notes": "Conjunto de habilidades únicas dos membros do Clã Kurosaga que possuem a marca em seu corpo.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Specialist Skill Tree",
+      "pt": "Árvore de Especialista",
+      "category": "sistema",
+      "notes": "Tipo raro de árvore de habilidades possuído por Sogou Ayaka.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Speed Clan",
+      "pt": "Clã da Velocidade",
+      "category": "clã",
+      "notes": "Clã de leopardmen exterminado por humanos. Importante para o desenvolvimento de Geo e para a relação com Eve Speed.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Status Effect Stacking Rules",
+      "pt": "Regras de Acúmulo de Status",
+      "category": "sistema",
+      "notes": "Conjunto de regras que definem que o mesmo efeito não pode ser reaplicado duas vezes no mesmo alvo consecutivamente; efeitos diferentes podem coexistir.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Status Screen",
+      "pt": "Tela de Status",
+      "category": "sistema",
+      "notes": "Interface mágica semelhante a RPGs que exibe atributos e habilidades dos heróis.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Summoning Ritual",
+      "pt": "Ritual de Invocação",
+      "category": "evento",
+      "notes": "Processo usado para trazer os heróis do outro mundo. Realizado pela Deusa.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Supreme Hero",
+      "pt": "Herói Supremo",
+      "category": "título",
+      "notes": "Como Yasu se autodenomina; indica seu ego inflado e percepção distorcida de poder.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Survival Instinct Awakening",
+      "pt": "Despertar do Instinto de Sobrevivência",
+      "category": "conceito",
+      "notes": "Momento em que Mimori ativa sua mentalidade assassina para sobreviver aos monstros das Ruínas.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Sword of Courage",
+      "pt": "Espada da Coragem",
+      "category": "título/epíteto",
+      "notes": "Título de Lewin Seale; herói extremamente poderoso.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Takao Hijiri",
+      "pt": "Takao Hijiri",
+      "category": "personagem",
+      "notes": "Uma das irmãs Takao; comportada, fria e extremamente racional. Heroína Classe-S.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Takao Itsuki",
+      "pt": "Takao Itsuki",
+      "category": "personagem",
+      "notes": "Irmã mais nova de Hijiri; energética e provocadora. Heroína Classe-A.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Takuto Kirihara",
+      "pt": "Takuto Kirihara",
+      "category": "personagem",
+      "notes": "Um dos heróis convocados de outro mundo.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Thirteen Orders of Alion",
+      "pt": "Treze Ordens de Alion",
+      "category": "organização",
+      "notes": "As treze divisões militares de elite do reino de Alion. Estrutura militar comandada por Michaela. Neste capítulo, é confirmada a origem e hierarquia das ordens.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Three-eyed Wolf",
+      "pt": "Lobo de Três Olhos",
+      "category": "criatura",
+      "notes": "Monstro usado pela Deusa para provar sua força e a realidade do outro mundo.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Thunder Wind",
+      "pt": "Vento Trovejante",
+      "category": "habilidade",
+      "notes": "Extensão avançada da habilidade de Hijiri; permite inclusive carregar a bateria do smartphone.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Tonoa Water",
+      "pt": "água de Tonoa",
+      "category": "item",
+      "notes": "Bebida oferecida pela Deusa; pode ser suspeita ou usada para observação psicológica.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Transformation ability (Munin)",
+      "pt": "habilidade de transformação (Munin)",
+      "category": "habilidade",
+      "notes": "Poder dos marcados do Clã Kurosaga; Munin pode transformar-se em um corvo e encolher asas.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Ulza",
+      "pt": "Ulza",
+      "category": "nação",
+      "notes": "Nação vizinha de Mira; aliada de Alion.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Unique Item",
+      "pt": "Item Único",
+      "category": "item",
+      "notes": "Item mágico que surge junto do herói durante a invocação. Mimori recebe apenas um saco que emite luz.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Unique Skill",
+      "pt": "Habilidade Única",
+      "category": "habilidade",
+      "notes": "Habilidade exclusiva concedida a cada herói no momento da invocação.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Unseen Mana Reserve",
+      "pt": "Reserva Oculta de Mana",
+      "category": "conceito",
+      "notes": "Quantidade de mana natural não exibida nos status, distinta do ‘MP’ exibido como modificador. Mimori depende dela para continuar usando habilidades.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Valley battlefield",
+      "pt": "campo de batalha do vale",
+      "category": "local",
+      "notes": "Área estreita em desfiladeiro onde a emboscada contra Geo e contra a Primeira Ordem ocorre.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Vicius",
+      "pt": "Vicius",
+      "category": "personagem",
+      "notes": "A 'Deusa' de Alion; manipuladora e antagonista.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Vote of the Seven Lights",
+      "pt": "votação dos Sete Lumes",
+      "category": "evento",
+      "notes": "Votação decisiva para determinar se o País no Fim do Mundo lutará ou negociará com as forças da Deusa.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "White Citadel",
+      "pt": "Cidadela Branca",
+      "category": "fortaleza",
+      "notes": "Local de batalha importante anteriormente citado.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "White negotiation flag",
+      "pt": "bandeira branca de negociação",
+      "category": "símbolo",
+      "notes": "Sinal diplomático usado por Liselotte e suas forças para demonstrar ausência de hostilidade.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "White Wolf King",
+      "pt": "Rei do Lobo Branco",
+      "category": "título",
+      "notes": "Rei de Magnar; desaparecido.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "White Wolf Riders",
+      "pt": "Cavaleiros do Lobo Branco",
+      "category": "força militar",
+      "notes": "Divisão militar de Magnar. Unidade de elite de Magnar; fortalece a aliança contra o Rei Demônio.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Wildly Beautiful Emperor",
+      "pt": "Imperador da Beleza Selvagem",
+      "category": "título",
+      "notes": "Epíteto do imperador de Mira; indica beleza extrema e personalidade fria.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Wind (Unique Skill)",
+      "pt": "Vento (Habilidade Única)",
+      "category": "habilidade",
+      "notes": "Habilidade única de Takao Hijiri; capaz de detectar presença, verificação de mentiras e outras aplicações.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Yasu Tomohiro",
+      "pt": "Yasu Tomohiro",
+      "category": "personagem",
+      "notes": "Aluno fraco na escola, mas revelado como herói Classe-A com comportamento psicótico.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Yerma Shadowblade",
+      "pt": "Yerma Shadowblade",
+      "category": "personagem",
+      "notes": "Esposa de Geo; leopardwoman pacífica e diplomática. Presente na reunião dos Sete Lumes.",
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "key": "Yonato",
+      "pt": "Yonato",
+      "category": "estado",
+      "notes": "Estado ao norte de Mira; geralmente hostil a Mira.",
+      "source": "manual",
+      "locked": true
+    }
+  ]
+}

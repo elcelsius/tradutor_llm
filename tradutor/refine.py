@@ -14,7 +14,20 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+from desquebrar import normalize_md_paragraphs
+
 from .config import AppConfig
+from .glossary_utils import (
+    DEFAULT_GLOSSARY_PROMPT_LIMIT,
+    GLOSSARIO_SUGERIDO_FIM,
+    GLOSSARIO_SUGERIDO_INICIO,
+    GlossaryState,
+    apply_suggestions_to_state,
+    format_glossary_for_prompt,
+    parse_glossary_suggestions,
+    save_dynamic_glossary,
+    split_refined_and_suggestions,
+)
 from .llm_backend import LLMBackend
 from .preprocess import chunk_for_refine, paragraphs_from_text
 from .sanitizer import sanitize_refine_output
@@ -141,7 +154,36 @@ def _prepare_progress(
     )
 
 
-def build_refine_prompt(section: str) -> str:
+def build_refine_prompt(section: str, glossary_enabled: bool = False, glossary_block: str | None = None) -> str:
+    glossary_text = ""
+    if glossary_enabled:
+        block = glossary_block.strip() if glossary_block else ""
+        glossary_lines = [
+            "GLOSSÁRIO E TERMINOLOGIA (obrigatório):",
+            "Obedeça estritamente ao glossário para nomes próprios, títulos, lugares e termos especiais.",
+            "Se identificar termos novos importantes, sugira entradas ao final da resposta.",
+        ]
+        if block:
+            glossary_lines.append("")
+            glossary_lines.append(block)
+        glossary_lines.extend(
+            [
+                "",
+                "FORMATO DE SAÍDA:",
+                "1) Texto refinado completo.",
+                "2) Depois, bloco de sugestões de glossário delimitado exatamente por:",
+                GLOSSARIO_SUGERIDO_INICIO,
+                "key: ...",
+                "pt: ...",
+                "category: ...",
+                "notes: ...",
+                "---",
+                GLOSSARIO_SUGERIDO_FIM,
+                "Se não houver novos termos, deixe o bloco vazio ou escreva 'nenhum'.",
+            ]
+        )
+        glossary_text = "\n".join(glossary_lines)
+
     return f"""
 Você é um REVISOR LITERÁRIO PROFISSIONAL especializado em romances adultos, dark fantasy e narrativa intensa.
 
@@ -185,6 +227,8 @@ REGRAS ABSOLUTAS:
 7) Não retornar instruções, explicações ou qualquer coisa além do texto revisado.
    A resposta deve ser APENAS o texto final revisado.
 
+{glossary_text}
+
 Texto para revisão:
 \"\"\"{section}\"\"\"
 """
@@ -221,6 +265,8 @@ def refine_section(
     logger: logging.Logger,
     index: int,
     total: int,
+    glossary_state: GlossaryState | None = None,
+    glossary_prompt_limit: int = DEFAULT_GLOSSARY_PROMPT_LIMIT,
 ) -> str:
     paragraphs = paragraphs_from_text(body)
     chunks = chunk_for_refine(paragraphs, max_chars=cfg.refine_chunk_chars, logger=logger)
@@ -228,6 +274,7 @@ def refine_section(
     refined_parts: List[str] = []
     stats = _CURRENT_STATS
     progress = _CURRENT_PROGRESS
+    glossary_block = None
 
     for c_idx, chunk in enumerate(chunks, start=1):
         block_idx = _next_block_index()
@@ -240,32 +287,54 @@ def refine_section(
                 stats.success_blocks += 1
             _write_progress(progress, logger)
             continue
-        prompt = build_refine_prompt(chunk)
+        if glossary_state:
+            glossary_block = format_glossary_for_prompt(
+                glossary_state.combined_index,
+                glossary_prompt_limit,
+            )
+        prompt = build_refine_prompt(
+            chunk,
+            glossary_enabled=bool(glossary_state),
+            glossary_block=glossary_block,
+        )
         logger.debug("Refinando seção com %d caracteres...", len(chunk))
         try:
-            text = _call_with_retry(
+            response_text = _call_with_retry(
                 backend=backend,
                 prompt=prompt,
                 cfg=cfg,
                 logger=logger,
                 label=f"ref-{index}/{total}-{c_idx}/{len(chunks)}",
             )
-            if len(text.strip()) < len(chunk.strip()) * 0.80:
+            refined_text = response_text
+            if glossary_state:
+                refined_text, suggestion_block = split_refined_and_suggestions(response_text)
+                suggestions = parse_glossary_suggestions(suggestion_block or "")
+                if suggestions:
+                    updated = apply_suggestions_to_state(glossary_state, suggestions, logger)
+                    if updated:
+                        save_dynamic_glossary(glossary_state, logger)
+                        glossary_block = format_glossary_for_prompt(
+                            glossary_state.combined_index,
+                            glossary_prompt_limit,
+                        )
+
+            if len(refined_text.strip()) < len(chunk.strip()) * 0.80:
                 logger.warning(
                     "Refinador devolveu texto menor do que deveria; mantendo texto original (chunk %d/%d da seção %s).",
                     c_idx,
                     len(chunks),
                     title or f"#{index}",
                 )
-                text = chunk
-            logger.debug("Seção refinada com %d caracteres.", len(text))
-            refined_parts.append(text)
+                refined_text = chunk
+            logger.debug("Seção refinada com %d caracteres.", len(refined_text))
+            refined_parts.append(refined_text)
             if stats:
                 stats.success_blocks += 1
             if progress:
                 progress.refined_blocks.add(block_idx)
                 progress.error_blocks.discard(block_idx)
-                progress.chunk_outputs[block_idx] = text
+                progress.chunk_outputs[block_idx] = refined_text
         except RuntimeError as exc:
             placeholder = f"<!-- ERRO: refine do bloco {c_idx} falhou por timeout – revisar manualmente -->"
             logger.warning(
@@ -300,8 +369,13 @@ def refine_markdown_file(
     logger: logging.Logger,
     progress_path: Path | None = None,
     resume_manifest: dict | None = None,
+    normalize_paragraphs: bool = False,
+    glossary_state: GlossaryState | None = None,
+    glossary_prompt_limit: int = DEFAULT_GLOSSARY_PROMPT_LIMIT,
 ) -> None:
     md_text = read_text(input_path)
+    if normalize_paragraphs:
+        md_text = normalize_md_paragraphs(md_text)
     sections = split_markdown_sections(md_text)
     logger.info("Arquivo %s: %d seções detectadas", input_path.name, len(sections))
     stats = RefineStats()
@@ -336,6 +410,8 @@ def refine_markdown_file(
                     logger=logger,
                     index=idx,
                     total=len(sections),
+                    glossary_state=glossary_state,
+                    glossary_prompt_limit=glossary_prompt_limit,
                 )
             )
 
@@ -346,6 +422,8 @@ def refine_markdown_file(
     final_md = sanitize_refine_output(final_md)
 
     write_text(output_path, final_md)
+    if glossary_state:
+        save_dynamic_glossary(glossary_state, logger)
     logger.info(
         "Refine concluído: %s (blocos: total=%d sucesso=%d placeholders=%d)",
         output_path.name,

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Iterable
 
 from .config import AppConfig, ensure_paths, load_config
+from .glossary_utils import build_glossary_state
 from .llm_backend import LLMBackend
 from .pdf_export import markdown_to_pdf
 from .pdf_reader import extract_pdf_text
@@ -63,6 +64,31 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
         "--resume",
         action="store_true",
         help="Retoma refine usando manifesto de progresso existente (se houver).",
+    )
+    r.add_argument(
+        "--normalize-paragraphs",
+        action="store_true",
+        help="Normaliza parágrafos do .md antes de refinar (remove quebras internas).",
+    )
+    r.add_argument(
+        "--use-glossary",
+        action="store_true",
+        help="Ativa modo de glossário (manual + dinâmico) nas chamadas de refine.",
+    )
+    r.add_argument(
+        "--auto-glossary-dir",
+        type=str,
+        help="Diretório opcional contendo vários JSONs de glossário manual (todos serão carregados).",
+    )
+    r.add_argument(
+        "--manual-glossary",
+        type=str,
+        help="Arquivo JSON de glossário manual (somente leitura).",
+    )
+    r.add_argument(
+        "--dynamic-glossary",
+        type=str,
+        help="Arquivo JSON de glossário dinâmico (padrão: saida/glossario_dinamico.json).",
     )
 
     return parser
@@ -214,6 +240,19 @@ def run_refine(args, cfg: AppConfig, logger: logging.Logger) -> None:
         cfg.refine_chunk_chars,
     )
 
+    glossary_state = None
+    if getattr(args, "use_glossary", False):
+        manual_path = Path(args.manual_glossary) if args.manual_glossary else None
+        manual_dir = Path(args.auto_glossary_dir) if getattr(args, "auto_glossary_dir", None) else None
+        dynamic_path = Path(args.dynamic_glossary) if args.dynamic_glossary else cfg.output_dir / "glossario_dinamico.json"
+        logger.info(
+            "Modo glossário ativo. Manual: %s | Dinâmico: %s | Auto-dir: %s",
+            manual_path if manual_path else "nenhum",
+            dynamic_path,
+            manual_dir if manual_dir else "nenhum",
+        )
+        glossary_state = build_glossary_state(manual_path, dynamic_path, logger, manual_dir=manual_dir)
+
     for md in md_files:
         stem = md.stem.replace("_pt", "")
         output_md = cfg.output_dir / f"{stem}_pt_refinado.md"
@@ -249,6 +288,8 @@ def run_refine(args, cfg: AppConfig, logger: logging.Logger) -> None:
             logger=logger,
             progress_path=progress_path,
             resume_manifest=resume_manifest,
+            normalize_paragraphs=getattr(args, "normalize_paragraphs", False),
+            glossary_state=glossary_state,
         )
         markdown_to_pdf(
             markdown_text=read_text(output_md),
