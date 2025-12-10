@@ -1,6 +1,6 @@
 # Tradutor Literario com LLMs (Ollama/Gemini)
 
-Pipeline de traducao/refine para novels adultas e PDFs em PT-BR, com foco em **zero alucinacao**. Fluxo principal:
+Pipeline de traducao/refine (EN → PT-BR) para novels adultas e PDFs em PT-BR, com foco em **zero alucinacao**. Fluxo principal:
 - **Passo 1 - Traducao** (`tradutor/main.py` subcomando `traduz`): le PDFs, pre-processa, faz chunking seguro, traduz em lotes e gera Markdown.
 - **Passo 2 - Refine opcional** (`tradutor/main.py` subcomando `refina`): le `*_pt.md` em `saida/`, detecta capitulos (`## `) e refina capitulo a capitulo gerando `*_pt_refinado.md` sem sobrescrever o original.
 
@@ -45,11 +45,12 @@ tests/
   ```
  Principais libs: `google-generativeai`, `PyMuPDF`, `fpdf`, `requests`, `sacrebleu`, `PyYAML`.
 - Ollama instalado (padrao). Para Gemini, defina `GEMINI_API_KEY`.
+- Hardware sugerido: GPU com ~16GB VRAM para rodar os modelos padrão com folga local.
 
 ## Configuracao
 - Opcional: crie um `config.yaml` na raiz (existe um `config.example.yaml` de referencia) para ajustar parametros sem editar codigo.
 - Parametros relevantes:
-  - `translate_chunk_chars`: tamanho maximo do chunk de traducao (padrao 3200).
+  - `translate_chunk_chars` / `refine_chunk_chars`: tamanho maximo do chunk (padrao 3200 para ambos).
   - `request_timeout`: timeout HTTP (segundos) para chamadas ao LLM (padrao 60; aumente manualmente se precisar).
 
 ---
@@ -72,6 +73,8 @@ python -m tradutor.main traduz
 python -m tradutor.main traduz --input "data/meu_livro.pdf"
 # modo debug (salva raw/preprocessed)
 python -m tradutor.main traduz --debug --input "data/meu_livro.pdf"
+# retomar traducao do ponto salvo (usa manifesto *_pt_progress.json)
+python -m tradutor.main traduz --resume --input "data/meu_livro.pdf"
 # usando Gemini
 python -m tradutor.main traduz --backend gemini --model gemini-3-pro-preview
 # pular refine automatico ao final
@@ -92,6 +95,8 @@ python -m tradutor.main refina
 
 # refina um arquivo especifico
 python -m tradutor.main refina --input "saida/MEU_ARQUIVO_pt.md"
+# retomar refine do ponto salvo (usa manifesto *_pt_refinado_progress.json)
+python -m tradutor.main refina --resume --input "saida/MEU_ARQUIVO_pt.md"
 
 # modo legados (wrappers):
 python refinador.py --input "saida/MEU_ARQUIVO_pt.md"
@@ -102,6 +107,9 @@ saida/MEU_ARQUIVO_pt_refinado.md
 saida/MEU_ARQUIVO_pt_refinado.pdf
 ```
 O original `*_pt.md` nunca e sobrescrito.
+Manifestos de progresso:
+- Tradução: `saida/<nome>_pt_progress.json`
+- Refine: `saida/<nome>_pt_refinado_progress.json`
 
 ---
 
@@ -121,10 +129,10 @@ O original `*_pt.md` nunca e sobrescrito.
   - Calcula BLEU/chrF (sacrebleu) e latencia media por modelo; ajuste lista em `DEFAULT_MODELS`.
 - Benchmark rapido de LLMs no prompt de traducao: `python -m tradutor.bench_llms --input benchmark/teste_traducao_en.md --max-chars 1500 --out-dir benchmark/traducao`
   - Gera uma traducao por modelo (Ollama) em `benchmark/traducao/` + um `resumo_<slug>.md` com tempos.
-  - Sem `--models`, usa todos os modelos retornados por `ollama list`; passe `--models <m1> <m2>` para limitar.
+  - Sem `--models`, detecta dinamicamente os modelos instalados (`ollama list`/`/api/tags`); passe `--models <m1> <m2>` para limitar.
 - Benchmark rapido de LLMs no prompt de refine (texto em PT): `python -m tradutor.bench_refine_llms --input benchmark/teste_refine_pt.md --max-chars 1500 --out-dir benchmark/refine`
   - Gera uma revisao por modelo (Ollama) em `benchmark/refine/` + um `resumo_refine_<slug>.md` com tempos.
-  - Mesma deteccao automatica de modelos via `ollama list` quando `--models` nao e informado.
+  - Mesma deteccao automatica de modelos via `ollama list`/`/api/tags` quando `--models` nao e informado.
 
 ---
 
