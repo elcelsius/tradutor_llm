@@ -57,7 +57,7 @@ Prompts especializados para novels:
 - Opcional: crie um `config.yaml` na raiz (há um `config.example.yaml` de referência) para ajustar parâmetros sem editar código.
 - Parâmetros relevantes:
 - `translate_chunk_chars` / `refine_chunk_chars`: tamanho máximo do chunk (padrão 2400 para ambos).
-  - `request_timeout`: timeout HTTP (segundos) para chamadas ao LLM (padrão 90; aumente manualmente se precisar).
+  - `request_timeout`: timeout HTTP (segundos) para chamadas ao LLM (padrão 60; aumente manualmente se precisar).
 
 ---
 
@@ -65,7 +65,7 @@ Prompts especializados para novels:
 - Tradução: backend `ollama`, modelo `brunoconterato/Gemma-3-Gaia-PT-BR-4b-it:f16`, temperatura `0.15`, chunk `2400` caracteres.
 - Refine: backend `ollama`, modelo `cnmoro/gemma3-gaia-ptbr-4b:q4_k_m`, temperatura `0.30`, chunk `2400` caracteres.
 - Retry: 3 tentativas, backoff exponencial.
-- Timeout HTTP padrão: `90s` (usado nas chamadas LLM).
+- Timeout HTTP padrão: `60s` (usado nas chamadas LLM).
 - Sanitização: remove `<think>...</think>`, meta-comentários (PT/EN), repetições/loops e respostas vazias ou contaminadas (falha e re-tenta).
 
 ---

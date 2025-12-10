@@ -67,114 +67,86 @@ def is_structural_line(line: str) -> bool:
 
 def normalize_md_paragraphs(text: str) -> str:
     """
-    Normaliza parágrafos de Markdown usando heurísticas mais estritas para evitar colagem indevida.
-
-    Regras de decisão para juntar (merge) current_line com prev_line:
-    1) Estruturais: nunca juntam (heading/lista/tabela/código/etc.).
-    2) Diálogo/Título/Travessão/Pontuação (não juntar):
-       - Se current_line começa com aspas (“, ") ou travessão (—, –, -), nunca junta.
-       - Se prev_line termina com pontuação final forte (. ! ? ” ") e current_line começa com maiúscula, nunca junta.
-       - Se prev_line termina com travessão (—, –, --) e current_line começa com aspas ou maiúscula, nunca junta.
-       - Se current_line for título em maiúsculas curto (<40 chars, sem pontuação) ou começar com Capítulo/Prólogo/Epílogo/Parte/Livro/Volume (<100 chars), nunca junta.
-       - Se prev_line for toda maiúscula curta (<100 chars) e a atual começa com maiúscula, não junta.
-       - Se prev_line termina com ponto (.) e current_line começa com aspas, não junta.
-    3) Continuação (único caso que junta):
-       - Se current_line começa com minúscula, junta; OU
-       - Se prev_line não termina com pontuação terminal (. ! ? … ” "), junta.
-    Caso contrário, novo parágrafo.
+    Normaliza parágrafos com lógica estrita para não colar Títulos e Diálogos.
     """
     lines = text.splitlines()
-    output: list[str] = []
-    paragraph: list[str] = []
-    in_code_block = False
+    output = []
+    current_paragraph = []
 
-    dialogue_prefix = re.compile(r'^\s*(?:—|–|-|"|“)')  # marcadores de diálogo
-    starts_lower = re.compile(r'^\s*[a-záàâãéèêíïóôõöúçñ]')  # minúsculas comuns PT
-    starts_upper = re.compile(r'^\s*[A-ZÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ]')  # maiúsculas comuns PT
-    ends_with_terminal = re.compile(r'[\.!?…”"]\s*$')
-    ends_with_dash = re.compile(r'(—|–|--)\s*$')
-    title_keyword = re.compile(r'^\s*(cap[íi]tulo|pr[óo]logo|ep[íi]logo|parte|livro|volume)\b', re.IGNORECASE)
+    def flush_paragraph():
+        if current_paragraph:
+            # Junta o buffer. Remove espaços duplos que possam surgir.
+            full_text = " ".join(current_paragraph).strip()
+            output.append(full_text)
+            current_paragraph.clear()
 
-    def flush_paragraph() -> None:
-        if paragraph:
-            output.append(" ".join(paragraph).strip())
-            paragraph.clear()
+    # Regex Compilados para Performance e Precisão
+
+    # 1. Detecta início de diálogo (Aspas curvas/retas ou travessão)
+    # Ex: "Olá", “Olá”, — Olá, - Olá
+    RE_DIALOGUE_START = re.compile(r'^\s*(?:[“"\'\-] |[—–])')
+
+    # 2. Detecta Títulos comuns em Novels (Capítulo X, Prólogo, etc ou CAIXA ALTA CURTA)
+    RE_TITLE_KEYWORD = re.compile(r'^\s*(?:capítulo|prólogo|epílogo|parte|volume|livro|interlúdio)\b', re.IGNORECASE)
+    RE_ALL_CAPS_SHORT = re.compile(r'^\s*[A-Z0-9\W]{3,50}\s*$')  # Linhas curtas em CAPS LOCK
+
+    # 3. Detecta fim de sentença forte (., !, ?, ", ”)
+    RE_SENTENCE_END = re.compile(r'(?:[.?!]|”|")\s*$')
+
+    # 4. Detecta fim com travessão (interrupção)
+    RE_DASH_END = re.compile(r'[—–-]\s*$')
 
     for raw_line in lines:
-        if is_fenced_code_boundary(raw_line):
-            flush_paragraph()
-            output.append(raw_line.rstrip("\n"))
-            in_code_block = not in_code_block
-            continue
-
-        if in_code_block:
-            output.append(raw_line.rstrip("\n"))
-            continue
-
         stripped = raw_line.strip()
-        if stripped == "":
+
+        # A. Se linha vazia ou estrutural (Markdown), flush imediato.
+        if not stripped or is_structural_line(raw_line):
             flush_paragraph()
-            output.append("")
+            output.append(raw_line.rstrip())  # Mantém estrutura original
             continue
 
-        if is_structural_line(raw_line):
-            flush_paragraph()
-            output.append(raw_line.rstrip("\n"))
+        # Se não temos nada no buffer, inicia novo parágrafo
+        if not current_paragraph:
+            current_paragraph.append(stripped)
             continue
 
-        # Heurísticas de junção
-        if not paragraph:
-            paragraph.append(stripped)
-            continue
+        prev_line = current_paragraph[-1]
 
-        prev_line = paragraph[-1]
-        join = False
+        # --- LÓGICA DE DECISÃO (Devemos Juntar?) ---
+        should_merge = True
 
-        # Guardrails: separação obrigatória
-        # Título por palavra-chave explícita (<80 chars)
-        if title_keyword.match(stripped) and len(stripped) < 80:
-            flush_paragraph()
-            output.append(stripped)
-            paragraph.clear()
-            continue
+        # REGRA 1: Títulos (Prioridade Máxima)
+        # Se parece título (palavra chave ou caixa alta curta), NÃO junta.
+        if RE_TITLE_KEYWORD.match(stripped) or RE_ALL_CAPS_SHORT.match(stripped):
+            should_merge = False
 
-        prev_upper_short = len(prev_line) < 100 and prev_line.isupper()
+        # REGRA 2: Diálogos
+        # Se a linha atual começa com aspas ou travessão, é fala nova. NÃO junta.
+        elif RE_DIALOGUE_START.match(stripped):
+            should_merge = False
 
-        # Proteção de diálogo (aspas iniciais)
-        if dialogue_prefix.match(stripped):
-            join = False
-        # Proteção de travessão final: só junta se atual começa com minúscula
-        elif ends_with_dash.search(prev_line):
-            if starts_lower.match(stripped):
-                join = True
+        # REGRA 3: Pontuação Forte + Letra Maiúscula
+        # Se a anterior acabou em ponto e a atual começa com Maiúscula, é novo parágrafo.
+        # (Exceção: se a atual começa com minúscula, é continuação errada do OCR, então junta).
+        elif RE_SENTENCE_END.search(prev_line) and stripped[0].isupper():
+            should_merge = False
+
+        # REGRA 4: Travessão de Interrupção
+        # Se a anterior acabou em "—" e a atual começa com Maiúscula ou Aspas, NÃO junta.
+        elif RE_DASH_END.search(prev_line) and (stripped[0].isupper() or stripped.startswith(('“', '"'))):
+            should_merge = False
+
+        # --- APLICAÇÃO ---
+        if should_merge:
+            # Tratamento especial para palavras hifenizadas quebradas (ex: "comuni-\ncação")
+            if prev_line.endswith('-') and not prev_line.endswith(' -'):
+                current_paragraph[-1] = prev_line[:-1] + stripped
             else:
-                join = False
-        # Proteção de pontuação forte + próxima maiúscula
-        elif ends_with_terminal.search(prev_line) and starts_upper.match(stripped):
-            join = False
-        # Título em maiúsculas curto sem pontuação => não junta
-        elif len(stripped) < 40 and stripped.isupper() and not ends_with_terminal.search(stripped):
-            join = False
-        # Prev toda maiúscula curta + atual maiúscula => não junta
-        elif prev_upper_short and starts_upper.match(stripped):
-            join = False
-        # Prev termina com ponto e atual começa com aspas => não junta
-        elif prev_line.rstrip().endswith(".") and dialogue_prefix.match(stripped):
-            join = False
+                current_paragraph.append(stripped)
         else:
-            # Único caso que junta: começa com minúscula OU anterior sem pontuação terminal
-            if starts_lower.match(stripped):
-                join = True
-            elif not ends_with_terminal.search(prev_line):
-                join = True
-            else:
-                join = False
-
-        if join:
-            paragraph.append(stripped)
-        else:
+            # Não junta -> Flush do anterior e começa novo
             flush_paragraph()
-            paragraph.append(stripped)
+            current_paragraph.append(stripped)
 
     flush_paragraph()
     return "\n".join(output)

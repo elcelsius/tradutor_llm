@@ -49,7 +49,7 @@ class AppConfig:
     backoff_factor: float = 1.8
 
     # Timeouts
-    request_timeout: int = 90
+    request_timeout: int = 60
 
     # PDF
     pdf_title_font_size: int = 16
