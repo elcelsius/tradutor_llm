@@ -305,6 +305,7 @@ def refine_section(
                 cfg=cfg,
                 logger=logger,
                 label=f"ref-{index}/{total}-{c_idx}/{len(chunks)}",
+                max_retries=1,
             )
             refined_text = response_text
             if glossary_state:
@@ -327,6 +328,14 @@ def refine_section(
                     title or f"#{index}",
                 )
                 refined_text = chunk
+            if len(refined_text.strip()) > len(chunk.strip()) * 2.0:
+                logger.warning(
+                    "Refinador devolveu texto muito maior do que o original; mantendo texto original (chunk %d/%d da seção %s).",
+                    c_idx,
+                    len(chunks),
+                    title or f"#{index}",
+                )
+                refined_text = chunk
             logger.debug("Seção refinada com %d caracteres.", len(refined_text))
             refined_parts.append(refined_text)
             if stats:
@@ -336,22 +345,20 @@ def refine_section(
                 progress.error_blocks.discard(block_idx)
                 progress.chunk_outputs[block_idx] = refined_text
         except RuntimeError as exc:
-            placeholder = f"<!-- ERRO: refine do bloco {c_idx} falhou por timeout – revisar manualmente -->"
             logger.warning(
-                "Chunk ref-%d/%d-%d/%d falhou após %d tentativas; adicionando placeholder. Erro: %s",
+                "Chunk ref-%d/%d-%d/%d falhou; usando texto original. Erro: %s",
                 index,
                 total,
                 c_idx,
                 len(chunks),
-                cfg.max_retries,
                 exc,
             )
-            refined_parts.append(placeholder)
+            refined_parts.append(chunk)
             if stats:
                 stats.error_blocks += 1
             if progress:
                 progress.error_blocks.add(block_idx)
-                progress.chunk_outputs[block_idx] = placeholder
+                progress.chunk_outputs[block_idx] = chunk
         finally:
             _write_progress(progress, logger)
 
@@ -439,10 +446,12 @@ def _call_with_retry(
     cfg: AppConfig,
     logger: logging.Logger,
     label: str,
+    max_retries: int | None = None,
 ) -> str:
     delay = cfg.initial_backoff
     last_error: Exception | None = None
-    for attempt in range(1, cfg.max_retries + 1):
+    attempts = max_retries if max_retries is not None else cfg.max_retries
+    for attempt in range(1, attempts + 1):
         try:
             latency, response = timed(backend.generate, prompt)
             text = sanitize_refine_output(response.text)
@@ -452,7 +461,8 @@ def _call_with_retry(
             return text
         except Exception as exc:
             last_error = exc
-            logger.warning("%s falhou (tentativa %d/%d): %s", label, attempt, cfg.max_retries, exc)
-            time.sleep(delay)
-            delay *= cfg.backoff_factor
-    raise RuntimeError(f"{label} falhou após {cfg.max_retries} tentativas: {last_error}")
+            logger.warning("%s falhou (tentativa %d/%d): %s", label, attempt, attempts, exc)
+            if attempt < attempts:
+                time.sleep(delay)
+                delay *= cfg.backoff_factor
+    raise RuntimeError(f"{label} falhou após {attempts} tentativas: {last_error}")

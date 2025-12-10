@@ -35,7 +35,7 @@ class LLMBackend:
         temperature: float,
         logger: logging.Logger,
         base_url: str = "http://localhost:11434",
-        request_timeout: int = 60,
+        request_timeout: int = 90,
         gemini_api_key: Optional[str] = None,
     ) -> None:
         self.backend = backend
@@ -63,7 +63,10 @@ class LLMBackend:
             "model": self.model,
             "prompt": prompt,
             "stream": False,
-            "options": {"temperature": self.temperature},
+            "options": {
+                "temperature": self.temperature,
+                "num_predict": 768,
+            },
         }
         try:
             resp = requests.post(url, json=payload, timeout=self.request_timeout)

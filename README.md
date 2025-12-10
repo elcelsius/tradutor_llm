@@ -56,16 +56,16 @@ Prompts especializados para novels:
 ## Configuração
 - Opcional: crie um `config.yaml` na raiz (há um `config.example.yaml` de referência) para ajustar parâmetros sem editar código.
 - Parâmetros relevantes:
-  - `translate_chunk_chars` / `refine_chunk_chars`: tamanho máximo do chunk (padrão 3200 para ambos).
-  - `request_timeout`: timeout HTTP (segundos) para chamadas ao LLM (padrão 60; aumente manualmente se precisar).
+- `translate_chunk_chars` / `refine_chunk_chars`: tamanho máximo do chunk (padrão 2400 para ambos).
+  - `request_timeout`: timeout HTTP (segundos) para chamadas ao LLM (padrão 90; aumente manualmente se precisar).
 
 ---
 
 ## Modelos e parâmetros padrão
-- Tradução: backend `ollama`, modelo `brunoconterato/Gemma-3-Gaia-PT-BR-4b-it:f16`, temperatura `0.15`, chunk `3200` caracteres.
-- Refine: backend `ollama`, modelo `cnmoro/gemma3-gaia-ptbr-4b:q4_k_m`, temperatura `0.30`, chunk `3200` caracteres.
+- Tradução: backend `ollama`, modelo `brunoconterato/Gemma-3-Gaia-PT-BR-4b-it:f16`, temperatura `0.15`, chunk `2400` caracteres.
+- Refine: backend `ollama`, modelo `cnmoro/gemma3-gaia-ptbr-4b:q4_k_m`, temperatura `0.30`, chunk `2400` caracteres.
 - Retry: 3 tentativas, backoff exponencial.
-- Timeout HTTP padrão: `60s` (usado nas chamadas LLM).
+- Timeout HTTP padrão: `90s` (usado nas chamadas LLM).
 - Sanitização: remove `<think>...</think>`, meta-comentários (PT/EN), repetições/loops e respostas vazias ou contaminadas (falha e re-tenta).
 
 ---
@@ -162,7 +162,7 @@ Isso cria, para cada `*.pdf` em `data/`, os arquivos `saida/<nome>_raw_extract.m
 ## Sanitização e robustez
 - Remove `<think>`/`</think>`, meta-texto (inclusive inglês), loops e blocos repetidos.
 - Falha e re-tenta em caso de contaminação ou resposta vazia.
-- Chunking seguro (3200/3200 chars) com cortes duros se necessário; evita chunks gigantes.
+- Chunking seguro (2400/2400 chars) com cortes duros se necessário; evita chunks gigantes.
 - Logs detalhados por chunk, sanitização e tempo de processamento.
 - Logs informam backend/model/temperatura/chunk usados em tradução e refine (inclusive opcional).
 

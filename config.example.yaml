@@ -1,9 +1,9 @@
 # Copie para config.yaml e ajuste conforme necessidade.
 # Valores padrao mais seguros para chunk e timeout.
 
-translate_chunk_chars: 3200   # tamanho maximo do chunk de traducao
-refine_chunk_chars: 3200      # tamanho maximo do chunk de refine
-request_timeout: 60           # timeout HTTP (segundos) nas chamadas de LLM
+translate_chunk_chars: 2400   # tamanho maximo do chunk de traducao
+refine_chunk_chars: 2400      # tamanho maximo do chunk de refine
+request_timeout: 90           # timeout HTTP (segundos) nas chamadas de LLM
 
 # Outros campos opcionais (descomente e ajuste se quiser):
 # translate_backend: ollama

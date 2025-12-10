@@ -40,8 +40,8 @@ class AppConfig:
     refine_temperature: float = 0.30
 
     # Chunk sizes
-    translate_chunk_chars: int = 3200
-    refine_chunk_chars: int = 3200
+    translate_chunk_chars: int = 2400
+    refine_chunk_chars: int = 2400
 
     # Tentativas e backoff
     max_retries: int = 3
@@ -49,7 +49,7 @@ class AppConfig:
     backoff_factor: float = 1.8
 
     # Timeouts
-    request_timeout: int = 60
+    request_timeout: int = 90
 
     # PDF
     pdf_title_font_size: int = 16

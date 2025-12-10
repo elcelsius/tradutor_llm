@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Tuple
 
 GlossaryEntry = Dict[str, Any]
 GlossaryIndex = Dict[str, GlossaryEntry]
+GlossaryPtIndex = Dict[str, GlossaryEntry]
 
 GLOSSARIO_SUGERIDO_INICIO = "===GLOSSARIO_SUGERIDO_INICIO==="
 GLOSSARIO_SUGERIDO_FIM = "===GLOSSARIO_SUGERIDO_FIM==="
@@ -19,8 +20,26 @@ def normalize_key(key: str) -> str:
     return key.strip().lower()
 
 
+def normalize_value(value: str) -> str:
+    """Normaliza textos (key/pt) para comparação insensível a caixa/espaços."""
+    return value.strip().lower()
+
+
 def _build_index(terms: List[GlossaryEntry]) -> GlossaryIndex:
     return {normalize_key(str(term.get("key", ""))): term for term in terms if str(term.get("key", "")).strip()}
+
+
+def _build_manual_pt_index(terms: List[GlossaryEntry]) -> GlossaryPtIndex:
+    """Índice auxiliar por campo pt (normalizado) para evitar duplicar conceitos no dinâmico."""
+    idx: GlossaryPtIndex = {}
+    for term in terms:
+        pt_raw = str(term.get("pt", "")).strip()
+        if not pt_raw:
+            continue
+        pt_norm = normalize_value(pt_raw)
+        if pt_norm and pt_norm not in idx:
+            idx[pt_norm] = term
+    return idx
 
 
 def _merge_indexes(manual_index: GlossaryIndex, dynamic_index: GlossaryIndex) -> GlossaryIndex:
@@ -100,11 +119,13 @@ class GlossaryState:
     dynamic_index: GlossaryIndex
     combined_index: GlossaryIndex
     dynamic_path: Path | None
+    manual_pt_index: GlossaryPtIndex
 
     def refresh_combined(self) -> None:
         """Recalcula índices combinados a partir das listas atuais."""
         self.manual_index = _build_index(self.manual_terms)
         self.dynamic_index = _build_index(self.dynamic_terms)
+        self.manual_pt_index = _build_manual_pt_index(self.manual_terms)
         self.combined_index = _merge_indexes(self.manual_index, self.dynamic_index)
 
 
@@ -132,6 +153,7 @@ def build_glossary_state(
         dynamic_index=_build_index(dynamic_terms),
         combined_index={},
         dynamic_path=dynamic_path,
+        manual_pt_index=_build_manual_pt_index(manual_terms),
     )
     state.combined_index = _merge_indexes(state.manual_index, state.dynamic_index)
     return state
@@ -234,11 +256,18 @@ def apply_suggestions_to_state(
     for entry in suggestions:
         key_raw = str(entry.get("key", "")).strip()
         pt = str(entry.get("pt", "")).strip()
-        if not key_raw or not pt:
+        # Para o refinador, tratamos key/pt como o mesmo rótulo em PT-BR
+        term_pt = pt or key_raw
+        if not key_raw or not pt or not term_pt.strip():
             continue
-        key_norm = normalize_key(key_raw)
+        key_norm = normalize_key(term_pt)
         category = entry.get("category")
         notes = entry.get("notes")
+
+        pt_norm = normalize_value(pt) if pt else ""
+        if pt_norm and pt_norm in state.manual_pt_index:
+            logger.debug("Ignorando sugestão de glossário para '%s' (pt já definido no manual).", key_raw)
+            continue
 
         if key_norm in state.manual_index:
             logger.debug("Ignorando sugestão de glossário para '%s' (definido no manual).", key_raw)
@@ -250,8 +279,9 @@ def apply_suggestions_to_state(
                 logger.debug("Entrada dinâmica '%s' está bloqueada; não será alterada.", existing.get("key"))
                 continue
             updated = False
-            if pt and pt != existing.get("pt"):
-                existing["pt"] = pt
+            if term_pt and term_pt != existing.get("pt"):
+                existing["pt"] = term_pt
+                existing["key"] = term_pt
                 updated = True
             if category and category != existing.get("category"):
                 existing["category"] = category
@@ -265,8 +295,8 @@ def apply_suggestions_to_state(
             continue
 
         new_entry: GlossaryEntry = {
-            "key": key_raw,
-            "pt": pt,
+            "key": term_pt,
+            "pt": term_pt,
             "category": category if category else None,
             "notes": notes if notes else None,
             "source": "dynamic",
