@@ -67,32 +67,33 @@ def is_structural_line(line: str) -> bool:
 
 def normalize_md_paragraphs(text: str) -> str:
     """
-    Collapses wrapped prose lines inside paragraphs while preserving Markdown structure.
+    Normaliza parágrafos de Markdown usando heurísticas mais estritas para evitar colagem indevida.
 
-    Rules:
-    - Blank lines separate paragraphs and are kept as-is (multiple blanks are preserved).
-    - Headings, lists, blockquotes, tables and code fences are not merged.
-    - Code blocks fenced with ``` are left untouched.
-    - Prose lines inside a paragraph are trimmed and joined with a single space.
-
-    Example:
-        Input:
-            Line one broken
-            in two parts.
-
-            - Bullet
-            Continuation
-
-        Output:
-            Line one broken in two parts.
-
-            - Bullet
-            Continuation
+    Regras de decisão para juntar (merge) current_line com prev_line:
+    1) Estruturais: nunca juntam (heading/lista/tabela/código/etc.).
+    2) Diálogo/Título/Travessão/Pontuação (não juntar):
+       - Se current_line começa com aspas (“, ") ou travessão (—, –, -), nunca junta.
+       - Se prev_line termina com pontuação final forte (. ! ? ” ") e current_line começa com maiúscula, nunca junta.
+       - Se prev_line termina com travessão (—, –, --) e current_line começa com aspas ou maiúscula, nunca junta.
+       - Se current_line for título em maiúsculas curto (<40 chars, sem pontuação) ou começar com Capítulo/Prólogo/Epílogo/Parte/Livro/Volume (<100 chars), nunca junta.
+       - Se prev_line for toda maiúscula curta (<100 chars) e a atual começa com maiúscula, não junta.
+       - Se prev_line termina com ponto (.) e current_line começa com aspas, não junta.
+    3) Continuação (único caso que junta):
+       - Se current_line começa com minúscula, junta; OU
+       - Se prev_line não termina com pontuação terminal (. ! ? … ” "), junta.
+    Caso contrário, novo parágrafo.
     """
     lines = text.splitlines()
     output: list[str] = []
     paragraph: list[str] = []
     in_code_block = False
+
+    dialogue_prefix = re.compile(r'^\s*(?:—|–|-|"|“)')  # marcadores de diálogo
+    starts_lower = re.compile(r'^\s*[a-záàâãéèêíïóôõöúçñ]')  # minúsculas comuns PT
+    starts_upper = re.compile(r'^\s*[A-ZÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ]')  # maiúsculas comuns PT
+    ends_with_terminal = re.compile(r'[\.!?…”"]\s*$')
+    ends_with_dash = re.compile(r'(—|–|--)\s*$')
+    title_keyword = re.compile(r'^\s*(cap[íi]tulo|pr[óo]logo|ep[íi]logo|parte|livro|volume)\b', re.IGNORECASE)
 
     def flush_paragraph() -> None:
         if paragraph:
@@ -121,7 +122,57 @@ def normalize_md_paragraphs(text: str) -> str:
             output.append(raw_line.rstrip("\n"))
             continue
 
-        paragraph.append(stripped)
+        # Heurísticas de junção
+        if not paragraph:
+            paragraph.append(stripped)
+            continue
+
+        prev_line = paragraph[-1]
+        join = False
+
+        # Título por palavra-chave explícita
+        if title_keyword.match(stripped) and len(stripped) < 100:
+            flush_paragraph()
+            output.append(stripped)
+            paragraph.clear()
+            continue
+
+        prev_upper_short = len(prev_line) < 100 and prev_line.isupper()
+
+        # Regra de Ouro: diálogos ou fim forte + próxima maiúscula => não junta
+        if dialogue_prefix.match(stripped):
+            join = False
+        elif ends_with_terminal.search(prev_line) and starts_upper.match(stripped):
+            join = False
+        # Travessão final: só junta se atual começa com minúscula (continuação)
+        elif ends_with_dash.search(prev_line):
+            if starts_lower.match(stripped):
+                join = True
+            else:
+                join = False
+        # Título em maiúsculas curto sem pontuação => não junta
+        elif len(stripped) < 40 and stripped.isupper() and not ends_with_terminal.search(stripped):
+            join = False
+        # Prev toda maiúscula curta + atual maiúscula => não junta
+        elif prev_upper_short and starts_upper.match(stripped):
+            join = False
+        # Prev termina com ponto e atual começa com aspas => não junta
+        elif prev_line.rstrip().endswith(".") and dialogue_prefix.match(stripped):
+            join = False
+        else:
+            # Único caso que junta: começa com minúscula OU anterior sem pontuação terminal
+            if starts_lower.match(stripped):
+                join = True
+            elif not ends_with_terminal.search(prev_line):
+                join = True
+            else:
+                join = False
+
+        if join:
+            paragraph.append(stripped)
+        else:
+            flush_paragraph()
+            paragraph.append(stripped)
 
     flush_paragraph()
     return "\n".join(output)
