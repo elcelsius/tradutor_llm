@@ -39,6 +39,7 @@ def call_ollama(model: str, prompt: str, endpoint: str, cfg: AppConfig, logger: 
         logger=logger,
         base_url=base_url,
         request_timeout=cfg.request_timeout,
+        repeat_penalty=cfg.refine_repeat_penalty,
     )
     start = time.monotonic()
     refined = _call_with_retry(

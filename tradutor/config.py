@@ -38,6 +38,8 @@ class AppConfig:
     # Temperaturas
     translate_temperature: float = 0.15
     refine_temperature: float = 0.30
+    translate_repeat_penalty: float = 1.1
+    refine_repeat_penalty: float | None = None
 
     # Chunk sizes
     translate_chunk_chars: int = 2400

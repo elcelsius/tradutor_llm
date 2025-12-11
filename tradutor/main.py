@@ -11,14 +11,18 @@ from pathlib import Path
 from typing import Iterable
 
 from .config import AppConfig, ensure_paths, load_config
-from .glossary_utils import build_glossary_state
+from .glossary_utils import build_glossary_state, format_manual_pairs_for_translation
 from .llm_backend import LLMBackend
 from .pdf_export import markdown_to_pdf
 from .pdf_reader import extract_pdf_text
+from .advanced_preprocess import clean_text as advanced_clean
 from .preprocess import preprocess_text
 from .refine import refine_markdown_file
+from .postprocess import final_pt_postprocess
 from .translate import translate_document
 from .utils import setup_logging, write_text, read_text
+from .structure_normalizer import normalize_structure
+from .editor import editor_pipeline
 
 
 def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
@@ -49,6 +53,27 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
         "--resume",
         action="store_true",
         help="Retoma tradução usando manifesto de progresso existente (se houver).",
+    )
+    t.add_argument(
+        "--use-glossary",
+        action="store_true",
+        help="Ativa uso do glossário manual durante a tradução (EN->PT).",
+    )
+    t.add_argument(
+        "--manual-glossary",
+        type=str,
+        help="Arquivo JSON de glossário manual para a tradução (padrão: glossario/glossario_manual.json).",
+    )
+    t.add_argument(
+        "--parallel",
+        type=int,
+        default=1,
+        help="Número de workers paralelos (tradução). Contexto mantém ordem; valores >1 são ajustados se necessário.",
+    )
+    t.add_argument(
+        "--preprocess-advanced",
+        action="store_true",
+        help="Ativa pré-processamento avançado opcional antes da tradução/refine.",
     )
 
     # Subcomando: refinar
@@ -90,6 +115,27 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
         type=str,
         help="Arquivo JSON de glossário dinâmico (padrão: saida/glossario_dinamico.json).",
     )
+    r.add_argument(
+        "--debug-refine",
+        action="store_true",
+        help="Salva arquivos de debug (orig/raw/final) dos primeiros chunks de refine.",
+    )
+    r.add_argument(
+        "--parallel",
+        type=int,
+        default=1,
+        help="Número de workers paralelos para refine (ordem preservada na montagem).",
+    )
+    r.add_argument(
+        "--preprocess-advanced",
+        action="store_true",
+        help="Ativa pré-processamento avançado opcional no Markdown antes do refine.",
+    )
+    r.add_argument("--editor-lite", action="store_true", help="Ativa modo editor lite pós-refine.")
+    r.add_argument("--editor-consistency", action="store_true", help="Ativa modo editor consistency pós-refine.")
+    r.add_argument("--editor-voice", action="store_true", help="Ativa modo editor voice pós-refine.")
+    r.add_argument("--editor-strict", action="store_true", help="Ativa modo editor strict pós-refine.")
+    r.add_argument("--editor-report", action="store_true", help="Gera relatório das mudanças do editor.")
 
     return parser
 
@@ -121,6 +167,7 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
         temperature=cfg.translate_temperature,
         logger=logger,
         request_timeout=cfg.request_timeout,
+        repeat_penalty=cfg.translate_repeat_penalty,
     )
     logger.info(
         "LLM de tradução: backend=%s model=%s temp=%.2f chunk=%d",
@@ -130,11 +177,24 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
         cfg.translate_chunk_chars,
     )
 
+    glossary_text = None
+    glossary_state = None
+    if getattr(args, "use_glossary", False):
+        manual_path = Path(args.manual_glossary) if args.manual_glossary else Path("glossario/glossario_manual.json")
+        glossary_state = build_glossary_state(manual_path=manual_path, dynamic_path=None, logger=logger, manual_dir=None)
+        if glossary_state:
+            glossary_text = format_manual_pairs_for_translation(glossary_state.manual_terms, limit=30)
+            logger.info("Glossário manual carregado para tradução: %d termos (usando até 30 no prompt).", len(glossary_state.manual_terms))
+        else:
+            logger.warning("Uso de glossário solicitado, mas nenhum glossário manual carregado.")
+
     for pdf in pdfs:
         logger.info("Traduzindo PDF: %s", pdf.name)
         raw_text = extract_pdf_text(pdf, logger)
         if not raw_text.strip():
             raise SystemExit(f"PDF {pdf.name} não possui texto extraído (pode ser imagem/scan).")
+        if getattr(args, "preprocess_advanced", False):
+            raw_text = advanced_clean(raw_text)
         if args.debug:
             logger.debug("Debug ativado: salvando também raw_extract e preprocessed.")
             raw_out = cfg.output_dir / f"{pdf.stem}_raw_extract.md"
@@ -179,6 +239,9 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
             source_slug=pdf.stem,
             progress_path=progress_path,
             resume_manifest=resume_manifest,
+            glossary_text=glossary_text,
+            debug_translation=getattr(args, "debug", False),
+            parallel_workers=max(1, getattr(args, "parallel", 1)),
         )
 
         md_path = cfg.output_dir / f"{pdf.stem}_pt.md"
@@ -197,6 +260,7 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                 temperature=cfg.refine_temperature,
                 logger=logger,
                 request_timeout=cfg.request_timeout,
+                repeat_penalty=cfg.refine_repeat_penalty,
             )
             logger.info(
                 "LLM de refine (opcional): backend=%s model=%s temp=%.2f chunk=%d",
@@ -231,6 +295,7 @@ def run_refine(args, cfg: AppConfig, logger: logging.Logger) -> None:
         temperature=cfg.refine_temperature,
         logger=logger,
         request_timeout=cfg.request_timeout,
+        repeat_penalty=cfg.refine_repeat_penalty,
     )
     logger.info(
         "LLM de refine: backend=%s model=%s temp=%.2f chunk=%d",
@@ -290,9 +355,33 @@ def run_refine(args, cfg: AppConfig, logger: logging.Logger) -> None:
             resume_manifest=resume_manifest,
             normalize_paragraphs=getattr(args, "normalize_paragraphs", False),
             glossary_state=glossary_state,
+            debug_refine=getattr(args, "debug_refine", False),
+            parallel_workers=max(1, getattr(args, "parallel", 1)),
+            preprocess_advanced=getattr(args, "preprocess_advanced", False),
         )
+        # pós-processamento final em PT-BR antes de PDF
+        refined_text = read_text(output_md)
+        editor_flags = {
+            "lite": getattr(args, "editor_lite", False),
+            "consistency": getattr(args, "editor_consistency", False),
+            "voice": getattr(args, "editor_voice", False),
+            "strict": getattr(args, "editor_strict", False),
+        }
+        editor_changes = []
+        if any(editor_flags.values()):
+            refined_text, editor_changes = editor_pipeline(refined_text, editor_flags)
+            if getattr(args, "editor_report", False):
+                report_path = cfg.output_dir / "editor_report.json"
+                report_payload = {
+                    "modes": [k for k, v in editor_flags.items() if v],
+                    "changes": editor_changes,
+                }
+                report_path.write_text(json.dumps(report_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        refined_text = final_pt_postprocess(refined_text)
+        refined_text = normalize_structure(refined_text)
+        write_text(output_md, refined_text)
         markdown_to_pdf(
-            markdown_text=read_text(output_md),
+            markdown_text=refined_text,
             output_path=output_pdf,
             font_dir=cfg.font_dir,
             title_size=cfg.pdf_title_font_size,

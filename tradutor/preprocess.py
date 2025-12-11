@@ -133,8 +133,70 @@ def paragraphs_from_text(clean_text: str) -> List[str]:
 
 
 def chunk_for_translation(paragraphs: List[str], max_chars: int, logger: logging.Logger) -> List[str]:
-    """Chunk seguro para tradução com limite estrito."""
-    return chunk_by_paragraphs(paragraphs, max_chars=max_chars, logger=logger, label="tradução")
+    """
+    Chunk seguro para tradução com ajuste leve por fronteira de frase.
+
+    Usa max_chars como alvo, mas permite pequeno lookahead para fechar
+    o chunk no fim de frase (., ?, !) evitando cortar falas.
+    """
+    text = "\n\n".join(p.strip() for p in paragraphs if p.strip())
+    if not text:
+        return []
+
+    boundary_re = re.compile(r"\n\n|[.!?](?:['\"”])?(?=\s|\n|$)")
+    chunks: List[str] = []
+    start = 0
+    total_len = len(text)
+    lookahead = 400  # permite estouro controlado para terminar frase
+    consumed = 0
+
+    while start < total_len:
+        target_end = start + max_chars
+        hard_end = min(total_len, start + max_chars + lookahead)
+
+        if target_end >= total_len:
+            chunks.append(text[start:].strip())
+            break
+
+        window = text[start:hard_end]
+        after_target: int | None = None
+        before_target: int | None = None
+
+        for match in boundary_re.finditer(window):
+            end_pos = start + match.end()
+            if target_end <= end_pos <= hard_end:
+                after_target = end_pos
+            elif end_pos < target_end:
+                before_target = end_pos
+
+        if after_target:
+            chunk_end = after_target
+            logger.debug(
+                "tradução: chunk fechado em fim de frase após lookahead (len=%d)",
+                chunk_end - start,
+            )
+        elif before_target:
+            chunk_end = before_target
+            logger.debug(
+                "tradução: chunk fechado em limite seguro antes do alvo (len=%d)",
+                chunk_end - start,
+            )
+        else:
+            chunk_end = min(target_end, total_len)
+            logger.debug("tradução: chunk fechado no alvo (len=%d)", chunk_end - start)
+
+        if chunk_end <= start:
+            chunk_end = min(target_end, total_len)
+
+        raw_slice = text[start:chunk_end]
+        chunks.append(raw_slice.strip())
+        consumed += len(raw_slice)
+        start = chunk_end
+
+    if consumed != total_len:
+        logger.warning("tradução: soma dos chunks (%d) difere do texto original (%d)", consumed, total_len)
+
+    return chunks
 
 
 def chunk_for_refine(paragraphs: List[str], max_chars: int, logger: logging.Logger) -> List[str]:

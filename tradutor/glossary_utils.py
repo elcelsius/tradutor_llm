@@ -199,6 +199,21 @@ def format_glossary_for_prompt(combined_index: GlossaryIndex, limit: int = DEFAU
     return "\n".join(lines)
 
 
+def format_manual_pairs_for_translation(manual_terms: list[GlossaryEntry], limit: int = 30) -> str:
+    """Formata pares EN->PT do glossário manual para uso no prompt de tradução."""
+    if not manual_terms:
+        return ""
+    entries = sorted(manual_terms, key=lambda e: normalize_key(str(e.get("key", ""))))[:limit]
+    lines = ["TERMOS CANONICOS (NAO TRADUZIR DIFERENTE DESTO):"]
+    for entry in entries:
+        en = str(entry.get("key", "")).strip()
+        pt = str(entry.get("pt", "")).strip()
+        if not en or not pt:
+            continue
+        lines.append(f'Ingles: "{en}" -> Portugues: "{pt}"')
+    return "\n".join(lines)
+
+
 def split_refined_and_suggestions(text: str) -> Tuple[str, str | None]:
     """
     Separa texto refinado e bloco de glossário sugerido pelos delimitadores.

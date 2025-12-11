@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 from contextlib import contextmanager
@@ -23,6 +24,7 @@ from .glossary_utils import (
     GLOSSARIO_SUGERIDO_INICIO,
     GlossaryState,
     apply_suggestions_to_state,
+    build_glossary_state,
     format_glossary_for_prompt,
     parse_glossary_suggestions,
     save_dynamic_glossary,
@@ -31,7 +33,17 @@ from .glossary_utils import (
 from .llm_backend import LLMBackend
 from .preprocess import chunk_for_refine, paragraphs_from_text
 from .sanitizer import sanitize_refine_output
-from .utils import read_text, timed, write_text
+from .utils import ensure_dir, read_text, timed, write_text
+from .cache_utils import (
+    cache_exists,
+    chunk_hash,
+    detect_model_collapse,
+    load_cache,
+    save_cache,
+    is_near_duplicate,
+)
+from .advanced_preprocess import clean_text as advanced_clean
+from .anti_hallucination import anti_hallucination_filter
 
 
 @dataclass
@@ -76,6 +88,43 @@ def _next_block_index() -> int:
     global _GLOBAL_BLOCK_INDEX
     _GLOBAL_BLOCK_INDEX += 1
     return _GLOBAL_BLOCK_INDEX
+
+
+def has_suspicious_repetition(text: str, min_repeats: int = 3) -> bool:
+    """
+    Retorna True se o texto contiver linhas repetidas muitas vezes (possível loop do LLM).
+    """
+    lines = [ln.strip() for ln in text.splitlines()]
+    lines = [ln for ln in lines if ln]
+    if not lines:
+        return False
+    counts: Dict[str, int] = {}
+    for ln in lines:
+        counts[ln] = counts.get(ln, 0) + 1
+    return any(c >= min_repeats for c in counts.values())
+
+
+def save_refine_debug_files(
+    output_dir: Path,
+    section_index: int,
+    chunk_index: int,
+    original_text: str,
+    llm_raw: str,
+    final_text: str,
+    logger: logging.Logger,
+) -> None:
+    """Salva arquivos de debug para inspeção de refine por chunk."""
+    ensure_dir(output_dir)
+    base = f"sec{section_index:03d}_chunk{chunk_index:03d}"
+
+    def _write(name: str, content: str) -> None:
+        path = output_dir / f"{base}_{name}.txt"
+        path.write_text(content, encoding="utf-8")
+
+    _write("original", original_text)
+    _write("llm_raw", llm_raw)
+    _write("final", final_text)
+    logger.info("Debug refine salvo: %s_* em %s", base, output_dir)
 
 
 def _write_progress(progress: RefineProgress | None, logger: logging.Logger) -> None:
@@ -155,81 +204,22 @@ def _prepare_progress(
 
 
 def build_refine_prompt(section: str, glossary_enabled: bool = False, glossary_block: str | None = None) -> str:
-    glossary_text = ""
-    if glossary_enabled:
-        block = glossary_block.strip() if glossary_block else ""
-        glossary_lines = [
-            "GLOSSÁRIO E TERMINOLOGIA (obrigatório):",
-            "Obedeça estritamente ao glossário para nomes próprios, títulos, lugares e termos especiais.",
-            "Se identificar termos novos importantes, sugira entradas ao final da resposta.",
-        ]
-        if block:
-            glossary_lines.append("")
-            glossary_lines.append(block)
-        glossary_lines.extend(
-            [
-                "",
-                "FORMATO DE SAÍDA:",
-                "1) Texto refinado completo.",
-                "2) Depois, bloco de sugestões de glossário delimitado exatamente por:",
-                GLOSSARIO_SUGERIDO_INICIO,
-                "key: ...",
-                "pt: ...",
-                "category: ...",
-                "notes: ...",
-                "---",
-                GLOSSARIO_SUGERIDO_FIM,
-                "Se não houver novos termos, deixe o bloco vazio ou escreva 'nenhum'.",
-            ]
-        )
-        glossary_text = "\n".join(glossary_lines)
-
     return f"""
-Você é um REVISOR LITERÁRIO PROFISSIONAL especializado em romances adultos, dark fantasy e narrativa intensa.
+Você atuará como um POLIDOR MINIMALISTA.
 
-Sua tarefa é REVISAR o texto abaixo (já em português brasileiro), elevando-o para um registro MAIS LITERÁRIO, sem perder o tom emocional, a agressividade ou a personalidade do narrador.
+Reescreva o texto abaixo sem alterar fatos, ordem, diálogos ou conteúdo narrativo.
+Corrija apenas pequenos erros de digitação e vírgulas, e resolva artefatos de OCR/PDF.
+NÃO resuma. NÃO expanda. NÃO interprete. NÃO remova ideias. NÃO adicione nada.
+NÃO envolva a saída em molduras ou comentários. NÃO inclua glossários.
+NÃO use "..." para representar conteúdo omitido. NÃO mude o idioma.
+Preserve todos os parágrafos, falas e informações.
 
-FOCO PRINCIPAL:
-- Melhorar fluidez, coesão e ritmo.
-- Corrigir ortografia, pontuação e concordância verbal/nominal.
-- Tornar o texto mais natural e elegante para publicação, em estilo de romance adulto.
+Formate sua resposta EXATAMENTE assim e nada mais:
+### TEXTO_REFINADO_INICIO
+<texto refinado>
+### TEXTO_REFINADO_FIM
 
-REGRA DE ESTILO (OPÇÃO B):
-- Reduza gírias e marcas de oralidade quando elas NÃO forem essenciais.
-  Exemplos:
-    - "tá" → "está"
-    - "tô" → "estou"
-    - "a gente" → "nós" (quando fizer sentido no contexto)
-- Mantenha expressões informais APENAS quando forem claramente parte da voz do personagem ou do efeito cômico/dramático pretendido.
-- Preserve o tom adulto, o sarcasmo e a ironia.
-
-REGRAS ABSOLUTAS:
-
-1) NÃO apagar, cortar, resumir nem omitir informações.
-   Todas as frases relevantes devem continuar existindo no texto revisado.
-
-2) NÃO adicionar explicações, comentários, análises, notas de rodapé ou frases novas que mudem o conteúdo.
-
-3) NÃO suavizar xingamentos, insultos, blasfêmias ou ameaças.
-   Se o texto ofende uma deusa, mantém a ofensa em grau equivalente (como "desgraçada", "imunda", "nojenta", etc.).
-
-4) Corrigir frases estruturalmente erradas, mantendo o sentido.
-   Exemplo:
-   - "E essa é a fim dela." → "E é assim que tudo termina." ou "E esse é o fim disso."
-
-5) Manter o gênero e o número corretos:
-   - Se o narrador é masculino, use "pronto" (não "pronta").
-   - Não transformar "você" singular em "vocês" sem motivo.
-
-6) Manter as quebras de parágrafo.
-   A estrutura de parágrafos deve ser igual à do texto original.
-
-7) Não retornar instruções, explicações ou qualquer coisa além do texto revisado.
-   A resposta deve ser APENAS o texto final revisado.
-
-{glossary_text}
-
-Texto para revisão:
+Texto para revisão (PT-BR):
 \"\"\"{section}\"\"\"
 """
 
@@ -267,7 +257,14 @@ def refine_section(
     total: int,
     glossary_state: GlossaryState | None = None,
     glossary_prompt_limit: int = DEFAULT_GLOSSARY_PROMPT_LIMIT,
+    debug_refine: bool = False,
+    metrics: dict | None = None,
+    seen_chunks: list | None = None,
 ) -> str:
+    if metrics is None:
+        metrics = {}
+    if seen_chunks is None:
+        seen_chunks = []
     paragraphs = paragraphs_from_text(body)
     chunks = chunk_for_refine(paragraphs, max_chars=cfg.refine_chunk_chars, logger=logger)
     logger.info("Refinando seção %s (%d chunks)", title or f"#{index}", len(chunks))
@@ -280,6 +277,35 @@ def refine_section(
         block_idx = _next_block_index()
         if stats:
             stats.total_blocks += 1
+        h = chunk_hash(chunk)
+        for prev_chunk, prev_final in seen_chunks:
+            if is_near_duplicate(prev_chunk, chunk):
+                logger.info("Chunk ref-%d/%d-%d/%d marcado como duplicado; reuso habilitado.", index, total, c_idx, len(chunks))
+                refined_parts.append(prev_final)
+                metrics["duplicates"] = metrics.get("duplicates", 0) + 1
+                if stats:
+                    stats.success_blocks += 1
+                if progress:
+                    progress.refined_blocks.add(block_idx)
+                    progress.error_blocks.discard(block_idx)
+                    progress.chunk_outputs[block_idx] = prev_final
+                _write_progress(progress, logger)
+                continue
+        if cache_exists("refine", h):
+            data = load_cache("refine", h)
+            cached = data.get("final_output")
+            if cached:
+                logger.info("Reusando cache de refine para bloco ref-%d/%d-%d/%d", index, total, c_idx, len(chunks))
+                refined_parts.append(cached)
+                metrics["cache_hits"] = metrics.get("cache_hits", 0) + 1
+                if stats:
+                    stats.success_blocks += 1
+                if progress:
+                    progress.refined_blocks.add(block_idx)
+                    progress.error_blocks.discard(block_idx)
+                    progress.chunk_outputs[block_idx] = cached
+                _write_progress(progress, logger)
+                continue
         if progress and block_idx in progress.refined_blocks and block_idx in progress.chunk_outputs:
             logger.info("Reusando refinamento salvo para bloco ref-%d/%d-%d/%d", index, total, c_idx, len(chunks))
             refined_parts.append(progress.chunk_outputs[block_idx])
@@ -299,7 +325,7 @@ def refine_section(
         )
         logger.debug("Refinando seção com %d caracteres...", len(chunk))
         try:
-            response_text = _call_with_retry(
+            llm_raw, response_text = _call_with_retry(
                 backend=backend,
                 prompt=prompt,
                 cfg=cfg,
@@ -309,7 +335,7 @@ def refine_section(
             )
             refined_text = response_text
             if glossary_state:
-                refined_text, suggestion_block = split_refined_and_suggestions(response_text)
+                refined_text, suggestion_block = split_refined_and_suggestions(llm_raw)
                 suggestions = parse_glossary_suggestions(suggestion_block or "")
                 if suggestions:
                     updated = apply_suggestions_to_state(glossary_state, suggestions, logger)
@@ -320,6 +346,7 @@ def refine_section(
                             glossary_prompt_limit,
                         )
 
+            refined_text = anti_hallucination_filter(orig=chunk, llm_raw=llm_raw, cleaned=refined_text, mode="refine")
             if len(refined_text.strip()) < len(chunk.strip()) * 0.80:
                 logger.warning(
                     "Refinador devolveu texto menor do que deveria; mantendo texto original (chunk %d/%d da seção %s).",
@@ -328,6 +355,7 @@ def refine_section(
                     title or f"#{index}",
                 )
                 refined_text = chunk
+                metrics["fallbacks"] = metrics.get("fallbacks", 0) + 1
             if len(refined_text.strip()) > len(chunk.strip()) * 2.0:
                 logger.warning(
                     "Refinador devolveu texto muito maior do que o original; mantendo texto original (chunk %d/%d da seção %s).",
@@ -336,6 +364,38 @@ def refine_section(
                     title or f"#{index}",
                 )
                 refined_text = chunk
+                metrics["fallbacks"] = metrics.get("fallbacks", 0) + 1
+            if has_suspicious_repetition(refined_text):
+                logger.warning(
+                    "Refinador devolveu texto com repetição suspeita; mantendo texto original (chunk %d/%d da seção %s).",
+                    c_idx,
+                    len(chunks),
+                    title or f"#{index}",
+                )
+                refined_text = chunk
+                metrics["fallbacks"] = metrics.get("fallbacks", 0) + 1
+            if detect_model_collapse(refined_text, original_len=len(chunk), mode="refine"):
+                logger.warning(
+                    "Colapso detectado no chunk %d/%d da seção %s; mantendo texto original.",
+                    c_idx,
+                    len(chunks),
+                    title or f"#{index}",
+                )
+                refined_text = chunk
+                metrics["collapse"] = metrics.get("collapse", 0) + 1
+                metrics["fallbacks"] = metrics.get("fallbacks", 0) + 1
+            # Debug opcional: salva até os 5 primeiros chunks
+            if debug_refine and block_idx <= 5:
+                debug_dir = cfg.output_dir / "debug_refine"
+                save_refine_debug_files(
+                    output_dir=debug_dir,
+                    section_index=index,
+                    chunk_index=c_idx,
+                    original_text=chunk,
+                    llm_raw=llm_raw,
+                    final_text=refined_text,
+                    logger=logger,
+                )
             logger.debug("Seção refinada com %d caracteres.", len(refined_text))
             refined_parts.append(refined_text)
             if stats:
@@ -344,6 +404,14 @@ def refine_section(
                 progress.refined_blocks.add(block_idx)
                 progress.error_blocks.discard(block_idx)
                 progress.chunk_outputs[block_idx] = refined_text
+            seen_chunks.append((chunk, refined_text))
+            save_cache(
+                "refine",
+                h,
+                raw_output=llm_raw,
+                final_output=refined_text,
+                metadata={"chunk_index": c_idx, "section_index": index, "mode": "refine"},
+            )
         except RuntimeError as exc:
             logger.warning(
                 "Chunk ref-%d/%d-%d/%d falhou; usando texto original. Erro: %s",
@@ -359,6 +427,7 @@ def refine_section(
             if progress:
                 progress.error_blocks.add(block_idx)
                 progress.chunk_outputs[block_idx] = chunk
+            metrics["fallbacks"] = metrics.get("fallbacks", 0) + 1
         finally:
             _write_progress(progress, logger)
 
@@ -379,13 +448,21 @@ def refine_markdown_file(
     normalize_paragraphs: bool = False,
     glossary_state: GlossaryState | None = None,
     glossary_prompt_limit: int = DEFAULT_GLOSSARY_PROMPT_LIMIT,
+    debug_refine: bool = False,
+    parallel_workers: int = 1,
+    preprocess_advanced: bool = False,
 ) -> None:
     md_text = read_text(input_path)
+    if preprocess_advanced:
+        md_text = advanced_clean(md_text)
+    doc_hash = chunk_hash(md_text)
     if normalize_paragraphs:
         md_text = normalize_md_paragraphs(md_text)
     sections = split_markdown_sections(md_text)
     logger.info("Arquivo %s: %d seções detectadas", input_path.name, len(sections))
     stats = RefineStats()
+    metrics: dict[str, int] = {"cache_hits": 0, "fallbacks": 0, "collapse": 0, "duplicates": 0}
+    seen_chunks: list[tuple[str, str]] = []
 
     # Pré-computa total de blocos para progress
     total_blocks = 0
@@ -396,6 +473,18 @@ def refine_markdown_file(
 
     if progress_path is None:
         progress_path = output_path.with_name(f"{output_path.stem}_progress.json")
+
+    state_path = output_path.parent / "state_refine.json"
+    try:
+        state_payload = {
+            "input_file": str(input_path),
+            "hash": doc_hash,
+            "timestamp": datetime.now().isoformat(),
+            "total_chunks": total_blocks,
+        }
+        state_path.write_text(json.dumps(state_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
 
     progress = _prepare_progress(
         progress_path=progress_path,
@@ -418,9 +507,12 @@ def refine_markdown_file(
                     index=idx,
                     total=len(sections),
                     glossary_state=glossary_state,
-                    glossary_prompt_limit=glossary_prompt_limit,
-                )
+                glossary_prompt_limit=glossary_prompt_limit,
+                debug_refine=debug_refine,
+                metrics=metrics,
+                seen_chunks=seen_chunks,
             )
+        )
 
     final_md = "\n\n".join(refined_sections).strip()
     if not final_md:
@@ -431,6 +523,25 @@ def refine_markdown_file(
     write_text(output_path, final_md)
     if glossary_state:
         save_dynamic_glossary(glossary_state, logger)
+    try:
+        version = (Path(__file__).parent / "VERSION").read_text(encoding="utf-8").strip()
+    except Exception:
+        version = "unknown"
+    report = {
+        "mode": "refine",
+        "input": str(input_path),
+        "total_chunks": stats.total_blocks,
+        "cache_hits": metrics.get("cache_hits", 0),
+        "fallbacks": metrics.get("fallbacks", 0),
+        "collapse_detected": metrics.get("collapse", 0),
+        "duplicates_reused": metrics.get("duplicates", 0),
+        "timestamp": datetime.now().isoformat(),
+        "pipeline_version": version,
+    }
+    try:
+        (output_path.parent / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
     logger.info(
         "Refine concluído: %s (blocos: total=%d sucesso=%d placeholders=%d)",
         output_path.name,
@@ -447,18 +558,19 @@ def _call_with_retry(
     logger: logging.Logger,
     label: str,
     max_retries: int | None = None,
-) -> str:
+) -> tuple[str, str]:
     delay = cfg.initial_backoff
     last_error: Exception | None = None
     attempts = max_retries if max_retries is not None else cfg.max_retries
     for attempt in range(1, attempts + 1):
         try:
             latency, response = timed(backend.generate, prompt)
-            text = sanitize_refine_output(response.text)
+            raw_text = response.text
+            text = sanitize_refine_output(raw_text)
             if not text.strip():
                 raise ValueError("Texto vazio após sanitização do refine.")
             logger.info("%s ok (%.2fs, %d chars)", label, latency, len(text))
-            return text
+            return raw_text, text
         except Exception as exc:
             last_error = exc
             logger.warning("%s falhou (tentativa %d/%d): %s", label, attempt, attempts, exc)

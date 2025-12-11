@@ -190,10 +190,53 @@ def sanitize_refine_output(text: str) -> str:
     """
     Sanitização leve para saída do refinador:
     - remove tags <think> e </think>
+    - remove cabeçalhos "Texto refinado:" / "Refined text:"
+    - remove marcadores de tradução remanescentes (### TEXTO_TRADUZIDO_*)
+    - remove blocos de glossário legado (===GLOSSARIO_SUGERIDO_INICIO=== ... FIM=== ou órfãos)
     - remove espaços extras nas extremidades
     Não aplica regras agressivas nem corta parágrafos.
     """
     cleaned = text.replace("<think>", "").replace("</think>", "")
+    filtered_lines = []
+    for line in cleaned.splitlines():
+        lowered = line.strip().lower()
+        if lowered.startswith("texto refinado:") or lowered.startswith("refined text:"):
+            continue
+        filtered_lines.append(line)
+    cleaned = "\n".join(filtered_lines)
+
+    # Remove marcadores de tradução remanescentes (bem formados ou quebrados)
+    cleaned = re.sub(
+        r"### TEXTO_TRADUZIDO_INICIO.*?### TEXTO_TRADUZIDO_FIM",
+        "",
+        cleaned,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    cleaned = re.sub(
+        r"### TEXTO_TRADUZIDO_[A-Z_]*",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+
+    # Remove blocos bem formados
+    cleaned = re.sub(
+        r"===GLOSSARIO_SUGERIDO_INICIO===.*?===GLOSSARIO_SUGERIDO_FIM===",
+        "",
+        cleaned,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    # Remove blocos órfãos: INICIO sem FIM (corta do início até o fim do texto)
+    start = cleaned.find("===GLOSSARIO_SUGERIDO_INICIO===")
+    end = cleaned.find("===GLOSSARIO_SUGERIDO_FIM===")
+    if start != -1 and (end == -1 or end < start):
+        # limpa aspas triplas imediatamente antes, se houver
+        pre = cleaned[:start]
+        pre_rstrip = pre.rstrip()
+        if pre_rstrip.endswith('"""'):
+            pre = pre_rstrip[:-3]
+        cleaned = pre.rstrip()  # descarta tudo a partir do marcador órfão
+
     return cleaned.strip()
 
 

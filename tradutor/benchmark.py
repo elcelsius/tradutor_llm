@@ -44,6 +44,7 @@ def run_benchmark(models: List[Dict]) -> None:
             temperature=model_cfg["temperature"],
             logger=logger,
             request_timeout=cfg.request_timeout,
+            repeat_penalty=model_cfg.get("repeat_penalty", cfg.translate_repeat_penalty),
         )
         logger.info(
             "Benchmark com LLM: name=%s backend=%s model=%s temp=%.2f chunk=%d",

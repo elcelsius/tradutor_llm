@@ -1,5 +1,5 @@
 """
-Exporta Markdown simples para PDF com suporte a Unicode.
+Exporta Markdown simplificado para PDF com tipografia local (Windows) e layout otimizado para leitura digital.
 """
 
 from __future__ import annotations
@@ -7,65 +7,134 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from typing import Iterable
+from xml.sax.saxutils import escape
 
-import requests
-from fpdf import FPDF
+from reportlab.lib.enums import TA_JUSTIFY, TA_LEFT
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+
+try:
+    import pyphen
+except Exception:  # pragma: no cover - opcional
+    pyphen = None
 
 from .utils import ensure_dir
 
 
-DEJAVU_URL = "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans.ttf"
+def _register_font(logger: logging.Logger) -> str:
+    """
+    Seleciona a primeira fonte disponível na ordem de preferência, sem downloads.
+    Fallback: Helvetica (built-in do ReportLab).
+    """
+    candidates = [
+        ("Aptos", Path("C:/Windows/Fonts/Aptos.ttf")),
+        ("Aptos Display", Path("C:/Windows/Fonts/AptosDisplay.ttf")),
+        ("SegoeUI", Path("C:/Windows/Fonts/segoeui.ttf")),
+        ("Calibri", Path("C:/Windows/Fonts/Calibri.ttf")),
+        ("Arial", Path("C:/Windows/Fonts/Arial.ttf")),
+    ]
+    for name, path in candidates:
+        if path.exists():
+            try:
+                pdfmetrics.registerFont(TTFont(name, str(path)))
+                logger.info("Usando fonte local para PDF: %s", path)
+                return name
+            except Exception as exc:  # pragma: no cover
+                logger.warning("Falha ao registrar fonte %s: %s", path, exc)
+                continue
+    logger.warning("Nenhuma fonte preferencial encontrada; usando Helvetica (built-in).")
+    return "Helvetica"
 
 
-def ensure_font(font_dir: Path, logger: logging.Logger) -> Path:
-    """Baixa DejaVuSans.ttf se não existir."""
-    ensure_dir(font_dir)
-    font_path = font_dir / "DejaVuSans.ttf"
-    if font_path.exists():
-        return font_path
-    logger.info("Baixando fonte DejaVuSans.ttf para %s", font_path)
-    resp = requests.get(DEJAVU_URL, timeout=60)
-    resp.raise_for_status()
-    font_path.write_bytes(resp.content)
-    return font_path
+def _build_styles(font_name: str) -> dict[str, ParagraphStyle]:
+    styles = getSampleStyleSheet()
+    body_leading = 11.5 * 1.35
+    dialogue_leading = 11.5 * 1.25
+    hyphenator = None
+    if pyphen is not None:
+        try:
+            hyphenator = pyphen.Pyphen(lang="pt_BR")
+        except Exception:
+            hyphenator = None
+
+    styles.add(
+        ParagraphStyle(
+            name="Body",
+            fontName=font_name,
+            fontSize=11.5,
+            leading=body_leading,
+            alignment=TA_JUSTIFY,
+            spaceAfter=6,
+            hyphenation=hyphenator,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="Dialogue",
+            fontName=font_name,
+            fontSize=11.5,
+            leading=dialogue_leading,
+            alignment=TA_LEFT,
+            firstLineIndent=0,
+            leftIndent=0,
+            spaceAfter=4,
+            hyphenation=hyphenator,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="Heading1",
+            fontName=font_name,
+            fontSize=18,
+            leading=18 * 1.2,
+            spaceAfter=10,
+            alignment=TA_LEFT,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="Heading2",
+            fontName=font_name,
+            fontSize=14,
+            leading=14 * 1.2,
+            spaceAfter=8,
+            alignment=TA_LEFT,
+        )
+    )
+    return styles
 
 
-class SimplePDF(FPDF):
-    """Conversão básica de Markdown para PDF."""
+def _is_dialogue_line(text: str) -> bool:
+    stripped = text.lstrip()
+    return stripped.startswith("— ") or stripped.startswith("- ") or stripped.startswith("– ")
 
-    def __init__(self, font_path: Path, title_size: int, heading_size: int, body_size: int):
-        super().__init__()
-        self.font_path = font_path
-        self.title_size = title_size
-        self.heading_size = heading_size
-        self.body_size = body_size
 
-    def header(self) -> None:  # type: ignore[override]
-        pass  # sem cabeçalho
-
-    def footer(self) -> None:  # type: ignore[override]
-        pass  # sem rodapé
-
-    def add_markdown(self, lines: Iterable[str]) -> None:
-        self.add_page()
-        self.add_font("DejaVu", "", str(self.font_path), uni=True)
-        self.set_font("DejaVu", size=self.body_size)
-
-        for line in lines:
-            stripped = line.strip()
-            if stripped.startswith("## "):
-                self.set_font("DejaVu", "B", self.heading_size)
-                self.multi_cell(0, 8, stripped[3:].strip())
-                self.ln(2)
-                self.set_font("DejaVu", size=self.body_size)
-            elif stripped.startswith("# "):
-                self.set_font("DejaVu", "B", self.title_size)
-                self.multi_cell(0, 10, stripped[2:].strip())
-                self.ln(3)
-                self.set_font("DejaVu", size=self.body_size)
-            else:
-                self.multi_cell(0, 6, stripped)
-                self.ln(2)
+def _build_story(lines: Iterable[str], styles: dict[str, ParagraphStyle]):
+    story = []
+    for raw in lines:
+        line = raw.rstrip()
+        stripped = line.strip()
+        if not stripped:
+            story.append(Spacer(1, 6))
+            continue
+        if stripped.startswith("## "):
+            text = escape(stripped[3:].strip())
+            story.append(Paragraph(text, styles["Heading2"]))
+            continue
+        if stripped.startswith("# "):
+            text = escape(stripped[2:].strip())
+            story.append(Paragraph(text, styles["Heading1"]))
+            continue
+        if _is_dialogue_line(stripped):
+            text = escape(stripped)
+            story.append(Paragraph(text, styles["Dialogue"]))
+        else:
+            text = escape(stripped)
+            story.append(Paragraph(text, styles["Body"]))
+    return story
 
 
 def markdown_to_pdf(
@@ -77,11 +146,20 @@ def markdown_to_pdf(
     body_size: int,
     logger: logging.Logger,
 ) -> None:
-    """Converte Markdown simplificado para PDF."""
+    """Converte Markdown simplificado para PDF com layout otimizado para leitura digital."""
     ensure_dir(output_path.parent)
-    font_path = ensure_font(font_dir, logger)
-    pdf = SimplePDF(font_path=font_path, title_size=title_size, heading_size=heading_size, body_size=body_size)
+    font_name = _register_font(logger)
+    styles = _build_styles(font_name)
+
+    doc = SimpleDocTemplate(
+        str(output_path),
+        pagesize=A4,
+        leftMargin=42,
+        rightMargin=42,
+        topMargin=52,
+        bottomMargin=52,
+    )
     lines = markdown_text.splitlines()
-    pdf.add_markdown(lines)
-    pdf.output(str(output_path))
+    story = _build_story(lines, styles)
+    doc.build(story)
     logger.info("PDF gerado: %s", output_path)
