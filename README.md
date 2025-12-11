@@ -23,6 +23,7 @@ tradutor/
   cache_utils.py       # hash, cache por chunk, deduplicação, detecção de colapso
   glossary_utils.py    # carga manual/dinâmico, merge para prompt, parser de sugestões
   glossary/merge.py    # utilitário CLI para unir glossários em MASTER_GLOSSARIO.json
+  intervolume.py       # checagem opcional de consistência inter-volume (QA)
   pdf_export.py        # ReportLab com fontes locais (Aptos/Segoe/Calibri/Arial, fallback Helvetica)
   postprocess.py       # pós-processo final PT-BR (travessões, espaços, marcadores)
   structure_normalizer.py # normaliza capítulos/títulos antes do PDF
@@ -95,6 +96,14 @@ Saídas: `saida/<nome>_pt_refinado.md`, `<nome>_pt_refinado.pdf`, manifesto `<no
 python -m tradutor.glossario.merge --input glossario/ --output MASTER_GLOSSARIO.json
 ```
 Conflitos em `saida/glossario_conflicts.log`. Prioriza locked/manual.
+
+### Checagem inter-volume (QA opcional)
+```bash
+python -m tradutor.intervolume --volumes "saida/" --glossario-dir "glossario/" --master-glossario "glossario/MASTER_GLOSSARIO.json" --output "saida/consistencia_intervolume.json"
+# flags para desligar checagens
+python -m tradutor.intervolume --volumes "saida/" --glossario-dir "glossario/" --no-check-gender --no-check-voice
+```
+Gera `saida/consistencia_intervolume.json` com inconsistências de termos, gênero, voz e timeline.
 
 ---
 
