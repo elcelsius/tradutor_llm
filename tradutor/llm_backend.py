@@ -35,9 +35,10 @@ class LLMBackend:
         temperature: float,
         logger: logging.Logger,
         base_url: str = "http://localhost:11434",
-        request_timeout: int = 60,
+        request_timeout: int = 120,
         gemini_api_key: Optional[str] = None,
         repeat_penalty: float | None = None,
+        num_predict: int = 768,
     ) -> None:
         self.backend = backend
         self.model = model
@@ -47,6 +48,7 @@ class LLMBackend:
         self.request_timeout = request_timeout
         self.gemini_api_key = gemini_api_key
         self.repeat_penalty = repeat_penalty
+        self.num_predict = num_predict
 
     def generate(self, prompt: str) -> LLMResponse:
         start = time.perf_counter()
@@ -67,7 +69,7 @@ class LLMBackend:
             "stream": False,
             "options": {
                 "temperature": self.temperature,
-                "num_predict": 768,
+                "num_predict": self.num_predict,
             },
         }
         if self.repeat_penalty is not None:

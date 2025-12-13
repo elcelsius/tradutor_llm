@@ -45,14 +45,17 @@ def run_benchmark(models: List[Dict]) -> None:
             logger=logger,
             request_timeout=cfg.request_timeout,
             repeat_penalty=model_cfg.get("repeat_penalty", cfg.translate_repeat_penalty),
+            num_predict=model_cfg.get("num_predict", cfg.translate_num_predict),
         )
         logger.info(
-            "Benchmark com LLM: name=%s backend=%s model=%s temp=%.2f chunk=%d",
+            "Benchmark com LLM: name=%s backend=%s model=%s temp=%.2f chunk=%d timeout=%ds num_predict=%d",
             model_cfg["name"],
             model_cfg["backend"],
             model_cfg["model"],
             model_cfg["temperature"],
             cfg.translate_chunk_chars,
+            cfg.request_timeout,
+            model_cfg.get("num_predict", cfg.translate_num_predict),
         )
 
         hypotheses: List[str] = []

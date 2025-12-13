@@ -1,5 +1,5 @@
 """
-Sanitização agressiva contra alucinações e ruídos dos modelos.
+Sanitizacao agressiva contra alucinacoes e ruidos dos modelos.
 """
 
 from __future__ import annotations
@@ -11,12 +11,12 @@ from typing import List, Tuple
 
 
 META_PATTERNS = [
-    r"parece que voc[eê] est[áa]",
+    r"parece que voc[eˆ] est[ a]",
     r"como um modelo de linguagem",
-    r"n[aã]o posso",
-    r"n[aã]o sou capaz",
+    r"n[aÆ]o posso",
+    r"n[aÆ]o sou capaz",
     r"desculp",
-    r"não posso ajudar",
+    r"nÆo posso ajudar",
     r"eu sou apenas",
     r"como um assistente",
     r"as an ai language model",
@@ -24,9 +24,9 @@ META_PATTERNS = [
     r"i cannot provide",
     r"i'm just an ai",
     r"as a language model",
-    r"^\s*mudanc(a|ç)as e justificativas[:]?.*$",
-    r"^\s*alterac(ao|ão|oes|ões) realizadas[:]?.*$",
-    r"^\s*(nesta|nessa) revis(ao|ão).*$",
+    r"^\s*mudanc(a|‡)as e justificativas[:]?.*$",
+    r"^\s*alterac(ao|Æo|oes|äes) realizadas[:]?.*$",
+    r"^\s*(nesta|nessa) revis(ao|Æo).*$",
     r"^\s*(justificativa|racionalidade|rationale).*$",
     r"^\s*em resumo.*$",
     r"^\s*resumo[: ].*$",
@@ -41,6 +41,9 @@ class SanitizationReport:
     removed_repeated_paragraphs: int = 0
     removed_empty_lines: int = 0
     contamination_detected: bool = False
+    leading_noise_removed: bool = False
+    removed_lines_count: int = 0
+    collapsed_repetitions: int = 0
 
 
 def _remove_think_blocks(text: str) -> Tuple[str, int]:
@@ -106,8 +109,8 @@ def _strip_empty_lines(text: str) -> Tuple[str, int]:
 
 def _remove_repeated_sequences(text: str) -> Tuple[str, int]:
     """
-    Remove sequências longas repetidas (loop detectável).
-    Considera repetições consecutivas de blocos >= 50 caracteres.
+    Remove sequencias longas repetidas (loop detectavel).
+    Considera repeticoes consecutivas de blocos >= 50 caracteres.
     """
     pattern = re.compile(r"(.{50,}?)(?:\s+\1){1,}", flags=re.DOTALL)
     new_text, count = pattern.subn(lambda m: m.group(1), text)
@@ -116,9 +119,8 @@ def _remove_repeated_sequences(text: str) -> Tuple[str, int]:
 
 def remove_leading_noise(text: str) -> str:
     """
-    Remove contaminações típicas de topo de chunk, como:
-    'Apertem!', '起來！', 'Vamos!', 'Go!', etc.
-    Apenas remove até o primeiro parágrafo real.
+    Remove ruido obvio no topo (pontuacao solta, OCR quebrado) e preserva
+    qualquer linha com letras/digitos ou terminacao de frase.
     """
     lines = text.splitlines()
     cleaned: List[str] = []
@@ -128,10 +130,12 @@ def remove_leading_noise(text: str) -> str:
         stripped = line.strip()
 
         if not started:
+            if not stripped:
+                continue
             if (
-                len(stripped) <= 20
-                and not stripped.endswith((".", "?", '!"', ".”"))
-                and not any(ch in stripped for ch in "abcdefghijklmnopqrstuvwxyz")
+                len(stripped) <= 12
+                and not re.search(r"[A-Za-zÀ-ÿ0-9]", stripped)
+                and not re.search(r"[.!?…]$", stripped)
             ):
                 continue
 
@@ -146,11 +150,16 @@ def sanitize_text(
     text: str,
     logger: logging.Logger | None = None,
     fail_on_contamination: bool = True,
+    collapse_repeated_lines: bool = True,
+    collapse_repeated_paragraphs: bool = True,
+    remove_repeated_sequences: bool = True,
+    strip_empty_lines: bool = True,
+    apply_leading_noise_filter: bool = True,
 ) -> Tuple[str, SanitizationReport]:
     """
-    Sanitiza agressivamente saídas de LLM para reduzir alucinação/ruído.
+    Sanitiza saidas de LLM para reduzir alucinacao/ruido.
 
-    Retorna texto limpo e um relatório da sanitização.
+    Retorna texto limpo e um relatorio da sanitizacao.
     Levanta ValueError se o resultado ficar vazio.
     """
     report = SanitizationReport()
@@ -162,39 +171,76 @@ def sanitize_text(
     report.removed_meta_lines = meta_removed
     report.contamination_detected = contamination
 
-    text, repeated_lines = _collapse_repeated_lines(text)
+    repeated_lines = 0
+    if collapse_repeated_lines:
+        text, repeated_lines = _collapse_repeated_lines(text)
     report.removed_repeated_lines = repeated_lines
 
-    text, seq_removed = _remove_repeated_sequences(text)
-    text, repeated_paragraphs = _collapse_repeated_paragraphs(text)
+    seq_removed = 0
+    repeated_paragraphs = 0
+    if remove_repeated_sequences:
+        text, seq_removed = _remove_repeated_sequences(text)
+    if collapse_repeated_paragraphs:
+        text, repeated_paragraphs = _collapse_repeated_paragraphs(text)
     report.removed_repeated_paragraphs = seq_removed + repeated_paragraphs
 
-    text, empty = _strip_empty_lines(text)
+    empty = 0
+    if strip_empty_lines:
+        text, empty = _strip_empty_lines(text)
     report.removed_empty_lines = empty
-    text = remove_leading_noise(text)
+    report.collapsed_repetitions = seq_removed + repeated_paragraphs
+
+    before_noise = text
+    if apply_leading_noise_filter:
+        text = remove_leading_noise(text)
+    report.leading_noise_removed = apply_leading_noise_filter and text != before_noise
     text = text.replace("<think>", "").replace("</think>", "")
+    report.removed_lines_count = report.removed_meta_lines + report.removed_repeated_lines + report.removed_empty_lines
 
     text = text.strip()
     if not text:
         if logger:
-            logger.error("Sanitização resultou em texto vazio.")
-        raise ValueError("Texto vazio após sanitização.")
+            logger.error("Sanitizacao resultou em texto vazio.")
+        raise ValueError("Texto vazio apos sanitizacao.")
 
     if fail_on_contamination and report.contamination_detected:
-        raise ValueError("Contaminação detectada na saída do modelo.")
+        raise ValueError("Contaminacao detectada na saida do modelo.")
 
     return text, report
 
 
+def sanitize_translation_output(
+    text: str,
+    logger: logging.Logger | None = None,
+    fail_on_contamination: bool = False,
+) -> Tuple[str, SanitizationReport]:
+    """
+    Versao mais leve para traducao EN->PT:
+    - remove <think> e metacomentarios
+    - preserva linhas/paragrafos repetidos e espacos em branco
+    - aplica filtro de ruido inicial apenas para lixo evidente
+    """
+    return sanitize_text(
+        text,
+        logger=logger,
+        fail_on_contamination=fail_on_contamination,
+        collapse_repeated_lines=False,
+        collapse_repeated_paragraphs=False,
+        remove_repeated_sequences=False,
+        strip_empty_lines=False,
+        apply_leading_noise_filter=True,
+    )
+
+
 def sanitize_refine_output(text: str) -> str:
     """
-    Sanitização leve para saída do refinador:
+    Sanitizacao leve para saida do refinador:
     - remove tags <think> e </think>
-    - remove cabeçalhos "Texto refinado:" / "Refined text:"
-    - remove marcadores de tradução remanescentes (### TEXTO_TRADUZIDO_*)
-    - remove blocos de glossário legado (===GLOSSARIO_SUGERIDO_INICIO=== ... FIM=== ou órfãos)
-    - remove espaços extras nas extremidades
-    Não aplica regras agressivas nem corta parágrafos.
+    - remove cabecalhos "Texto refinado:" / "Refined text:"
+    - remove marcadores de traducao remanescentes (### TEXTO_TRADUZIDO_*)
+    - remove blocos de glossario legado (===GLOSSARIO_SUGERIDO_INICIO=== ... FIM=== ou orfaos)
+    - remove espacos extras nas extremidades
+    Nao aplica regras agressivas nem corta paragrafos.
     """
     cleaned = text.replace("<think>", "").replace("</think>", "")
     filtered_lines = []
@@ -205,7 +251,6 @@ def sanitize_refine_output(text: str) -> str:
         filtered_lines.append(line)
     cleaned = "\n".join(filtered_lines)
 
-    # Remove marcadores de tradução remanescentes (bem formados ou quebrados)
     cleaned = re.sub(
         r"### TEXTO_TRADUZIDO_INICIO.*?### TEXTO_TRADUZIDO_FIM",
         "",
@@ -219,31 +264,28 @@ def sanitize_refine_output(text: str) -> str:
         flags=re.IGNORECASE,
     )
 
-    # Remove blocos bem formados
     cleaned = re.sub(
         r"===GLOSSARIO_SUGERIDO_INICIO===.*?===GLOSSARIO_SUGERIDO_FIM===",
         "",
         cleaned,
         flags=re.IGNORECASE | re.DOTALL,
     )
-    # Remove blocos órfãos: INICIO sem FIM (corta do início até o fim do texto)
     start = cleaned.find("===GLOSSARIO_SUGERIDO_INICIO===")
     end = cleaned.find("===GLOSSARIO_SUGERIDO_FIM===")
     if start != -1 and (end == -1 or end < start):
-        # limpa aspas triplas imediatamente antes, se houver
         pre = cleaned[:start]
         pre_rstrip = pre.rstrip()
         if pre_rstrip.endswith('"""'):
             pre = pre_rstrip[:-3]
-        cleaned = pre.rstrip()  # descarta tudo a partir do marcador órfão
+        cleaned = pre.rstrip()
 
     return cleaned.strip()
 
 
 def log_report(report: SanitizationReport, logger: logging.Logger, prefix: str) -> None:
-    """Registra o relatório de sanitização com prefixo."""
+    """Registra o relatorio de sanitizacao com prefixo."""
     logger.debug(
-        "%s sanitização -> think:%d meta:%d rep_linhas:%d rep_parag:%d vazias:%d contam:%s",
+        "%s sanitizacao -> think:%d meta:%d rep_linhas:%d rep_parag:%d vazias:%d contam:%s leading_noise:%s colapsos:%d",
         prefix,
         report.removed_think_blocks,
         report.removed_meta_lines,
@@ -251,4 +293,6 @@ def log_report(report: SanitizationReport, logger: logging.Logger, prefix: str) 
         report.removed_repeated_paragraphs,
         report.removed_empty_lines,
         report.contamination_detected,
+        report.leading_noise_removed,
+        report.collapsed_repetitions,
     )

@@ -1,8 +1,9 @@
 # Tradutor Literário com LLMs (Ollama/Gemini)
 
-Pipeline completo EN → PT-BR com foco em previsibilidade e anti-alucinação para novels e PDFs. Compatível com Windows 11. Fluxo principal:
-- **Passo 1 – Tradução** (`tradutor/main.py traduz`): lê PDFs, pré-processa (opcional avançado), chunking inteligente (fim de frase), contexto leve entre chunks, glossário manual opcional, guarda cache e gera `_pt.md`.
-- **Passo 2 – Refine opcional** (`tradutor/main.py refina`): lê `_pt.md`, refina capítulo a capítulo com prompt minimalista, glossário manual/dinâmico opcional, guardrails e gera `_pt_refinado.md` + PDF.
+Pipeline completo EN → PT-BR com foco em previsibilidade e anti-alucinação para novels e PDFs. Compatível com Windows 11. Fluxo principal (PDF -> PT-BR):
+- **Passo 0 – Normalização**: extrai/normaliza o PDF e aplica **desquebrar** (opcional, padrão ON para PDF) para unir linhas sem reescrever. Em `--debug`, salva `saida/<slug>_raw_extracted.md` e `saida/<slug>_raw_desquebrado.md`.
+- **Passo 1 – Tradução** (`tradutor/main.py traduz`): recebe o texto desquebrado/normalizado, chunking inteligente (fim de frase), contexto leve entre chunks, glossário manual opcional, cache e gera `_pt.md`.
+- **Passo 2 – Refine opcional** (`tradutor/main.py refina`): lê `_pt.md`, aplica `cleanup_before_refine` (off/auto/on) antes do refine, rodando prompt minimalista/guardrails para `_pt_refinado.md` + PDF.
 
 Wrappers legados (`tradutor.py`, `refinador.py`) apenas chamam o CLI.
 
@@ -12,7 +13,7 @@ Wrappers legados (`tradutor.py`, `refinador.py`) apenas chamam o CLI.
 ```
 tradutor/
   main.py                # CLI traduz/refina + flags (debug, glossary, parallel, editor, preprocess advanced)
-  config.py              # defaults (chunk=2400, timeout=60s, num_predict=768, repeat_penalty, paths)
+  config.py              # defaults (chunk=2400, timeout=120s, num_predict=1536/1024, repeat_penalty, paths)
   preprocess.py          # pré-processo básico + chunking por frase (lookahead)
   advanced_preprocess.py # limpeza opcional (hífens, tags estranhas, espaços)
   translate.py           # tradução em lotes, contexto leve, glossário manual opcional, cache
@@ -34,7 +35,7 @@ tradutor/
   bench_refine_llms.py   # benchmark rápido no prompt de refine
   pdf_reader.py          # extração de texto com PyMuPDF (fitz)
   utils.py               # logging, IO, helpers
-  desquebrar.py          # utilitário para corrigir quebras de parágrafos
+  desquebrar.py          # desquebrar via LLM antes da tradução (pipeline)
   VERSION                # versão interna do pipeline
 data/                    # PDFs de entrada
 saida/                   # saídas (_pt.md, _pt_refinado.md, glossário dinâmico, cache/state/report)
@@ -52,12 +53,13 @@ tradutor.py / refinador.py# wrappers legados
 - Ollama (padrão) ou `GEMINI_API_KEY` para Gemini.
 
 ## Configuração
-- Opcional `config.yaml` (exemplo em `config.example.yaml`): chunk sizes, timeouts, modelos, caminhos.
-- Principais parâmetros: `translate_chunk_chars` / `refine_chunk_chars` (padrão 2400), `request_timeout` (60s), `translate_repeat_penalty` (1.1), `dump_chunks` (debug).
+- Opcional `config.yaml` (exemplo em `config.example.yaml`): modelos, caminhos, timeouts, flags de desquebrar e cleanup.
+- Principais parâmetros: `translate_chunk_chars` / `refine_chunk_chars` / `desquebrar_chunk_chars` (2400/2400/2600), `translate_num_predict`/`refine_num_predict`/`desquebrar_num_predict` (2048/1536/1024), `request_timeout` (180s), `translate_repeat_penalty` (1.1), `desquebrar_repeat_penalty` (1.08), `use_desquebrar` (padrão true para PDF), `cleanup_before_refine` (padrão auto), `dump_chunks` (debug).
 
 ## Modelos padrão
-- Tradução: backend `ollama`, modelo `brunoconterato/Gemma-3-Gaia-PT-BR-4b-it:f16`, temperatura `0.15`, chunk 2400.
-- Refine: backend `ollama`, modelo `cnmoro/gemma3-gaia-ptbr-4b:q4_k_m`, temperatura `0.30`, chunk 2400.
+- Tradução: backend `ollama`, modelo `gemma3:27b-it-q4_K_M`, temperatura `0.55`, chunk 2400.
+- Desquebrar: backend `ollama`, modelo `cnmoro/gemma3-gaia-ptbr-4b:q4_k_m`, temperatura `0.08`, chunk 2600.
+- Refine: backend `ollama`, modelo `mistral-small3.1:24b-instruct-2503-q4_K_M`, temperatura `0.20`, chunk 2400, guardrails `strict`.
 - Retry: tradução 3 tentativas; refine 1 (fallback usa chunk original).
 
 ---
@@ -82,9 +84,12 @@ python -m tradutor.main traduz --use-glossary --manual-glossary "glossario/gloss
 # opções úteis
 python -m tradutor.main traduz --backend gemini --model gemini-3-pro-preview
 python -m tradutor.main traduz --resume --input "data/meu_livro.pdf"
+python -m tradutor.main traduz --num-predict 2048 --request-timeout 180 --input "data/meu_livro.pdf"  # modelos lentos ou com <think> longo
+python -m tradutor.main traduz --no-use-desquebrar --input "data/meu_livro.pdf"  # pular desquebrar
+python -m tradutor.main traduz --desquebrar-model "cnmoro/gemma3-gaia-ptbr-4b:q4_k_m" --desquebrar-chunk-chars 2000 --input "data/meu_livro.pdf"
 python -m tradutor.main traduz --preprocess-advanced --debug
 ```
-Saídas: `saida/<nome>_pt.md`, manifesto `<nome>_pt_progress.json`, cache/state/report em `saida/`. Debug salva raw/preprocessed.
+Saídas: `saida/<nome>_pt.md`, manifesto `<nome>_pt_progress.json`, cache/state/report em `saida/`. Debug salva `*_raw_extracted.md`, `*_preprocessed.md` e `*_raw_desquebrado.md` (quando desquebrar ativo).
 
 ### Refine (Markdown PT-BR)
 ```bash
@@ -96,6 +101,11 @@ python -m tradutor.main refina --debug-refine
 python -m tradutor.main refina --editor-lite --editor-report
 ```
 Saídas: `saida/<nome>_pt_refinado.md`, PDF correspondente, manifesto `<nome>_pt_refinado_progress.json`, cache/state/report em `saida/`, `glossario_dinamico.json` se habilitado.
+
+## Métricas e cleanup estrutural
+- Métricas de produção: ao rodar tradução/refine, são gerados `saida/<slug>_translate_metrics.json` e `saida/<slug>_refine_metrics.json` com estatísticas por chunk/bloco.
+- Debug por chunk: `--debug-chunks` mantém o JSONL detalhado de cada etapa.
+- Cleanup antes do refine (opcional): `--cleanup-before-refine {off,auto,on}` aplica limpeza determinística (dedupe de linhas/parágrafos e separação de falas coladas). Quando aplicado, é salvo um `*_pt_pre_refine_cleanup.md` para auditoria.
 
 ### Mesclar glossários
 ```bash

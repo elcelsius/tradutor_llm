@@ -155,7 +155,9 @@ def chunk_for_translation(paragraphs: List[str], max_chars: int, logger: logging
         hard_end = min(total_len, start + max_chars + lookahead)
 
         if target_end >= total_len:
-            chunks.append(text[start:].strip())
+            last_slice = text[start:]
+            chunks.append(last_slice.strip())
+            consumed += len(last_slice)
             break
 
         window = text[start:hard_end]

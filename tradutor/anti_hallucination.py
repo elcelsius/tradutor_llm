@@ -24,9 +24,12 @@ def detect_language_anomaly(text: str, mode: str = "refine") -> bool:
         if english_words:
             common_en = {"the", "and", "with", "from", "this", "that", "here", "there", "you", "your", "their"}
             en_hits = sum(1 for w in english_words if w.lower() in common_en)
-            if en_hits / max(len(english_words), 1) > 0.03:
+            english_ratio = en_hits / max(len(english_words), 1)
+            pt_markers = [" que ", " de ", " para ", " não", " uma ", " um ", " com ", " ao ", " na ", " no "]
+            has_pt_markers = any(marker in f" {lower} " for marker in pt_markers)
+            if english_ratio > 0.25 and not has_pt_markers:
                 return True
-    markers = ["as an ai", "here is the refined text", "<think>", "</think>", "assistant:", "user:"]
+    markers = ["as an ai", "here is the refined text", "<think>", "</think>", "assistant:", "user:", "como um modelo de linguagem"]
     if any(pat in lower for pat in markers):
         return True
     return False
@@ -54,7 +57,7 @@ def detect_structure_anomaly(text: str) -> bool:
         return True
     if "### texto_refinado_inicio".lower() in lower and "### texto_refinado_fim".lower() not in lower:
         return True
-    bad_markers = ["<think>", "assistant:", "user:", "===glossario_s", "```", "{", "}", "[", "]"]
+    bad_markers = ["<think>", "assistant:", "user:", "===glossario_s", "```"]
     if any(bm in lower for bm in bad_markers):
         return True
     return False
@@ -99,13 +102,14 @@ def anti_hallucination_filter(orig: str, llm_raw: str, cleaned: str, mode: str) 
         return sanitize_llm_output(cleaned)
 
     safe = sanitize_llm_output(cleaned)
-    if detect_language_anomaly(safe, mode=mode):
-        return orig
-    if detect_repetition_anomaly(safe):
+    if not safe.strip():
         return orig
     if detect_structure_anomaly(llm_raw):
         return orig
-    # Deriva semântica só faz sentido no refine (orig e alvo na mesma língua).
-    if mode == "refine" and detect_semantic_drift(orig, safe):
+    if detect_language_anomaly(safe, mode=mode):
+        return orig
+    if len(safe.strip()) < max(20, int(len(orig.strip()) * 0.2)):
+        return orig
+    if detect_repetition_anomaly(safe):
         return orig
     return safe

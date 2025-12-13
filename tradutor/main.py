@@ -20,9 +20,11 @@ from .preprocess import preprocess_text
 from .refine import refine_markdown_file
 from .postprocess import final_pt_postprocess
 from .translate import translate_document
+from .desquebrar import desquebrar_text
 from .utils import setup_logging, write_text, read_text
 from .structure_normalizer import normalize_structure
 from .editor import editor_pipeline
+from .pdf import convert_markdown_to_pdf
 
 
 def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
@@ -31,8 +33,14 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
     common.add_argument(
         "--debug",
         action="store_true",
-        help="Ativa logs detalhados e artefatos intermediários.",
+        help="Ativa logs detalhados e artefatos intermediarios.",
     )  # permite --debug antes ou depois do subcomando
+    common.add_argument(
+        "--request-timeout",
+        type=int,
+        default=cfg.request_timeout,
+        help="Timeout (s) por chamada de modelo (Ollama/Gemini).",
+    )
     parser = argparse.ArgumentParser(
         description="Tradutor e refinador de PDFs com LLMs.",
         parents=[common],
@@ -43,48 +51,120 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
     t = sub.add_parser(
         "traduz",
         parents=[common],
-        help="Traduz PDFs da pasta data/ (ou um arquivo específico).",
+        help="Traduz PDFs da pasta data/ (ou um arquivo especifico).",
     )
-    t.add_argument("--input", type=str, help="PDF específico para traduzir.")
+    t.add_argument("--input", type=str, help="PDF especifico para traduzir.")
     t.add_argument("--backend", type=str, choices=["ollama", "gemini"], default=cfg.translate_backend)
     t.add_argument("--model", type=str, default=cfg.translate_model)
-    t.add_argument("--no-refine", action="store_true", help="Não executar refine após traduzir.")
+    t.add_argument(
+        "--num-predict",
+        type=int,
+        default=cfg.translate_num_predict,
+        help="Limite de tokens gerados por chunk (Ollama).",
+    )
+    t.add_argument("--no-refine", action="store_true", help="Nao executar refine apos traduzir.")
     t.add_argument(
         "--resume",
         action="store_true",
-        help="Retoma tradução usando manifesto de progresso existente (se houver).",
+        help="Retoma traducao usando manifesto de progresso existente (se houver).",
     )
     t.add_argument(
         "--use-glossary",
         action="store_true",
-        help="Ativa uso do glossário manual durante a tradução (EN->PT).",
+        help="Ativa uso do glossario manual durante a traducao (EN->PT).",
     )
     t.add_argument(
         "--manual-glossary",
         type=str,
-        help="Arquivo JSON de glossário manual para a tradução (padrão: glossario/glossario_manual.json).",
+        help="Arquivo JSON de glossario manual para a traducao (padrao: glossario/glossario_manual.json).",
     )
     t.add_argument(
         "--parallel",
         type=int,
         default=1,
-        help="Número de workers paralelos (tradução). Contexto mantém ordem; valores >1 são ajustados se necessário.",
+        help="Numero de workers paralelos (traducao). Contexto mantem ordem; valores >1 sao ajustados se necessario.",
     )
     t.add_argument(
         "--preprocess-advanced",
         action="store_true",
-        help="Ativa pré-processamento avançado opcional antes da tradução/refine.",
+        help="Ativa pre-processamento avancado opcional antes da traducao/refine.",
+    )
+    t.add_argument(
+        "--cleanup-before-refine",
+        choices=["off", "auto", "on"],
+        default=None,
+        help="Controle de limpeza deterministica antes do refine: off, auto, on.",
+    )
+    t.add_argument(
+        "--use-desquebrar",
+        action=argparse.BooleanOptionalAction,
+        default=cfg.use_desquebrar,
+        help="Aplica desquebrar antes de traduzir (padrao: true para PDF). Desative com --no-use-desquebrar.",
+    )
+    t.add_argument(
+        "--desquebrar-backend",
+        type=str,
+        choices=["ollama", "gemini"],
+        default=cfg.desquebrar_backend,
+        help="Backend LLM para desquebrar (padrao: ollama).",
+    )
+    t.add_argument(
+        "--desquebrar-model",
+        type=str,
+        default=cfg.desquebrar_model,
+        help="Modelo LLM para desquebrar.",
+    )
+    t.add_argument(
+        "--desquebrar-temperature",
+        type=float,
+        default=cfg.desquebrar_temperature,
+        help="Temperatura do desquebrar (padrao: 0.08).",
+    )
+    t.add_argument(
+        "--desquebrar-chunk-chars",
+        type=int,
+        default=cfg.desquebrar_chunk_chars,
+        help="Tamanho alvo (chars) por chunk no desquebrar.",
+    )
+    t.add_argument(
+        "--desquebrar-num-predict",
+        type=int,
+        default=cfg.desquebrar_num_predict,
+        help="Limite de tokens no desquebrar (Ollama).",
+    )
+    t.add_argument(
+        "--desquebrar-repeat-penalty",
+        type=float,
+        default=cfg.desquebrar_repeat_penalty,
+        help="Repeat penalty no desquebrar (Ollama).",
+    )
+    t.add_argument(
+        "--debug-chunks",
+        action="store_true",
+        help="Ativa debug detalhado por chunk (JSONL) na traducao.",
+    )
+    t.add_argument(
+        "--pdf-enabled",
+        action=argparse.BooleanOptionalAction,
+        default=cfg.pdf_enabled,
+        help="Gera PDF automaticamente após o refine (padrão: config).",
     )
 
     # Subcomando: refinar
     r = sub.add_parser(
         "refina",
         parents=[common],
-        help="Refina arquivos *_pt.md na pasta saida/ ou um arquivo específico.",
+        help="Refina arquivos *_pt.md na pasta saida/ ou um arquivo especifico.",
     )
-    r.add_argument("--input", type=str, help="Arquivo específico para refinar (ex.: saida/xxx_pt.md).")
+    r.add_argument("--input", type=str, help="Arquivo especifico para refinar (ex.: saida/xxx_pt.md).")
     r.add_argument("--backend", type=str, choices=["ollama", "gemini"], default=cfg.refine_backend)
     r.add_argument("--model", type=str, default=cfg.refine_model)
+    r.add_argument(
+        "--num-predict",
+        type=int,
+        default=cfg.refine_num_predict,
+        help="Limite de tokens gerados por chunk no refine (Ollama).",
+    )
     r.add_argument(
         "--resume",
         action="store_true",
@@ -93,27 +173,27 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
     r.add_argument(
         "--normalize-paragraphs",
         action="store_true",
-        help="Normaliza parágrafos do .md antes de refinar (remove quebras internas).",
+        help="Normaliza paragrafos do .md antes de refinar (remove quebras internas).",
     )
     r.add_argument(
         "--use-glossary",
         action="store_true",
-        help="Ativa modo de glossário (manual + dinâmico) nas chamadas de refine.",
+        help="Ativa modo de glossario (manual + dinamico) nas chamadas de refine.",
     )
     r.add_argument(
         "--auto-glossary-dir",
         type=str,
-        help="Diretório opcional contendo vários JSONs de glossário manual (todos serão carregados).",
+        help="Diretorio opcional contendo varios JSONs de glossario manual (todos serao carregados).",
     )
     r.add_argument(
         "--manual-glossary",
         type=str,
-        help="Arquivo JSON de glossário manual (somente leitura).",
+        help="Arquivo JSON de glossario manual (somente leitura).",
     )
     r.add_argument(
         "--dynamic-glossary",
         type=str,
-        help="Arquivo JSON de glossário dinâmico (padrão: saida/glossario_dinamico.json).",
+        help="Arquivo JSON de glossario dinamico (padrao: saida/glossario_dinamico.json).",
     )
     r.add_argument(
         "--debug-refine",
@@ -124,18 +204,37 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
         "--parallel",
         type=int,
         default=1,
-        help="Número de workers paralelos para refine (ordem preservada na montagem).",
+        help="Numero de workers paralelos para refine (ordem preservada na montagem).",
     )
     r.add_argument(
         "--preprocess-advanced",
         action="store_true",
-        help="Ativa pré-processamento avançado opcional no Markdown antes do refine.",
+        help="Ativa pre-processamento avancado opcional no Markdown antes do refine.",
     )
-    r.add_argument("--editor-lite", action="store_true", help="Ativa modo editor lite pós-refine.")
-    r.add_argument("--editor-consistency", action="store_true", help="Ativa modo editor consistency pós-refine.")
-    r.add_argument("--editor-voice", action="store_true", help="Ativa modo editor voice pós-refine.")
-    r.add_argument("--editor-strict", action="store_true", help="Ativa modo editor strict pós-refine.")
-    r.add_argument("--editor-report", action="store_true", help="Gera relatório das mudanças do editor.")
+    r.add_argument(
+        "--cleanup-before-refine",
+        choices=["off", "auto", "on"],
+        default=None,
+        help="Controle de limpeza deterministica antes do refine: off, auto, on.",
+    )
+    r.add_argument(
+        "--debug-chunks",
+        action="store_true",
+        help="Ativa debug detalhado por chunk (JSONL) no refine.",
+    )
+    r.add_argument("--editor-lite", action="store_true", help="Ativa modo editor lite pos-refine.")
+    r.add_argument("--editor-consistency", action="store_true", help="Ativa modo editor consistency pos-refine.")
+    r.add_argument("--editor-voice", action="store_true", help="Ativa modo editor voice pos-refine.")
+    r.add_argument("--editor-strict", action="store_true", help="Ativa modo editor strict pos-refine.")
+    r.add_argument("--editor-report", action="store_true", help="Gera relatorio das mudancas do editor.")
+
+    # Subcomando: PDF direto
+    p = sub.add_parser(
+        "pdf",
+        parents=[common],
+        help="Gera PDF a partir de um arquivo .md (ex.: *_pt_refinado.md).",
+    )
+    p.add_argument("--input", type=str, required=True, help="Arquivo .md para converter em PDF.")
 
     return parser
 
@@ -161,20 +260,25 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
     if not pdfs:
         raise SystemExit("Nenhum PDF encontrado em data/ ou caminho inválido.")
 
+    use_desquebrar = bool(getattr(args, "use_desquebrar", getattr(cfg, "use_desquebrar", True)))
+
     backend = LLMBackend(
         backend=args.backend,
         model=args.model,
         temperature=cfg.translate_temperature,
         logger=logger,
-        request_timeout=cfg.request_timeout,
+        request_timeout=args.request_timeout,
         repeat_penalty=cfg.translate_repeat_penalty,
+        num_predict=args.num_predict,
     )
     logger.info(
-        "LLM de tradução: backend=%s model=%s temp=%.2f chunk=%d",
+        "LLM de tradução: backend=%s model=%s temp=%.2f chunk=%d timeout=%ds num_predict=%d",
         args.backend,
         args.model,
         cfg.translate_temperature,
         cfg.translate_chunk_chars,
+        args.request_timeout,
+        args.num_predict,
     )
 
     glossary_text = None
@@ -196,8 +300,8 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
         if getattr(args, "preprocess_advanced", False):
             raw_text = advanced_clean(raw_text)
         if args.debug:
-            logger.debug("Debug ativado: salvando também raw_extract e preprocessed.")
-            raw_out = cfg.output_dir / f"{pdf.stem}_raw_extract.md"
+            logger.debug("Debug ativado: salvando também raw_extracted e preprocessed.")
+            raw_out = cfg.output_dir / f"{pdf.stem}_raw_extracted.md"
             write_text(raw_out, raw_text)
             logger.info("Texto bruto salvo em %s", raw_out)
 
@@ -206,6 +310,48 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
             pre_out = cfg.output_dir / f"{pdf.stem}_preprocessed.md"
             write_text(pre_out, pre_text)
             logger.info("Texto preprocessado salvo em %s", pre_out)
+
+        working_text = pre_text
+        desquebrar_stats = None
+        if use_desquebrar:
+            logger.info(
+                "Aplicando desquebrar antes da tradução (backend=%s model=%s temp=%.2f chunk=%d num_predict=%d repeat_penalty=%s)",
+                args.desquebrar_backend,
+                args.desquebrar_model,
+                args.desquebrar_temperature,
+                args.desquebrar_chunk_chars,
+                args.desquebrar_num_predict,
+                args.desquebrar_repeat_penalty,
+            )
+            desquebrar_backend = LLMBackend(
+                backend=args.desquebrar_backend,
+                model=args.desquebrar_model,
+                temperature=args.desquebrar_temperature,
+                logger=logger,
+                request_timeout=args.request_timeout,
+                num_predict=args.desquebrar_num_predict,
+                repeat_penalty=args.desquebrar_repeat_penalty,
+            )
+            working_text, desquebrar_stats = desquebrar_text(
+                working_text,
+                cfg,
+                logger,
+                backend=desquebrar_backend,
+                chunk_chars=args.desquebrar_chunk_chars,
+            )
+            if desquebrar_stats:
+                logger.info(
+                    "Desquebrar concluído: chunks=%d cache_hits=%d fallbacks=%d",
+                    desquebrar_stats.total_chunks,
+                    desquebrar_stats.cache_hits,
+                    desquebrar_stats.fallbacks,
+                )
+            if args.debug:
+                desq_out = cfg.output_dir / f"{pdf.stem}_raw_desquebrado.md"
+                write_text(desq_out, working_text)
+                logger.info("Texto desquebrado salvo em %s", desq_out)
+        else:
+            logger.info("Desquebrar desativado; seguindo direto para tradução.")
 
         progress_path = cfg.output_dir / f"{pdf.stem}_pt_progress.json"
         resume_manifest = None
@@ -232,7 +378,7 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                 )
 
         translated_md = translate_document(
-            pdf_text=pre_text,
+            pdf_text=working_text,
             backend=backend,
             cfg=cfg,
             logger=logger,
@@ -242,6 +388,8 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
             glossary_text=glossary_text,
             debug_translation=getattr(args, "debug", False),
             parallel_workers=max(1, getattr(args, "parallel", 1)),
+            debug_chunks=getattr(args, "debug_chunks", False),
+            already_preprocessed=True,
         )
 
         md_path = cfg.output_dir / f"{pdf.stem}_pt.md"
@@ -254,20 +402,26 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
             logger.info("Refinamento desabilitado (--no-refine); apenas *_pt.md será gerado.")
         else:
             logger.info("Executando refine opcional para %s", md_path.name)
+            cleanup_mode = args.cleanup_before_refine or getattr(cfg, "cleanup_before_refine", "off")
+            if cleanup_mode not in ("off", "auto", "on"):
+                cleanup_mode = "off"
             refine_backend = LLMBackend(
                 backend=cfg.refine_backend,
                 model=cfg.refine_model,
                 temperature=cfg.refine_temperature,
                 logger=logger,
-                request_timeout=cfg.request_timeout,
+                request_timeout=args.request_timeout,
                 repeat_penalty=cfg.refine_repeat_penalty,
+                num_predict=cfg.refine_num_predict,
             )
             logger.info(
-                "LLM de refine (opcional): backend=%s model=%s temp=%.2f chunk=%d",
+                "LLM de refine (opcional): backend=%s model=%s temp=%.2f chunk=%d timeout=%ds num_predict=%d",
                 cfg.refine_backend,
                 cfg.refine_model,
                 cfg.refine_temperature,
                 cfg.refine_chunk_chars,
+                args.request_timeout,
+                cfg.refine_num_predict,
             )
             output_refined = cfg.output_dir / f"{pdf.stem}_pt_refinado.md"
             refine_markdown_file(
@@ -278,8 +432,25 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                 logger=logger,
                 progress_path=cfg.output_dir / f"{pdf.stem}_pt_refinado_progress.json",
                 resume_manifest=None,
+                debug_chunks=getattr(args, "debug_chunks", False),
+                cleanup_mode=cleanup_mode,
             )
             logger.info("Conversão para PDF desativada temporariamente; saída principal é o arquivo .md refinado.")
+            pdf_enabled = bool(getattr(args, "pdf_enabled", cfg.pdf_enabled))
+            if pdf_enabled:
+                try:
+                    pdf_dir = cfg.output_dir / "pdf"
+                    pdf_output = pdf_dir / f"{output_refined.stem}.pdf"
+                    convert_markdown_to_pdf(
+                        md_path=output_refined,
+                        output_path=pdf_output,
+                        cfg=cfg,
+                        logger=logger,
+                        title=output_refined.stem,
+                    )
+                    logger.info("PDF gerado em %s", pdf_output)
+                except Exception as exc:
+                    logger.error("Falha ao gerar PDF automaticamente: %s", exc)
 
 
 def run_refine(args, cfg: AppConfig, logger: logging.Logger) -> None:
@@ -294,18 +465,24 @@ def run_refine(args, cfg: AppConfig, logger: logging.Logger) -> None:
         model=args.model,
         temperature=cfg.refine_temperature,
         logger=logger,
-        request_timeout=cfg.request_timeout,
+        request_timeout=args.request_timeout,
         repeat_penalty=cfg.refine_repeat_penalty,
+        num_predict=args.num_predict,
     )
     logger.info(
-        "LLM de refine: backend=%s model=%s temp=%.2f chunk=%d",
+        "LLM de refine: backend=%s model=%s temp=%.2f chunk=%d timeout=%ds num_predict=%d",
         args.backend,
         args.model,
         cfg.refine_temperature,
         cfg.refine_chunk_chars,
+        args.request_timeout,
+        args.num_predict,
     )
 
     glossary_state = None
+    cleanup_mode = args.cleanup_before_refine or getattr(cfg, "cleanup_before_refine", "off")
+    if cleanup_mode not in ("off", "auto", "on"):
+        cleanup_mode = "off"
     if getattr(args, "use_glossary", False):
         manual_path = Path(args.manual_glossary) if args.manual_glossary else None
         manual_dir = Path(args.auto_glossary_dir) if getattr(args, "auto_glossary_dir", None) else None
@@ -358,6 +535,8 @@ def run_refine(args, cfg: AppConfig, logger: logging.Logger) -> None:
             debug_refine=getattr(args, "debug_refine", False),
             parallel_workers=max(1, getattr(args, "parallel", 1)),
             preprocess_advanced=getattr(args, "preprocess_advanced", False),
+            debug_chunks=getattr(args, "debug_chunks", False),
+            cleanup_mode=cleanup_mode,
         )
         # pós-processamento final em PT-BR antes de PDF
         refined_text = read_text(output_md)
@@ -391,6 +570,18 @@ def run_refine(args, cfg: AppConfig, logger: logging.Logger) -> None:
         )
 
 
+def run_pdf(args, cfg: AppConfig, logger: logging.Logger) -> None:
+    """Gera PDF a partir de um arquivo .md existente."""
+    ensure_paths(cfg)
+    md_path = Path(args.input)
+    if not md_path.exists():
+        raise SystemExit(f"Arquivo não encontrado: {md_path}")
+    pdf_dir = cfg.output_dir / "pdf"
+    pdf_output = pdf_dir / f"{md_path.stem}.pdf"
+    convert_markdown_to_pdf(md_path=md_path, output_path=pdf_output, cfg=cfg, logger=logger, title=md_path.stem)
+    logger.info("PDF gerado em %s", pdf_output)
+
+
 def main() -> None:
     cfg = load_config()
     parser = build_parser(cfg)
@@ -401,6 +592,8 @@ def main() -> None:
         run_translate(args, cfg, logger)
     elif args.command == "refina":
         run_refine(args, cfg, logger)
+    elif args.command == "pdf":
+        run_pdf(args, cfg, logger)
     else:
         parser.error("Comando inválido.")
 

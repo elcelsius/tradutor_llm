@@ -1149,6 +1149,51 @@
       ],
       "source": "manual",
       "locked": true
+    },
+    {
+      "key": "possessive_s_rule",
+      "pt": "converter 's para do/da/de",
+      "category": "regra",
+      "notes": "Sempre converter possessivo inglês 's para forma natural em PT-BR.",
+      "aliases": [],
+      "source": "auto",
+      "locked": true
+    },
+    {
+      "key": "stuttering_rule",
+      "pt": "gagueira natural",
+      "category": "regra",
+      "notes": "H-he → E-ele ou Ele conforme fluidez.",
+      "aliases": [],
+      "source": "auto",
+      "locked": true
+    },
+    {
+      "key": "calque_blocker",
+      "pt": "bloqueio de calque",
+      "category": "regra",
+      "notes": "Evitar estruturas literais inglesas; usar PT-BR natural.",
+      "aliases": [],
+      "source": "auto",
+      "locked": true
+    },
+    {
+      "key": "humor_adaptation_rule",
+      "pt": "adaptação de humor",
+      "category": "regra",
+      "notes": "Trocadilhos devem preservar intenção, não literalidade.",
+      "aliases": [],
+      "source": "auto",
+      "locked": true
+    },
+    {
+      "key": "ocr_noise_removal",
+      "pt": "remoção de ruído OCR",
+      "category": "regra",
+      "notes": "Remover aspas triplas, caracteres estranhos, duplicações.",
+      "aliases": [],
+      "source": "auto",
+      "locked": true
     }
   ]
 }

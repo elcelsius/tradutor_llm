@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Callable
 
 from desquebrar import normalize_md_paragraphs
 
@@ -44,6 +44,7 @@ from .cache_utils import (
 )
 from .advanced_preprocess import clean_text as advanced_clean
 from .anti_hallucination import anti_hallucination_filter
+from .cleanup import cleanup_before_refine, detect_obvious_dupes, detect_glued_dialogues
 
 
 @dataclass
@@ -102,6 +103,20 @@ def has_suspicious_repetition(text: str, min_repeats: int = 3) -> bool:
     for ln in lines:
         counts[ln] = counts.get(ln, 0) + 1
     return any(c >= min_repeats for c in counts.values())
+
+
+def has_meta_noise(text: str) -> bool:
+    """Detecta meta-texto óbvio que não deve aparecer na saída final."""
+    lower = text.lower()
+    markers = [
+        "as an ai",
+        "as a language model",
+        "sou um modelo de linguagem",
+        "como um modelo de linguagem",
+        "<think>",
+        "</think>",
+    ]
+    return any(m in lower for m in markers)
 
 
 def save_refine_debug_files(
@@ -204,24 +219,58 @@ def _prepare_progress(
 
 
 def build_refine_prompt(section: str, glossary_enabled: bool = False, glossary_block: str | None = None) -> str:
+    glossary_section = ""
+    if glossary_enabled and glossary_block:
+        glossary_section = f"\nUse como referencia (sem adicionar explicacoes) o glossario a seguir:\n{glossary_block}\n"
+
     return f"""
-Você atuará como um POLIDOR MINIMALISTA.
+Você é um EDITOR PROFISSIONAL DE LIGHT NOVELS, responsável por transformar um texto traduzido para o português brasileiro em uma versão natural, fluida, coerente, com tom literário e qualidade de publicação.
+Não altere absolutamente nada da história, dos eventos, das falas, da linha do tempo ou do conteúdo original. Apenas melhore a escrita.
 
-Reescreva o texto abaixo sem alterar fatos, ordem, diálogos ou conteúdo narrativo.
-Corrija apenas pequenos erros de digitação e vírgulas, e resolva artefatos de OCR/PDF.
-NÃO resuma. NÃO expanda. NÃO interprete. NÃO remova ideias. NÃO adicione nada.
-NÃO envolva a saída em molduras ou comentários. NÃO inclua glossários.
-NÃO use "..." para representar conteúdo omitido. NÃO mude o idioma.
-Preserve todos os parágrafos, falas e informações.
+OBJETIVOS DO EDITOR:
 
-Formate sua resposta EXATAMENTE assim e nada mais:
+1. Naturalizar o português brasileiro, transformando frases literais em frases fluidas, claras e naturais.
+2. Corrigir gagueiras mal traduzidas, ajustando para formas naturais em PT-BR:
+
+   * "H-he..." → "E-ele..." ou apenas "Ele..."
+3. Corrigir possessivos do inglês:
+
+   * "Kirihara's grupo" → "o grupo do Kirihara"
+   * "Agit's blade" → "a lâmina do Agit"
+4. Adaptar humor e trocadilhos para PT-BR mantendo o espírito da piada:
+
+   * "Four Holey Smell-ders" → "Os Quatro Furados Fedorentos"
+   * "Captain Mammaries" → "Capitã Peituda"
+5. Remover ruídos de OCR/PDF como aspas triplas \"\"\" e caracteres soltos.
+6. Melhorar ritmo, coerência e pontuação de diálogos.
+7. Remover calques literais:
+
+   * "O que é com essa atitude de superioridade?!" → "Que atitude é essa, todo se achando?!"
+8. Padronizar fluidez narrativa.
+9. Ajustar repetições acidentais.
+10. Manter consistência de gênero/narrador (masculino/feminino) conforme o original; não inverter narrador masculino.
+
+PROIBIÇÕES ABSOLUTAS:
+
+* Não resumir.
+* Não cortar falas.
+* Não alterar eventos.
+* Não adicionar conteúdo.
+* Não mudar tom ou personalidade dos personagens.
+* Não reorganizar parágrafos.
+
+FORMATO DE SAÍDA:
+Retorne apenas:
+
 ### TEXTO_REFINADO_INICIO
+
 <texto refinado>
 ### TEXTO_REFINADO_FIM
 
-Texto para revisão (PT-BR):
-\"\"\"{section}\"\"\"
-"""
+Nada antes ou depois dos marcadores.
+
+{glossary_section}Texto para revisao (PT-BR):
+\"\"\"{section}\"\"\"\n"""
 
 
 def split_markdown_sections(md_text: str) -> List[Tuple[str, str]]:
@@ -260,6 +309,7 @@ def refine_section(
     debug_refine: bool = False,
     metrics: dict | None = None,
     seen_chunks: list | None = None,
+    debug_writer: Callable[[dict], None] | None = None,
 ) -> str:
     if metrics is None:
         metrics = {}
@@ -277,7 +327,27 @@ def refine_section(
         block_idx = _next_block_index()
         if stats:
             stats.total_blocks += 1
+        guard_mode = getattr(cfg, "refine_guardrails", "strict")
         h = chunk_hash(chunk)
+        block_metrics = metrics.setdefault("block_metrics", [])
+
+        def record_block(final_text: str, *, used_fallback: bool = False, from_cache: bool = False, from_duplicate: bool = False, collapse: bool = False) -> None:
+            ratio = (len(final_text.strip()) / max(len(chunk.strip()), 1)) if chunk.strip() else 0.0
+            block_metrics.append(
+                {
+                    "block_index": block_idx,
+                    "chars_in": len(chunk),
+                    "chars_out": len(final_text),
+                    "ratio_out_in": round(ratio, 3),
+                    "used_fallback": used_fallback,
+                    "guardrails_mode": guard_mode,
+                    "suspicious_repetition": has_suspicious_repetition(final_text),
+                    "from_cache": from_cache,
+                    "from_duplicate": from_duplicate,
+                    "collapse_detected": collapse,
+                }
+            )
+        llm_raw: str | None = None
         for prev_chunk, prev_final in seen_chunks:
             if is_near_duplicate(prev_chunk, chunk):
                 logger.info("Chunk ref-%d/%d-%d/%d marcado como duplicado; reuso habilitado.", index, total, c_idx, len(chunks))
@@ -290,28 +360,71 @@ def refine_section(
                     progress.error_blocks.discard(block_idx)
                     progress.chunk_outputs[block_idx] = prev_final
                 _write_progress(progress, logger)
+                record_block(prev_final, from_duplicate=True)
+                if debug_writer:
+                    debug_writer(
+                        {
+                            "para_index": block_idx,
+                            "original_text": chunk,
+                            "original_chars": len(chunk),
+                            "refined_text": prev_final,
+                            "refined_chars": len(prev_final),
+                            "llm_raw_output": None,
+                            "sanitizer_report": None,
+                        }
+                    )
                 continue
         if cache_exists("refine", h):
             data = load_cache("refine", h)
-            cached = data.get("final_output")
-            if cached:
-                logger.info("Reusando cache de refine para bloco ref-%d/%d-%d/%d", index, total, c_idx, len(chunks))
-                refined_parts.append(cached)
-                metrics["cache_hits"] = metrics.get("cache_hits", 0) + 1
-                if stats:
-                    stats.success_blocks += 1
-                if progress:
-                    progress.refined_blocks.add(block_idx)
-                    progress.error_blocks.discard(block_idx)
-                    progress.chunk_outputs[block_idx] = cached
-                _write_progress(progress, logger)
-                continue
+            if not _is_cache_compatible(data):
+                logger.debug("Cache de refine ignorado: assinatura diferente de backend/model/num_predict.")
+            else:
+                cached = data.get("final_output")
+                if cached:
+                    logger.info("Reusando cache de refine para bloco ref-%d/%d-%d/%d", index, total, c_idx, len(chunks))
+                    refined_parts.append(cached)
+                    metrics["cache_hits"] = metrics.get("cache_hits", 0) + 1
+                    if stats:
+                        stats.success_blocks += 1
+                    if progress:
+                        progress.refined_blocks.add(block_idx)
+                        progress.error_blocks.discard(block_idx)
+                        progress.chunk_outputs[block_idx] = cached
+                    _write_progress(progress, logger)
+                    record_block(cached, from_cache=True)
+                    if debug_writer:
+                        debug_writer(
+                            {
+                                "para_index": block_idx,
+                                "original_text": chunk,
+                                "original_chars": len(chunk),
+                                "refined_text": cached,
+                                "refined_chars": len(cached),
+                                "llm_raw_output": None,
+                                "sanitizer_report": None,
+                            }
+                        )
+                    continue
         if progress and block_idx in progress.refined_blocks and block_idx in progress.chunk_outputs:
             logger.info("Reusando refinamento salvo para bloco ref-%d/%d-%d/%d", index, total, c_idx, len(chunks))
             refined_parts.append(progress.chunk_outputs[block_idx])
             if stats:
                 stats.success_blocks += 1
             _write_progress(progress, logger)
+            record_block(progress.chunk_outputs[block_idx])
+            if debug_writer:
+                reused = progress.chunk_outputs[block_idx]
+                debug_writer(
+                    {
+                        "para_index": block_idx,
+                        "original_text": chunk,
+                        "original_chars": len(chunk),
+                        "refined_text": reused,
+                        "refined_chars": len(reused),
+                        "llm_raw_output": None,
+                        "sanitizer_report": None,
+                    }
+                )
             continue
         if glossary_state:
             glossary_block = format_glossary_for_prompt(
@@ -333,9 +446,9 @@ def refine_section(
                 label=f"ref-{index}/{total}-{c_idx}/{len(chunks)}",
                 max_retries=1,
             )
-            refined_text = response_text
+            refined_candidate = response_text
             if glossary_state:
-                refined_text, suggestion_block = split_refined_and_suggestions(llm_raw)
+                refined_candidate, suggestion_block = split_refined_and_suggestions(llm_raw)
                 suggestions = parse_glossary_suggestions(suggestion_block or "")
                 if suggestions:
                     updated = apply_suggestions_to_state(glossary_state, suggestions, logger)
@@ -346,44 +459,63 @@ def refine_section(
                             glossary_prompt_limit,
                         )
 
-            refined_text = anti_hallucination_filter(orig=chunk, llm_raw=llm_raw, cleaned=refined_text, mode="refine")
-            if len(refined_text.strip()) < len(chunk.strip()) * 0.80:
-                logger.warning(
-                    "Refinador devolveu texto menor do que deveria; mantendo texto original (chunk %d/%d da seção %s).",
-                    c_idx,
-                    len(chunks),
-                    title or f"#{index}",
-                )
+            collapse_flag = False
+            used_fallback = False
+            if guard_mode == "off":
+                refined_text = refined_candidate
+                if not refined_text.strip() or has_meta_noise(refined_text) or has_meta_noise(llm_raw or ""):
+                    used_fallback = True
+                elif detect_model_collapse(refined_text, original_len=len(chunk), mode="refine"):
+                    collapse_flag = True
+                    used_fallback = True
+            elif guard_mode == "relaxed":
+                filtered_text = anti_hallucination_filter(orig=chunk, llm_raw=llm_raw, cleaned=refined_candidate, mode="refine")
+                if filtered_text == chunk and refined_candidate.strip() and refined_candidate.strip() != chunk.strip():
+                    refined_text = refined_candidate
+                else:
+                    refined_text = filtered_text
+                severe_issue = False
+                if not refined_text.strip():
+                    severe_issue = True
+                elif has_meta_noise(refined_text) or has_meta_noise(llm_raw or ""):
+                    severe_issue = True
+                elif detect_model_collapse(refined_text, original_len=len(chunk), mode="refine"):
+                    collapse_flag = True
+                    severe_issue = True
+                if severe_issue:
+                    used_fallback = True
+            else:  # strict
+                refined_text = anti_hallucination_filter(orig=chunk, llm_raw=llm_raw, cleaned=refined_candidate, mode="refine")
+                if not refined_text.strip():
+                    used_fallback = True
+                elif detect_model_collapse(refined_text, original_len=len(chunk), mode="refine"):
+                    collapse_flag = True
+                    used_fallback = True
+
+            if used_fallback:
                 refined_text = chunk
                 metrics["fallbacks"] = metrics.get("fallbacks", 0) + 1
-            if len(refined_text.strip()) > len(chunk.strip()) * 2.0:
-                logger.warning(
-                    "Refinador devolveu texto muito maior do que o original; mantendo texto original (chunk %d/%d da seção %s).",
-                    c_idx,
-                    len(chunks),
-                    title or f"#{index}",
-                )
-                refined_text = chunk
-                metrics["fallbacks"] = metrics.get("fallbacks", 0) + 1
-            if has_suspicious_repetition(refined_text):
-                logger.warning(
-                    "Refinador devolveu texto com repetição suspeita; mantendo texto original (chunk %d/%d da seção %s).",
-                    c_idx,
-                    len(chunks),
-                    title or f"#{index}",
-                )
-                refined_text = chunk
-                metrics["fallbacks"] = metrics.get("fallbacks", 0) + 1
-            if detect_model_collapse(refined_text, original_len=len(chunk), mode="refine"):
-                logger.warning(
-                    "Colapso detectado no chunk %d/%d da seção %s; mantendo texto original.",
-                    c_idx,
-                    len(chunks),
-                    title or f"#{index}",
-                )
-                refined_text = chunk
-                metrics["collapse"] = metrics.get("collapse", 0) + 1
-                metrics["fallbacks"] = metrics.get("fallbacks", 0) + 1
+                if collapse_flag:
+                    metrics["collapse"] = metrics.get("collapse", 0) + 1
+            else:
+                ratio = len(refined_text.strip()) / max(len(chunk.strip()), 1)
+                if ratio < 0.8 or ratio > 1.8:
+                    logger.info(
+                        "Refine: divergência de tamanho aceita (mode=%s, ratio=%.2f) no chunk %d/%d da seção %s.",
+                        guard_mode,
+                        ratio,
+                        c_idx,
+                        len(chunks),
+                        title or f"#{index}",
+                    )
+                if has_suspicious_repetition(refined_text):
+                    logger.warning(
+                        "Refinador devolveu texto com repetição suspeita; aceitando (mode=%s) no chunk %d/%d da seção %s.",
+                        guard_mode,
+                        c_idx,
+                        len(chunks),
+                        title or f"#{index}",
+                    )
             # Debug opcional: salva até os 5 primeiros chunks
             if debug_refine and block_idx <= 5:
                 debug_dir = cfg.output_dir / "debug_refine"
@@ -405,13 +537,36 @@ def refine_section(
                 progress.error_blocks.discard(block_idx)
                 progress.chunk_outputs[block_idx] = refined_text
             seen_chunks.append((chunk, refined_text))
+            record_block(refined_text, used_fallback=used_fallback, collapse=collapse_flag)
             save_cache(
                 "refine",
                 h,
                 raw_output=llm_raw,
                 final_output=refined_text,
-                metadata={"chunk_index": c_idx, "section_index": index, "mode": "refine"},
+                metadata={
+                    "chunk_index": c_idx,
+                    "section_index": index,
+                    "mode": "refine",
+                    "backend": getattr(backend, "backend", None),
+                    "model": getattr(backend, "model", None),
+                    "num_predict": getattr(backend, "num_predict", None),
+                    "temperature": getattr(backend, "temperature", None),
+                    "repeat_penalty": getattr(backend, "repeat_penalty", None),
+                    "guardrails": getattr(cfg, "refine_guardrails", None),
+                },
             )
+            if debug_writer:
+                debug_writer(
+                    {
+                        "para_index": block_idx,
+                        "original_text": chunk,
+                        "original_chars": len(chunk),
+                        "refined_text": refined_text,
+                        "refined_chars": len(refined_text),
+                        "llm_raw_output": llm_raw,
+                        "sanitizer_report": None,
+                    }
+                )
         except RuntimeError as exc:
             logger.warning(
                 "Chunk ref-%d/%d-%d/%d falhou; usando texto original. Erro: %s",
@@ -428,6 +583,19 @@ def refine_section(
                 progress.error_blocks.add(block_idx)
                 progress.chunk_outputs[block_idx] = chunk
             metrics["fallbacks"] = metrics.get("fallbacks", 0) + 1
+            record_block(chunk, used_fallback=True)
+            if debug_writer:
+                debug_writer(
+                    {
+                        "para_index": block_idx,
+                        "original_text": chunk,
+                        "original_chars": len(chunk),
+                        "refined_text": chunk,
+                        "refined_chars": len(chunk),
+                        "llm_raw_output": llm_raw,
+                        "sanitizer_report": None,
+                    }
+                )
         finally:
             _write_progress(progress, logger)
 
@@ -451,36 +619,96 @@ def refine_markdown_file(
     debug_refine: bool = False,
     parallel_workers: int = 1,
     preprocess_advanced: bool = False,
+    debug_chunks: bool = False,
+    cleanup_mode: str = "off",
 ) -> None:
-    md_text = read_text(input_path)
+    raw_md = read_text(input_path)
+    md_text = raw_md
     if preprocess_advanced:
         md_text = advanced_clean(md_text)
-    doc_hash = chunk_hash(md_text)
     if normalize_paragraphs:
         md_text = normalize_md_paragraphs(md_text)
+    cleanup_preview_hash_before = chunk_hash(md_text)
+
+    cleanup_applied = False
+    cleanup_stats: dict = {}
+    cleanup_mode = cleanup_mode if cleanup_mode in ("off", "auto", "on") else "off"
+    trigger_cleanup = False
+    if cleanup_mode == "on":
+        trigger_cleanup = True
+    elif cleanup_mode == "auto":
+        if detect_obvious_dupes(raw_md) or detect_glued_dialogues(raw_md):
+            trigger_cleanup = True
+        elif getattr(cfg, "refine_guardrails", "strict") == "strict" and (
+            detect_obvious_dupes(raw_md) or detect_glued_dialogues(raw_md)
+        ):
+            trigger_cleanup = True
+    if trigger_cleanup:
+        md_text, cleanup_stats = cleanup_before_refine(md_text)
+        cleanup_applied = True
+        pre_refine_path = output_path.with_name(f"{output_path.stem}_pre_refine_cleanup.md")
+        pre_refine_path.write_text(md_text, encoding="utf-8")
+    cleanup_preview_hash_after = chunk_hash(md_text)
+
+    doc_hash = chunk_hash(md_text)
     sections = split_markdown_sections(md_text)
     logger.info("Arquivo %s: %d seções detectadas", input_path.name, len(sections))
+    logger.info("Refine guardrails mode: %s", getattr(cfg, "refine_guardrails", "strict"))
     stats = RefineStats()
-    metrics: dict[str, int] = {"cache_hits": 0, "fallbacks": 0, "collapse": 0, "duplicates": 0}
+    metrics: dict[str, int | list | dict | bool | str] = {
+        "cache_hits": 0,
+        "fallbacks": 0,
+        "collapse": 0,
+        "duplicates": 0,
+        "block_metrics": [],
+    }
+    metrics["cleanup_mode"] = cleanup_mode
+    metrics["cleanup_applied"] = cleanup_applied
+    metrics["cleanup_stats"] = cleanup_stats
+    metrics["cleanup_preview_hash_before"] = cleanup_preview_hash_before
+    metrics["cleanup_preview_hash_after"] = cleanup_preview_hash_after
     seen_chunks: list[tuple[str, str]] = []
+    cache_signature = {
+        "backend": getattr(backend, "backend", None),
+        "model": getattr(backend, "model", None),
+        "num_predict": getattr(backend, "num_predict", None),
+        "temperature": getattr(backend, "temperature", None),
+        "repeat_penalty": getattr(backend, "repeat_penalty", None),
+        "guardrails": getattr(cfg, "refine_guardrails", None),
+    }
+
+    def _is_cache_compatible(data: dict) -> bool:
+        meta = data.get("metadata")
+        if not isinstance(meta, dict):
+            return False
+        return all(meta.get(k) == v for k, v in cache_signature.items())
 
     # Pré-computa total de blocos para progress
     total_blocks = 0
+    max_refine_chunk_len = 0
     for _, body in sections:
         paragraphs = paragraphs_from_text(body)
         chunks = chunk_for_refine(paragraphs, max_chars=cfg.refine_chunk_chars, logger=logger)
         total_blocks += len(chunks)
+        if chunks:
+            max_refine_chunk_len = max(max_refine_chunk_len, max(len(c) for c in chunks))
+    metrics["effective_refine_chunk_chars"] = cfg.refine_chunk_chars
+    metrics["max_chunk_chars_observed"] = max_refine_chunk_len
 
     if progress_path is None:
         progress_path = output_path.with_name(f"{output_path.stem}_progress.json")
 
     state_path = output_path.parent / "state_refine.json"
+    debug_file = None
+    debug_file_path: Path | None = None
+
     try:
         state_payload = {
             "input_file": str(input_path),
             "hash": doc_hash,
             "timestamp": datetime.now().isoformat(),
             "total_chunks": total_blocks,
+            "refine_guardrails": getattr(cfg, "refine_guardrails", "strict"),
         }
         state_path.write_text(json.dumps(state_payload, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception:
@@ -493,6 +721,14 @@ def refine_markdown_file(
         logger=logger,
     )
     _write_progress(progress, logger)
+
+    if debug_chunks:
+        debug_file_path = output_path.with_name(f"{output_path.stem}_chunks_debug.jsonl")
+        debug_file = debug_file_path.open("w", encoding="utf-8")
+
+    def _write_chunk_debug(entry: dict) -> None:
+        if debug_file:
+            debug_file.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
     refined_sections: List[str] = []
     with processing_context(stats, progress):
@@ -511,6 +747,7 @@ def refine_markdown_file(
                 debug_refine=debug_refine,
                 metrics=metrics,
                 seen_chunks=seen_chunks,
+                debug_writer=_write_chunk_debug if debug_chunks else None,
             )
         )
 
@@ -537,11 +774,41 @@ def refine_markdown_file(
         "duplicates_reused": metrics.get("duplicates", 0),
         "timestamp": datetime.now().isoformat(),
         "pipeline_version": version,
+        "refine_guardrails": getattr(cfg, "refine_guardrails", "strict"),
+        "effective_refine_chunk_chars": cfg.refine_chunk_chars,
+        "max_chunk_chars_observed": metrics.get("max_chunk_chars_observed", 0),
     }
     try:
         (output_path.parent / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        refine_metrics = {
+            "total_blocks": stats.total_blocks,
+            "cache_hits": metrics.get("cache_hits", 0),
+            "duplicates": metrics.get("duplicates", 0),
+            "fallbacks": metrics.get("fallbacks", 0),
+            "collapse": metrics.get("collapse", 0),
+            "blocks": metrics.get("block_metrics", []),
+            "guardrails_mode": getattr(cfg, "refine_guardrails", "strict"),
+            "cleanup_mode": metrics.get("cleanup_mode", "off"),
+            "cleanup_applied": metrics.get("cleanup_applied", False),
+            "cleanup_stats": metrics.get("cleanup_stats", {}),
+            "cleanup_preview_hash_before": metrics.get("cleanup_preview_hash_before"),
+            "cleanup_preview_hash_after": metrics.get("cleanup_preview_hash_after"),
+            "effective_refine_chunk_chars": cfg.refine_chunk_chars,
+            "max_chunk_chars_observed": metrics.get("max_chunk_chars_observed", 0),
+        }
+        slug = Path(input_path).stem
+        metrics_path = output_path.parent / f"{slug}_refine_metrics.json"
+        metrics_path.write_text(json.dumps(refine_metrics, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception:
         pass
+    if debug_file:
+        debug_file.close()
+        if debug_file_path:
+            logger.info("Arquivo de debug de refine: %s", debug_file_path)
+    if debug_file:
+        debug_file.close()
+        if debug_file_path:
+            logger.info("Arquivo de debug de refine: %s", debug_file_path)
     logger.info(
         "Refine concluído: %s (blocos: total=%d sucesso=%d placeholders=%d)",
         output_path.name,

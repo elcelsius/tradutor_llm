@@ -14,6 +14,7 @@ import re
 CACHE_DIRS = {
     "translate": Path("saida/cache_traducao"),
     "refine": Path("saida/cache_refine"),
+    "desquebrar": Path("saida/cache_desquebrar"),
 }
 
 
@@ -108,11 +109,14 @@ def detect_model_collapse(text: str, original_len: int | None = None, mode: str 
     # Tamanho relativo
     if original_len:
         ratio = len(text) / max(original_len, 1)
-        if mode == "translate" and ratio < 0.7:
-            return True
-        if mode == "refine" and ratio < 0.8:
-            return True
-        if ratio > 2.0:
-            return True
+        if mode == "translate":
+            if ratio < 0.7 or ratio > 2.0:
+                return True
+        elif mode == "refine":
+            if ratio < 0.5 or ratio > 3.0:
+                return True
+        else:
+            if ratio < 0.5 or ratio > 3.0:
+                return True
 
     return False

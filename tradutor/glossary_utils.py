@@ -273,6 +273,52 @@ def parse_glossary_suggestions(block: str) -> List[GlossaryEntry]:
     return suggestions
 
 
+def build_glossary_curation_prompt(glossary_json: str) -> str:
+    """
+    Prompt para curadoria e aprimoramento de glossario literario.
+    """
+    return f"""
+Você é um CURADOR PROFISSIONAL DE GLOSSÁRIOS para tradução literária (light novel Failure Frame).
+Receba o JSON abaixo e normalize, padronize e enriqueça o glossário para uso em tradução automática.
+
+Objetivos:
+- Manter consistência entre volumes; remover inconsistências e redundâncias.
+- Padronizar nomes próprios, skills, itens, locais, conceitos.
+- Garantir fluidez e naturalidade em PT-BR; adaptar termos culturalmente sensíveis.
+- Proteger traduções corretas com "locked": true.
+- Criar aliases adicionais e regras linguísticas essenciais.
+- Garantir coerência de gênero gramatical, estilo e voz.
+
+Ações obrigatórias por entrada:
+- Garantir consistência entre "key", "pt" e "aliases".
+- Adicionar "gender": masculino/feminino/neutro quando aplicável.
+- Adicionar "type": personagem / criatura / habilidade / conceito / título / local / item / evento / mecânica.
+- Expandir "aliases" com todas as variantes possíveis do inglês (e PT se úteis).
+- Eliminar qualquer resíduo de possessivo inglês ('s) nas traduções.
+- Manter "locked": true.
+- Reorganizar notes para ficarem claras, objetivas e úteis ao tradutor automático.
+- Consolidar duplicatas em um único termo com aliases.
+
+Adicionar pseudo-termos (regras gerais) ao final:
+- possessive_s_rule
+- stuttering_rule
+- calque_blocker
+- humor_adaptation_rule
+- proper_noun_preservation
+- ocr_noise_removal
+
+Regras adicionais:
+- Não alterar termos já locked=true.
+- Preservar humor em trocadilhos e apelidos.
+- Manter campos úteis existentes (category/source/key/pt) sincronizados com term_pt quando aplicável.
+
+Formato da saída: JSON válido, mesma estrutura, apenas o JSON (nada fora).
+
+Glossário para curadoria (JSON):
+{glossary_json}
+"""
+
+
 def apply_suggestions_to_state(
     state: GlossaryState,
     suggestions: List[GlossaryEntry],

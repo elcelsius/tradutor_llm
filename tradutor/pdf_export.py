@@ -11,7 +11,7 @@ from xml.sax.saxutils import escape
 
 from reportlab.lib.enums import TA_JUSTIFY, TA_LEFT
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.styles import ParagraphStyle, StyleSheet1
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
@@ -50,7 +50,8 @@ def _register_font(logger: logging.Logger) -> str:
 
 
 def _build_styles(font_name: str) -> dict[str, ParagraphStyle]:
-    styles = getSampleStyleSheet()
+    # Usa folha vazia para evitar KeyError por estilos duplicados do sample default.
+    styles = StyleSheet1()
     body_leading = 11.5 * 1.35
     dialogue_leading = 11.5 * 1.25
     hyphenator = None
