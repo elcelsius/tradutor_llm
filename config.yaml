@@ -12,14 +12,14 @@ translate_num_predict: 2048          # limite de tokens gerados por chunk
 # Desquebrar (normaliza quebras antes de traduzir)
 use_desquebrar: true                 # ativa desquebrar automaticamente para PDF
 desquebrar_backend: ollama           # backend do desquebrar
-desquebrar_model: cnmoro/gemma3-gaia-ptbr-4b:q4_k_m # modelo usado no desquebrar
+desquebrar_model: gemma3:27b-it-q4_K_M # modelo usado no desquebrar
 desquebrar_temperature: 0.08         # temperatura do desquebrar (baixa para não reescrever)
 desquebrar_repeat_penalty: 1.08      # penalidade de repetição no desquebrar
 desquebrar_chunk_chars: 2600         # chunk do desquebrar (pode ser um pouco maior que tradução)
 desquebrar_num_predict: 1024         # limite de tokens gerados no desquebrar
 
 # PDF (pós-refine)
-pdf_enabled: true                    # gera PDF automaticamente após o refine
+pdf_enabled: false                   # gera PDF automaticamente após o refine (defina true para habilitar)
 pdf_font:
   file: C:/Windows/Fonts/Aptos.ttf    # caminho da fonte principal (TTF/OTF)
   size: 12                            # tamanho base da fonte

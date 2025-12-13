@@ -12,6 +12,7 @@ from .cache_utils import cache_exists, chunk_hash, load_cache, save_cache
 from .llm_backend import LLMBackend
 from .preprocess import paragraphs_from_text
 from .utils import chunk_by_paragraphs, timed
+import re
 
 
 DESQUEBRAR_PROMPT = """
@@ -148,3 +149,95 @@ def desquebrar_text(
 
     combined = "\n\n".join(outputs).strip()
     return combined, stats
+
+
+def desquebrar_stats_to_dict(stats: DesquebrarStats | None, cfg: AppConfig) -> dict:
+    if stats is None:
+        return {}
+    return {
+        "total_chunks": stats.total_chunks,
+        "cache_hits": stats.cache_hits,
+        "fallbacks": stats.fallbacks,
+        "blocks": stats.blocks or [],
+        "effective_desquebrar_chunk_chars": cfg.desquebrar_chunk_chars,
+        "backend": getattr(cfg, "desquebrar_backend", None),
+        "model": getattr(cfg, "desquebrar_model", None),
+    }
+
+
+def normalize_md_paragraphs(md_text: str) -> str:
+    """
+    Normaliza parágrafos juntando linhas internas, preservando blocos especiais.
+    """
+    if not md_text:
+        return md_text
+
+    text = md_text.replace("\r\n", "\n").replace("\r", "\n")
+    lines = text.split("\n")
+    normalized: list[str] = []
+    buffer: list[str] = []
+    in_fence = False
+    fence_marker = ""
+
+    def flush_buffer() -> None:
+        nonlocal buffer
+        if buffer:
+            normalized.append(" ".join(buffer).strip())
+            buffer = []
+
+    for raw_line in lines:
+        line = raw_line.rstrip()
+        stripped = line.strip()
+
+        if in_fence:
+            normalized.append(raw_line)
+            if stripped.startswith(fence_marker):
+                in_fence = False
+                fence_marker = ""
+            continue
+
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            flush_buffer()
+            in_fence = True
+            fence_marker = stripped[:3]
+            normalized.append(raw_line)
+            continue
+
+        if stripped == "":
+            flush_buffer()
+            normalized.append("")
+            continue
+
+        if (
+            re.match(r"^#{1,6}\s", stripped)
+            or re.match(r"^>\s", stripped)
+            or re.match(r"^[-*+]\s", stripped)
+            or re.match(r"^\d+\.\s", stripped)
+        ):
+            flush_buffer()
+            normalized.append(stripped)
+            continue
+
+        if buffer:
+            if buffer[-1].endswith("-"):
+                buffer[-1] = buffer[-1][:-1]
+                buffer.append(stripped.lstrip())
+            else:
+                buffer.append(stripped)
+        else:
+            buffer.append(stripped)
+
+    flush_buffer()
+
+    compact: list[str] = []
+    prev_blank = False
+    for ln in normalized:
+        if ln == "":
+            if not prev_blank:
+                compact.append("")
+            prev_blank = True
+        else:
+            compact.append(ln)
+            prev_blank = False
+
+    return "\n".join(compact).strip()

@@ -20,7 +20,7 @@ from .preprocess import preprocess_text
 from .refine import refine_markdown_file
 from .postprocess import final_pt_postprocess
 from .translate import translate_document
-from .desquebrar import desquebrar_text
+from .desquebrar import desquebrar_text, desquebrar_stats_to_dict
 from .utils import setup_logging, write_text, read_text
 from .structure_normalizer import normalize_structure
 from .editor import editor_pipeline
@@ -350,6 +350,13 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                 desq_out = cfg.output_dir / f"{pdf.stem}_raw_desquebrado.md"
                 write_text(desq_out, working_text)
                 logger.info("Texto desquebrado salvo em %s", desq_out)
+            try:
+                metrics_path = cfg.output_dir / f"{pdf.stem}_desquebrar_metrics.json"
+                metrics_payload = desquebrar_stats_to_dict(desquebrar_stats, cfg)
+                metrics_payload["timestamp"] = datetime.now().isoformat()
+                metrics_path.write_text(json.dumps(metrics_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            except Exception as exc:
+                logger.warning("Falha ao gravar métricas do desquebrar: %s", exc)
         else:
             logger.info("Desquebrar desativado; seguindo direto para tradução.")
 
@@ -436,6 +443,12 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                 cleanup_mode=cleanup_mode,
             )
             logger.info("Conversão para PDF desativada temporariamente; saída principal é o arquivo .md refinado.")
+            try:
+                refined_text = read_text(output_refined)
+                refined_text = normalize_structure(refined_text)
+                write_text(output_refined, refined_text)
+            except Exception as exc:
+                logger.warning("Falha ao normalizar estrutura do refinado: %s", exc)
             pdf_enabled = bool(getattr(args, "pdf_enabled", cfg.pdf_enabled))
             if pdf_enabled:
                 try:

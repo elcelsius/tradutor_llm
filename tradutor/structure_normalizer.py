@@ -11,31 +11,45 @@ from typing import List
 def normalize_structure(text: str) -> str:
     lines = text.splitlines()
     normalized: List[str] = []
-    chapter_re = re.compile(r"^(?:chapter|cap[ií]tulo)\s+(\d+)", re.IGNORECASE)
-    last_blank = False
+    heading_re = re.compile(
+        r"^(?P<head>(?:pr[oó]logo|cap[ií]tulo\s+[^\s].*?|ep[ií]logo|interl[úu]dio))(?P<rest>.*)$",
+        re.IGNORECASE,
+    )
+
+    def add_blank() -> None:
+        if normalized and normalized[-1] == "":
+            return
+        normalized.append("")
 
     for ln in lines:
         stripped = ln.strip()
         if not stripped:
-            if not last_blank:
-                normalized.append("")
-            last_blank = True
+            add_blank()
             continue
-        last_blank = False
-        m = chapter_re.match(stripped.rstrip(":"))
+
+        m = heading_re.match(stripped.rstrip(":"))
         if m:
-            num = m.group(1)
-            normalized.append(f"CAPÍTULO {num}")
-            normalized.append("")  # separa do parágrafo seguinte
+            head = m.group("head").strip()
+            rest = m.group("rest").strip()
+            normalized.append(head)
+            add_blank()
+            if rest:
+                normalized.append(rest)
+                add_blank()
             continue
+
         normalized.append(stripped)
 
-    # remove linhas duplicadas de título consecutivo
-    deduped: List[str] = []
-    prev = None
+    # remove blanks duplicados no final/início
+    cleaned: List[str] = []
+    last_blank = False
     for ln in normalized:
-        if ln and ln == prev and ln.startswith("CAPÍTULO"):
-            continue
-        deduped.append(ln)
-        prev = ln
-    return "\n".join(deduped).strip()
+        if ln == "":
+            if last_blank:
+                continue
+            last_blank = True
+        else:
+            last_blank = False
+        cleaned.append(ln)
+
+    return "\n".join(cleaned).strip()

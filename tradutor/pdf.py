@@ -43,6 +43,28 @@ def _inline_markdown_to_html(text: str) -> str:
     return escaped
 
 
+def normalize_markdown_for_pdf(text: str) -> list[str]:
+    """
+    Normaliza quebras para PDF:
+    - converte <br> / <br/> em quebras reais
+    - separa parágrafos por linhas em branco
+    - retorna lista de parágrafos limpos (preservando quebras internas)
+    """
+    if not text:
+        return []
+    normalized = text.replace("<br/>", "\n").replace("<br>", "\n")
+    # normaliza quebras
+    normalized = normalized.replace("\r\n", "\n").replace("\r", "\n")
+    blocks = re.split(r"\n\s*\n", normalized)
+    parts: list[str] = []
+    for block in blocks:
+        block = block.strip()
+        if not block:
+            continue
+        parts.append(block)
+    return parts
+
+
 def convert_markdown_to_pdf(
     md_path: Path,
     output_path: Path,
@@ -97,11 +119,12 @@ def convert_markdown_to_pdf(
         fontSize=cfg.pdf_font_size + 4,
         leading=(cfg.pdf_font_size + 4) * 1.2,
         alignment=TA_LEFT,
-        spaceAfter=cfg.pdf_font_size * 0.8,
+        spaceAfter=max(cfg.pdf_font_size * 1.5, 18),
+        spaceBefore=cfg.pdf_font_size * 0.5,
     )
 
     text = md_path.read_text(encoding="utf-8")
-    paragraphs = text.split("\n\n")
+    paragraphs = normalize_markdown_for_pdf(text)
 
     doc = SimpleDocTemplate(
         str(output_path),
@@ -125,11 +148,24 @@ def convert_markdown_to_pdf(
         story.append(Paragraph(_inline_markdown_to_html(title), heading_style))
         story.append(Spacer(1, cfg.pdf_font_size * 0.6))
 
+    heading_keywords = ("prólogo", "prologo", "capítulo", "capitulo", "epílogo", "epilogo", "interlúdio", "interludio")
+
     for para in paragraphs:
         if not para.strip():
             continue
-        html = _inline_markdown_to_html(para.strip().replace("\n", "<br/>"))
-        story.append(Paragraph(html, body_style))
-        story.append(Spacer(1, cfg.pdf_font_size * 0.3))
+        raw = para.strip()
+        lower = raw.lower()
+        is_heading = False
+        for kw in heading_keywords:
+            if lower == kw or (lower.startswith(kw) and len(raw) <= 60):
+                is_heading = True
+                break
+        html = _inline_markdown_to_html(raw)
+        if is_heading:
+            story.append(Paragraph(html, heading_style))
+            story.append(Spacer(1, cfg.pdf_font_size * 0.8))
+        else:
+            story.append(Paragraph(html, body_style))
+            story.append(Spacer(1, cfg.pdf_font_size * 0.3))
 
     doc.build(story)

@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple, Callable
 
-from desquebrar import normalize_md_paragraphs
+from .desquebrar import normalize_md_paragraphs
 
 from .config import AppConfig
 from .glossary_utils import (

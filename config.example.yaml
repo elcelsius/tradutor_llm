@@ -17,7 +17,7 @@ desquebrar_chunk_chars: 2600         # chunk do desquebrar (pode ser um pouco ma
 desquebrar_num_predict: 1024         # limite de tokens gerados no desquebrar
 
 # PDF (pós-refine)
-pdf_enabled: true                    # gera PDF automaticamente após o refine
+pdf_enabled: false                   # gera PDF automaticamente após o refine (defina true para habilitar)
 pdf_font:
   file: C:/Windows/Fonts/Aptos.ttf    # caminho da fonte principal (TTF/OTF)
   size: 12                            # tamanho base da fonte

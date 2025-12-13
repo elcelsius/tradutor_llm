@@ -1,149 +1,181 @@
-# Tradutor Literário com LLMs (Ollama/Gemini)
+# Tradutor de Light Novels (EN → PT-BR) – Windows-friendly
 
-Pipeline completo EN → PT-BR com foco em previsibilidade e anti-alucinação para novels e PDFs. Compatível com Windows 11. Fluxo principal (PDF -> PT-BR):
-- **Passo 0 – Normalização**: extrai/normaliza o PDF e aplica **desquebrar** (opcional, padrão ON para PDF) para unir linhas sem reescrever. Em `--debug`, salva `saida/<slug>_raw_extracted.md` e `saida/<slug>_raw_desquebrado.md`.
-- **Passo 1 – Tradução** (`tradutor/main.py traduz`): recebe o texto desquebrado/normalizado, chunking inteligente (fim de frase), contexto leve entre chunks, glossário manual opcional, cache e gera `_pt.md`.
-- **Passo 2 – Refine opcional** (`tradutor/main.py refina`): lê `_pt.md`, aplica `cleanup_before_refine` (off/auto/on) antes do refine, rodando prompt minimalista/guardrails para `_pt_refinado.md` + PDF.
+Pipeline completo para traduzir PDFs/Markdown usando LLMs (Ollama/Gemini), com etapas automáticas de limpeza, desquebrar, tradução, refine e PDF final.
 
-Wrappers legados (`tradutor.py`, `refinador.py`) apenas chamam o CLI.
+> Para iniciantes: siga a seção **Passo a passo rápido**. Tudo é configurado pelo `config.yaml`.
 
 ---
 
-## Arquitetura
+## Passo a passo rápido
+1) Instale dependências:
+```bash
+pip install -r requirements.txt
+```
+2) Ajuste o `config.yaml` (modelos, caminhos, fonte do PDF). Padrão: Ollama rodando localmente.
+3) Coloque seus PDFs em `data/`.
+4) Rode a tradução completa (com refine; PDF é opcional e só sai se estiver habilitado):
+```bash
+python -m tradutor.main traduz --input "data/meu_livro.pdf"
+```
+5) Saídas em `saida/`:
+   - `<slug>_pt.md` (tradução)
+   - `<slug>_pt_refinado.md` (refine)
+   - `pdf/<slug>_pt_refinado.pdf` (apenas se `pdf_enabled: true` ou flag `--pdf-enabled`)
+   - métricas/manifestos para auditoria.
+
+---
+
+## O que o pipeline faz
+- **Pré-processa** o PDF (limpa lixo básico).
+- **Desquebra** linhas (usa LLM configurado em `desquebrar_*`).
+- **Traduz** EN → PT-BR com contexto leve e glossário opcional.
+- **Cleanup antes do refine** (remove duplicatas/glued, etc).
+- **Refina** o PT-BR com guardrails.
+- **Gera PDF** com fonte configurável (ReportLab).
+
+---
+
+## Configuração (config.yaml)
+Principais chaves (padrões já preenchidos):
+- `translate_backend`, `translate_model` (ex.: `gemma3:27b-it-q4_K_M`), `translate_temperature`, `translate_repeat_penalty`, `translate_chunk_chars`, `translate_num_predict`.
+- `use_desquebrar` (true/false) e `desquebrar_*` (backend/model/temp/repeat_penalty/chunk/num_predict).
+- `refine_backend`, `refine_model` (ex.: `mistral-small3.1:24b-instruct-2503-q4_K_M`), `refine_temperature`, `refine_guardrails`, `cleanup_before_refine` (off/auto/on).
+- PDF: `pdf_enabled` (padrão false; habilite no config ou com `--pdf-enabled`), `pdf_font.file/size/leading`, `pdf_font_fallbacks`, `pdf_margin`, `pdf_author`, `pdf_language`.
+- Caminhos: `data_dir`, `output_dir`.
+
+> O desquebrar usa exatamente o modelo/backend definidos em `config.yaml`; nada hardcoded.
+
+---
+
+## Comandos principais e flags
+
+### Traduzir PDF → PT-BR (com refine e PDF, se habilitado)
+```bash
+python -m tradutor.main traduz --input "data/meu_livro.pdf"
+```
+Flags (todas opcionais):
+- `--backend {ollama,gemini}` / `--model <nome>`: override de backend/modelo de tradução.
+- `--num-predict <int>`: tokens máximos por chunk na tradução.
+- `--no-refine`: pula o refine (gera só `<slug>_pt.md`).
+- `--resume`: retoma a partir do manifesto de progresso da tradução.
+- `--use-glossary`: injeta glossário manual (JSON) na tradução.
+- `--manual-glossary <path>`: caminho do glossário manual (default `glossario/glossario_manual.json`).
+- `--parallel <n>`: workers paralelos (tradução força ordem; >1 pode ser limitado).
+- `--preprocess-advanced`: limpeza extra antes de traduzir.
+- `--cleanup-before-refine {off,auto,on}`: força/auto/desliga cleanup antes do refine.
+- `--use-desquebrar` / `--no-use-desquebrar`: ativa/desativa desquebrar pré-tradução (default vem do config).
+- `--desquebrar-backend/model/temperature/repeat-penalty/chunk-chars/num-predict`: overrides específicos do desquebrar.
+- `--debug`: salva artefatos intermediários (`*_raw_extracted.md`, `*_preprocessed.md`, `*_raw_desquebrado.md`).
+- `--debug-chunks`: JSONL detalhado por chunk.
+- `--pdf-enabled` / `--no-pdf-enabled`: liga/desliga PDF automático após refine (se refine estiver ativo).
+- `--request-timeout <s>`: timeout por chamada de modelo.
+
+### Refine separado em um Markdown PT-BR
+```bash
+python -m tradutor.main refina --input "saida/meu_livro_pt.md"
+```
+Flags:
+- `--backend {ollama,gemini}` / `--model <nome>`: override de refine.
+- `--num-predict <int>`: tokens máximos por chunk no refine.
+- `--resume`: retoma a partir do manifesto de refine.
+- `--normalize-paragraphs`: normaliza parágrafos antes de refinar.
+- `--use-glossary`: ativa glossário manual/dinâmico.
+- `--manual-glossary <path>` / `--dynamic-glossary <path>` / `--auto-glossary-dir <dir>`: fontes de glossário.
+- `--debug-refine`: salva debug dos primeiros chunks de refine.
+- `--parallel <n>`: workers paralelos (ordem preservada na montagem).
+- `--preprocess-advanced`: limpeza extra antes do refine.
+- `--cleanup-before-refine {off,auto,on}`: modo de cleanup determinístico.
+- `--debug-chunks`: JSONL detalhado por chunk.
+- Editor opcional pós-refine: `--editor-lite`, `--editor-consistency`, `--editor-voice`, `--editor-strict`, `--editor-report` (gera `editor_report.json`).
+- `--request-timeout <s>`: timeout por chamada.
+
+### Gerar PDF a partir de um Markdown existente
+```bash
+python -m tradutor.main pdf --input "saida/meu_livro_pt_refinado.md"
+```
+Usa as configs de fonte/margem do `config.yaml`. Sem flags adicionais além de `--debug` (para logs verbosos).
+
+### Usar desquebrar direto em um arquivo
+```bash
+python desquebrar.py --input "arquivo.md" --output "arquivo_desquebrado.md" --config config.yaml
+```
+Flags: `--config` (opcional), `--debug` (logs). As demais configs vêm do `config.yaml`.
+---
+
+## Estrutura de pastas
 ```
 tradutor/
-  main.py                # CLI traduz/refina + flags (debug, glossary, parallel, editor, preprocess advanced)
-  config.py              # defaults (chunk=2400, timeout=120s, num_predict=1536/1024, repeat_penalty, paths)
-  preprocess.py          # pré-processo básico + chunking por frase (lookahead)
-  advanced_preprocess.py # limpeza opcional (hífens, tags estranhas, espaços)
-  translate.py           # tradução em lotes, contexto leve, glossário manual opcional, cache
-  refine.py              # refine minimalista por seção, glossário manual/dinâmico, guardrails, cache
-  llm_backend.py         # Ollama/Gemini, retries, timeout, repeat_penalty
-  sanitizer.py           # sanitização agressiva (trad) e leve (refine)
-  anti_hallucination.py  # AAA shield anti-alucinação/repetição/estrutura (não altera semântica correta)
-  cache_utils.py         # hash/cache por chunk, deduplicação, detecção de colapso
-  glossary_utils.py      # carga manual/dinâmico, merge para prompt, parser de sugestões
-  glossary/
-    merge.py             # CLI para unir glossários em MASTER_GLOSSARIO.json
-  intervolume.py         # QA opcional de consistência inter-volume (termos/gênero/voz/timeline)
-  pdf_export.py          # PDF com ReportLab (fontes locais Aptos/Segoe/Calibri/Arial, fallback Helvetica)
-  postprocess.py         # pós-processo PT-BR (travessões, espaços, marcadores)
-  structure_normalizer.py# normaliza títulos/capítulos antes do PDF
-  editor.py              # modos editor opcionais (lite/consistency/voice/strict) + relatório
-  benchmark.py           # benchmark BLEU/chrF entre modelos
-  bench_llms.py          # benchmark rápido no prompt de tradução
-  bench_refine_llms.py   # benchmark rápido no prompt de refine
-  pdf_reader.py          # extração de texto com PyMuPDF (fitz)
-  utils.py               # logging, IO, helpers
-  desquebrar.py          # desquebrar via LLM antes da tradução (pipeline)
-  VERSION                # versão interna do pipeline
-data/                    # PDFs de entrada
-saida/                   # saídas (_pt.md, _pt_refinado.md, glossário dinâmico, cache/state/report)
-glossario/               # glossários manuais por volume
-benchmark/               # amostras para benchmark
-tests/                   # smoke tests
-tradutor.py / refinador.py# wrappers legados
+  main.py             # CLI principal (traduz/refina/pdf)
+  translate.py        # pipeline de tradução em chunks
+  desquebrar.py       # função de desquebrar usada no pipeline
+  refine.py           # refine e cleanup determinístico
+  pdf.py              # conversor Markdown → PDF (ReportLab)
+  config.py           # carrega/mescla config.yaml
+  cleanup.py          # heurísticas determinísticas (dedupe, prefixos)
+  preprocess.py       # pré-processo de PDFs e chunking seguro
+  advanced_preprocess.py # limpeza opcional extra
+  sanitizer.py        # sanitização de saída LLM
+  anti_hallucination.py # filtros AAA anti-alucinação/repetição
+  cache_utils.py      # cache/hash por chunk, resume
+  glossary_utils.py   # carga/merge/glossário dinâmico
+  pdf_reader.py       # extração de texto de PDF (fitz)
+  pdf_export.py       # exportador PDF legado (ReportLab)
+  postprocess.py      # ajustes finais em PT-BR
+  structure_normalizer.py # normaliza títulos/cabeçalhos
+  editor.py           # modos editor opcionais (lite/consistency/voice/strict)
+  llm_backend.py      # cliente LLM (Ollama/Gemini)
+  benchmark.py        # benchmark BLEU/chrF
+  bench_llms.py       # benchmark rápido de tradução
+  bench_refine_llms.py# benchmark rápido de refine
+  VERSION             # versão interna do pipeline
+
+data/                 # PDFs de entrada
+saida/
+  cache_*             # caches de tradução/refine/desquebrar
+  pdf/                # PDFs finais gerados
+  *_pt.md             # tradução
+  *_pt_refinado.md    # refine
+  *metrics.json       # métricas de cada etapa
+  *progress.json      # manifestos de progresso
+  glossario_dinamico.json # se glossário dinâmico estiver ativo
+
+glossario/            # glossários manuais por volume
+benchmark/            # insumos para benchmarks
+tests/                # testes (smoke e unitários)
+config.yaml           # configuração central (modelos, fontes, caminhos)
+config.example.yaml   # exemplo de configuração comentado
+desquebrar.py         # wrapper CLI para desquebrar direto
+tradutor.py / refinador.py # wrappers legados (chamam main)
 ```
+
+---
+
+## Saídas e auditoria
+- Tradução: `saida/<slug>_pt.md` + métricas `*_translate_metrics.json` + `report.json`.
+- Refine: `saida/<slug>_pt_refinado.md` + `*_refine_metrics.json`.
+- Desquebrar (se debug): `*_raw_extracted.md`, `*_raw_desquebrado.md`, métricas `*_desquebrar_metrics.json`.
+- PDF: `saida/pdf/<slug>_pt_refinado.pdf` (quando `pdf_enabled: true`).
+- Manifestos de progresso: `*_progress.json` (trad/refine).
 
 ---
 
 ## Requisitos
-- Python 3.10+
-- Instalação: `pip install -r requirements.txt` (google-generativeai, PyMuPDF, reportlab, pyphen, requests, sacrebleu, PyYAML)
-- Ollama (padrão) ou `GEMINI_API_KEY` para Gemini.
-
-## Configuração
-- Opcional `config.yaml` (exemplo em `config.example.yaml`): modelos, caminhos, timeouts, flags de desquebrar e cleanup.
-- Principais parâmetros: `translate_chunk_chars` / `refine_chunk_chars` / `desquebrar_chunk_chars` (2400/2400/2600), `translate_num_predict`/`refine_num_predict`/`desquebrar_num_predict` (2048/1536/1024), `request_timeout` (180s), `translate_repeat_penalty` (1.1), `desquebrar_repeat_penalty` (1.08), `use_desquebrar` (padrão true para PDF), `cleanup_before_refine` (padrão auto), `dump_chunks` (debug).
-
-## Modelos padrão
-- Tradução: backend `ollama`, modelo `gemma3:27b-it-q4_K_M`, temperatura `0.55`, chunk 2400.
-- Desquebrar: backend `ollama`, modelo `cnmoro/gemma3-gaia-ptbr-4b:q4_k_m`, temperatura `0.08`, chunk 2600.
-- Refine: backend `ollama`, modelo `mistral-small3.1:24b-instruct-2503-q4_K_M`, temperatura `0.20`, chunk 2400, guardrails `strict`.
-- Retry: tradução 3 tentativas; refine 1 (fallback usa chunk original).
+- Windows 11 (prioritário), Python 3.10+.
+- Dependências: `pip install -r requirements.txt`.
+- Backend: Ollama (padrão) ou Gemini (`GEMINI_API_KEY` no ambiente).
 
 ---
 
-## Guardrails e segurança
-- **Prompts minimalistas** (sem molduras): saídas delimitadas por `### TEXTO_TRADUZIDO_INICIO/FIM` e `### TEXTO_REFINADO_INICIO/FIM`; texto fora é ignorado.
-- **Sanitização**: remove `<think>`, molduras, glossário sugerido, marcadores residuais, repetições e lixo; pós-processo PT ajusta travessões/espaços.
-- **Anti-alucinação (AAA)**: checa idioma indevido, repetição, estrutura; na tradução não faz fallback para o inglês; no refine pode manter chunk original se suspeito.
-- **Cache/estado/resume**: cache por hash em `saida/cache_traducao` e `saida/cache_refine`; `state_traducao.json` / `state_refine.json` para retomar; reutiliza duplicatas próximas.
-- **Contexto leve**: usa a última frase do chunk anterior como referência (não traduzida) para dar continuidade.
-- **Glossário**: manual opcional na tradução (injeta até 30 pares EN→PT); refine usa manual+dinâmico (sem duplicar `pt` do manual, filtros contra termos longos/descritivos).
-- **Editor opcional**: modos lite/consistency/voice/strict pós-refine; gera `saida/editor_report.json` se solicitado (padrão OFF).
+## Dicas rápidas
+- Modelos sugeridos (Ollama):
+  - Tradução: `gemma3:27b-it-q4_K_M`
+  - Desquebrar: use o mesmo ou outro em `config.yaml`.
+  - Refine: `mistral-small3.1:24b-instruct-2503-q4_K_M`
+- Para evitar truncamentos: mantenha `translate_chunk_chars` em ~2400.
+- Se fonte do PDF não existir, ajuste `pdf_font.file` ou use um fallback válido (ex.: `C:/Windows/Fonts/Arial.ttf`).
 
 ---
 
-## Uso
-### Tradução (PDF → PT-BR)
-```bash
-python -m tradutor.main traduz --input "data/meu_livro.pdf"
-# com glossário manual
-python -m tradutor.main traduz --use-glossary --manual-glossary "glossario/glossario_manual.json" --input "data/meu_livro.pdf"
-# opções úteis
-python -m tradutor.main traduz --backend gemini --model gemini-3-pro-preview
-python -m tradutor.main traduz --resume --input "data/meu_livro.pdf"
-python -m tradutor.main traduz --num-predict 2048 --request-timeout 180 --input "data/meu_livro.pdf"  # modelos lentos ou com <think> longo
-python -m tradutor.main traduz --no-use-desquebrar --input "data/meu_livro.pdf"  # pular desquebrar
-python -m tradutor.main traduz --desquebrar-model "cnmoro/gemma3-gaia-ptbr-4b:q4_k_m" --desquebrar-chunk-chars 2000 --input "data/meu_livro.pdf"
-python -m tradutor.main traduz --preprocess-advanced --debug
-```
-Saídas: `saida/<nome>_pt.md`, manifesto `<nome>_pt_progress.json`, cache/state/report em `saida/`. Debug salva `*_raw_extracted.md`, `*_preprocessed.md` e `*_raw_desquebrado.md` (quando desquebrar ativo).
-
-### Refine (Markdown PT-BR)
-```bash
-python -m tradutor.main refina --input "saida/meu_livro_pt.md"
-python -m tradutor.main refina --normalize-paragraphs --preprocess-advanced
-python -m tradutor.main refina --use-glossary --manual-glossary "glossario/glossario_manual.json" --dynamic-glossary "saida/glossario_dinamico.json"
-python -m tradutor.main refina --debug-refine
-# editor opcional
-python -m tradutor.main refina --editor-lite --editor-report
-```
-Saídas: `saida/<nome>_pt_refinado.md`, PDF correspondente, manifesto `<nome>_pt_refinado_progress.json`, cache/state/report em `saida/`, `glossario_dinamico.json` se habilitado.
-
-## Métricas e cleanup estrutural
-- Métricas de produção: ao rodar tradução/refine, são gerados `saida/<slug>_translate_metrics.json` e `saida/<slug>_refine_metrics.json` com estatísticas por chunk/bloco.
-- Debug por chunk: `--debug-chunks` mantém o JSONL detalhado de cada etapa.
-- Cleanup antes do refine (opcional): `--cleanup-before-refine {off,auto,on}` aplica limpeza determinística (dedupe de linhas/parágrafos e separação de falas coladas). Quando aplicado, é salvo um `*_pt_pre_refine_cleanup.md` para auditoria.
-
-### Mesclar glossários
-```bash
-python -m tradutor.glossario.merge --input glossario/ --output MASTER_GLOSSARIO.json
-```
-Conflitos em `saida/glossario_conflicts.log` (prioriza locked/manual).
-
-### Checagem inter-volume (QA opcional)
-```bash
-python -m tradutor.intervolume --volumes "saida/" --glossario-dir "glossario/" --master-glossario "glossario/MASTER_GLOSSARIO.json" --output "saida/consistencia_intervolume.json"
-# desativar checagens específicas
-python -m tradutor.intervolume --volumes "saida/" --glossario-dir "glossario/" --no-check-gender --no-check-voice
-```
-Gera `saida/consistencia_intervolume.json` com inconsistências de termos, gênero, voz e timeline.
-
-### Utilitário desquebrar (opcional)
-```bash
-python desquebrar.py --input "arquivo.md" --output "arquivo_corrigido.md" --model "llama3:8b"
-```
-Corrige quebras de parágrafo com cache de progresso e fallback.
-
----
-
-## Sanitização e robustez adicionais
-- Chunking seguro (2400 alvo) com lookahead para não cortar frases; contexto leve para transições.
-- Guardrails de tamanho: tradução alerta se <70% do original (não faz fallback); refine troca por original se <80% ou >200%.
-- Repetição e colapso: detecta loops/repetição; cache evita reprocessar; resume continua de onde parou.
-- Anti-alucinação: bloqueia marcadores indevidos, CJK/fr/esp indevidos; no refine pode usar chunk original como fallback.
-
----
-
-## Testes e benchmark
-- Smoke tests: `pytest -q` (sem LLM real).
-- Benchmark tradução: `python -m tradutor.benchmark` (usa `tests/benchmark_samples.json`).
-- Benchmarks rápidos: `python -m tradutor.bench_llms --input benchmark/teste_traducao_en.md --max-chars 1500 --out-dir benchmark/traducao` e `python -m tradutor.bench_refine_llms --input benchmark/teste_refine_pt.md --max-chars 1500 --out-dir benchmark/refine`.
-
----
-
-## Modelos recomendados (Ollama)
-- Tradução: `brunoconterato/Gemma-3-Gaia-PT-BR-4b-it:f16`
-- Refine: `cnmoro/gemma3-gaia-ptbr-4b:q4_k_m` (pode ser usado também para tradução se quiser saída mais conservadora).
+## Testes
+- Smoke: `pytest -q` (usa Fakes/stubs; não chama LLM real).
+- Benchmarks opcionais em `benchmark/` e comandos `bench_llms`/`bench_refine_llms`.
