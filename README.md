@@ -47,6 +47,21 @@ Principais chaves (padrões já preenchidos):
 
 ---
 
+## 📘 Glossários
+- Glossários são dados editoriais específicos de cada projeto/obra. Não versione glossários reais.
+- Exemplo de referência: `glossario/glossario_exemplo.json` (15 termos genéricos com campos `term`, `translation`, `type`, `locked`, `notes`, `aliases`).
+- Estrutura básica (JSON):
+  - `term`: termo de origem.
+  - `translation`: tradução fixa.
+  - `type`: categoria (ex.: creature, place, magic, title, organization, item, event).
+  - `locked`: true/false para fixar a tradução.
+  - `notes`: observação opcional.
+  - `aliases`: lista opcional de variações do termo.
+- Para criar o seu: copie `glossario_exemplo.json`, edite os termos e aponte no CLI com `--manual-glossary <seu_glossario.json>`.
+- Todos os `glossario/*.json` são ignorados no Git, exceto `glossario_exemplo.json`.
+
+---
+
 ## Comandos principais e flags
 
 ### Traduzir PDF → PT-BR (com refine e PDF, se habilitado)

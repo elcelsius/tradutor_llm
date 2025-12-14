@@ -9,6 +9,8 @@ venv/
 data/
 saida/
 .cache/
+glossario/*.json
+!glossario/glossario_exemplo.json
 
 # Configuração local
 .env

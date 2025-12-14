@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime
+import re
 
 from .config import AppConfig
 from .cache_utils import cache_exists, chunk_hash, load_cache, save_cache
 from .llm_backend import LLMBackend
 from .preprocess import paragraphs_from_text
 from .utils import chunk_by_paragraphs, timed
-import re
 
 
 DESQUEBRAR_PROMPT = """
@@ -58,7 +59,8 @@ def desquebrar_text(
 
     max_chars = chunk_chars or cfg.desquebrar_chunk_chars
     chunks = chunk_by_paragraphs(paragraphs, max_chars=max_chars, logger=logger, label="desquebrar")
-    stats = DesquebrarStats(total_chunks=len(chunks), blocks=[])
+    total_chunks = len(chunks)
+    stats = DesquebrarStats(total_chunks=total_chunks, blocks=[])
 
     outputs: list[str] = []
     for idx, chunk in enumerate(chunks, start=1):
@@ -82,7 +84,7 @@ def desquebrar_text(
                 logger.debug("Cache de desquebrar ignorado: assinatura diferente.")
             cached = data.get("final_output") if meta_ok else None
             if cached:
-                logger.info("Reusando cache de desquebrar para bloco %d/%d", idx, len(chunks))
+                logger.info("desq-%d/%d cache_hit", idx, total_chunks)
                 outputs.append(cached)
                 stats.cache_hits += 1
                 from_cache = True
@@ -106,6 +108,7 @@ def desquebrar_text(
             if not cleaned:
                 raise ValueError("Resposta vazia do desquebrar.")
             outputs.append(cleaned)
+            logger.info("desq-%d/%d ok (%.2fs, %d chars)", idx, total_chunks, latency, len(cleaned))
             stats.blocks.append(
                 {
                     "chunk_index": idx,
@@ -136,6 +139,7 @@ def desquebrar_text(
             logger.warning("Bloco %d do desquebrar falhou; mantendo texto original. Erro: %s", idx, exc)
             outputs.append(chunk)
             stats.fallbacks += 1
+            logger.info("desq-%d/%d fallback", idx, total_chunks)
             stats.blocks.append(
                 {
                     "chunk_index": idx,

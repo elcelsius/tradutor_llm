@@ -47,6 +47,24 @@ from .anti_hallucination import anti_hallucination_filter
 from .cleanup import cleanup_before_refine, detect_obvious_dupes, detect_glued_dialogues
 
 
+def _cache_signature_from(cfg: AppConfig, backend: LLMBackend) -> dict:
+    return {
+        "backend": getattr(backend, "backend", None),
+        "model": getattr(backend, "model", None),
+        "num_predict": getattr(backend, "num_predict", None),
+        "temperature": getattr(backend, "temperature", None),
+        "repeat_penalty": getattr(backend, "repeat_penalty", None),
+        "guardrails": getattr(cfg, "refine_guardrails", None),
+    }
+
+
+def _is_cache_compatible(data: dict, signature: dict) -> bool:
+    meta = data.get("metadata")
+    if not isinstance(meta, dict):
+        return False
+    return all(meta.get(k) == v for k, v in signature.items())
+
+
 @dataclass
 class RefineStats:
     total_blocks: int = 0
@@ -322,6 +340,7 @@ def refine_section(
     stats = _CURRENT_STATS
     progress = _CURRENT_PROGRESS
     glossary_block = None
+    cache_signature = _cache_signature_from(cfg, backend)
 
     for c_idx, chunk in enumerate(chunks, start=1):
         block_idx = _next_block_index()
@@ -376,7 +395,7 @@ def refine_section(
                 continue
         if cache_exists("refine", h):
             data = load_cache("refine", h)
-            if not _is_cache_compatible(data):
+            if not _is_cache_compatible(data, cache_signature):
                 logger.debug("Cache de refine ignorado: assinatura diferente de backend/model/num_predict.")
             else:
                 cached = data.get("final_output")
@@ -668,20 +687,7 @@ def refine_markdown_file(
     metrics["cleanup_preview_hash_before"] = cleanup_preview_hash_before
     metrics["cleanup_preview_hash_after"] = cleanup_preview_hash_after
     seen_chunks: list[tuple[str, str]] = []
-    cache_signature = {
-        "backend": getattr(backend, "backend", None),
-        "model": getattr(backend, "model", None),
-        "num_predict": getattr(backend, "num_predict", None),
-        "temperature": getattr(backend, "temperature", None),
-        "repeat_penalty": getattr(backend, "repeat_penalty", None),
-        "guardrails": getattr(cfg, "refine_guardrails", None),
-    }
-
-    def _is_cache_compatible(data: dict) -> bool:
-        meta = data.get("metadata")
-        if not isinstance(meta, dict):
-            return False
-        return all(meta.get(k) == v for k, v in cache_signature.items())
+    cache_signature = _cache_signature_from(cfg, backend)
 
     # Pré-computa total de blocos para progress
     total_blocks = 0
