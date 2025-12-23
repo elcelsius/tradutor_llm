@@ -22,6 +22,7 @@ from .refine import refine_markdown_file
 from .postprocess import final_pt_postprocess
 from .translate import translate_document
 from .desquebrar import desquebrar_text, desquebrar_stats_to_dict
+from .desquebrar_safe import desquebrar_safe
 from .utils import setup_logging, write_text, read_text
 from .structure_normalizer import normalize_structure
 from .editor import editor_pipeline
@@ -64,6 +65,12 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
         help="Limite de tokens gerados por chunk (Ollama).",
     )
     t.add_argument("--no-refine", action="store_true", help="Nao executar refine apos traduzir.")
+    t.add_argument(
+        "--refine-mode",
+        choices=["llm", "safe"],
+        default="llm",
+        help="Modo de refine: llm (padrão) ou safe (desquebrar conservador sem LLM, preservando layout).",
+    )
     t.add_argument(
         "--resume",
         action="store_true",
@@ -167,6 +174,12 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
         help="Limite de tokens gerados por chunk no refine (Ollama).",
     )
     r.add_argument(
+        "--refine-mode",
+        choices=["llm", "safe"],
+        default="llm",
+        help="Modo de refine: llm (padrão) ou safe (desquebrar conservador sem LLM, preservando layout).",
+    )
+    r.add_argument(
         "--resume",
         action="store_true",
         help="Retoma refine usando manifesto de progresso existente (se houver).",
@@ -257,6 +270,7 @@ def find_markdowns(output_dir: Path, specific: str | None = None) -> list[Path]:
 def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
     """Executa pipeline completo de tradução (com refine opcional)."""
     ensure_paths(cfg)
+    refine_mode = getattr(args, "refine_mode", "llm")
     pdfs = find_pdfs(cfg.data_dir, args.input)
     if not pdfs:
         raise SystemExit("Nenhum PDF encontrado em data/ ou caminho inválido.")
@@ -315,49 +329,57 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
         working_text = pre_text
         desquebrar_stats = None
         if use_desquebrar:
-            logger.info(
-                "Aplicando desquebrar antes da tradução (backend=%s model=%s temp=%.2f chunk=%d num_predict=%d repeat_penalty=%s)",
-                args.desquebrar_backend,
-                args.desquebrar_model,
-                args.desquebrar_temperature,
-                args.desquebrar_chunk_chars,
-                args.desquebrar_num_predict,
-                args.desquebrar_repeat_penalty,
-            )
-            desquebrar_backend = LLMBackend(
-                backend=args.desquebrar_backend,
-                model=args.desquebrar_model,
-                temperature=args.desquebrar_temperature,
-                logger=logger,
-                request_timeout=args.request_timeout,
-                num_predict=args.desquebrar_num_predict,
-                repeat_penalty=args.desquebrar_repeat_penalty,
-            )
-            working_text, desquebrar_stats = desquebrar_text(
-                working_text,
-                cfg,
-                logger,
-                backend=desquebrar_backend,
-                chunk_chars=args.desquebrar_chunk_chars,
-            )
-            if desquebrar_stats:
+            if refine_mode == "safe":
+                logger.info("Modo safe: aplicando desquebrar_safe (sem LLM), preservando layout.")
+                working_text = desquebrar_safe(working_text)
+                if args.debug:
+                    desq_out = cfg.output_dir / f"{pdf.stem}_raw_desquebrado.md"
+                    write_text(desq_out, working_text)
+                    logger.info("Texto desquebrado (safe) salvo em %s", desq_out)
+            else:
                 logger.info(
-                    "Desquebrar concluído: chunks=%d cache_hits=%d fallbacks=%d",
-                    desquebrar_stats.total_chunks,
-                    desquebrar_stats.cache_hits,
-                    desquebrar_stats.fallbacks,
+                    "Aplicando desquebrar antes da tradução (backend=%s model=%s temp=%.2f chunk=%d num_predict=%d repeat_penalty=%s)",
+                    args.desquebrar_backend,
+                    args.desquebrar_model,
+                    args.desquebrar_temperature,
+                    args.desquebrar_chunk_chars,
+                    args.desquebrar_num_predict,
+                    args.desquebrar_repeat_penalty,
                 )
-            if args.debug:
-                desq_out = cfg.output_dir / f"{pdf.stem}_raw_desquebrado.md"
-                write_text(desq_out, working_text)
-                logger.info("Texto desquebrado salvo em %s", desq_out)
-            try:
-                metrics_path = cfg.output_dir / f"{pdf.stem}_desquebrar_metrics.json"
-                metrics_payload = desquebrar_stats_to_dict(desquebrar_stats, cfg)
-                metrics_payload["timestamp"] = datetime.now().isoformat()
-                metrics_path.write_text(json.dumps(metrics_payload, ensure_ascii=False, indent=2), encoding="utf-8")
-            except Exception as exc:
-                logger.warning("Falha ao gravar métricas do desquebrar: %s", exc)
+                desquebrar_backend = LLMBackend(
+                    backend=args.desquebrar_backend,
+                    model=args.desquebrar_model,
+                    temperature=args.desquebrar_temperature,
+                    logger=logger,
+                    request_timeout=args.request_timeout,
+                    num_predict=args.desquebrar_num_predict,
+                    repeat_penalty=args.desquebrar_repeat_penalty,
+                )
+                working_text, desquebrar_stats = desquebrar_text(
+                    working_text,
+                    cfg,
+                    logger,
+                    backend=desquebrar_backend,
+                    chunk_chars=args.desquebrar_chunk_chars,
+                )
+                if desquebrar_stats:
+                    logger.info(
+                        "Desquebrar concluído: chunks=%d cache_hits=%d fallbacks=%d",
+                        desquebrar_stats.total_chunks,
+                        desquebrar_stats.cache_hits,
+                        desquebrar_stats.fallbacks,
+                    )
+                if args.debug:
+                    desq_out = cfg.output_dir / f"{pdf.stem}_raw_desquebrado.md"
+                    write_text(desq_out, working_text)
+                    logger.info("Texto desquebrado salvo em %s", desq_out)
+                try:
+                    metrics_path = cfg.output_dir / f"{pdf.stem}_desquebrar_metrics.json"
+                    metrics_payload = desquebrar_stats_to_dict(desquebrar_stats, cfg)
+                    metrics_payload["timestamp"] = datetime.now().isoformat()
+                    metrics_path.write_text(json.dumps(metrics_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+                except Exception as exc:
+                    logger.warning("Falha ao gravar métricas do desquebrar: %s", exc)
         else:
             logger.info("Desquebrar desativado; seguindo direto para tradução.")
 
@@ -470,6 +492,9 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
 def run_refine(args, cfg: AppConfig, logger: logging.Logger) -> None:
     """Executa refine sobre arquivos *_pt.md existentes."""
     ensure_paths(cfg)
+    refine_mode = getattr(args, "refine_mode", "llm")
+    if refine_mode == "safe":
+        logger.info("Modo safe afeta apenas o desquebrar; comando refina usa fluxo padrão de refine.")
     md_files = find_markdowns(cfg.output_dir, args.input)
     if not md_files:
         raise SystemExit("Nenhum *_pt.md encontrado em saida/ ou caminho inválido.")
