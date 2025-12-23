@@ -1,6 +1,6 @@
 """
 Refinador deterministico e simples para reflow seguro de texto extraido de PDF.
-Versao 2.1: correcao de bug em dialogos longos + Smart Gap Skip.
+Versao 2.2: Lógica otimizada + Suporte a Smart Quotes (Aspas curvas).
 
 Objetivo: unir apenas quebras de linha claramente erradas, removendo
 hifenizacoes no fim de linha e evitando "embelezamento" ou unioes agressivas.
@@ -11,7 +11,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-END_PUNCTUATION = {".", "?", "!", '"', "'", ":"}
+# Adicionei de volta as aspas curvas (” e “) que o agente removeu
+END_PUNCTUATION = {".", "?", "!", '"', "'", ":", "”"}
 SHORT_TITLE_LEN = 25
 
 
@@ -32,9 +33,10 @@ def _starts_lowercase(line: str) -> bool:
 
 
 def _is_dialogue_start(line: str) -> bool:
-    """Detecta linhas que parecem iniciar dialogo (aspas ou travessao/hifen)."""
+    """Detecta linhas que parecem iniciar dialogo (aspas retas/curvas ou travessao)."""
     stripped = line.lstrip()
-    return stripped.startswith(('"', "'", "-"))
+    # Adicionei de volta a aspa curva de abertura (“)
+    return stripped.startswith(('"', "'", "-", "“", "”"))
 
 
 def _is_title_like(line: str) -> bool:
@@ -94,7 +96,7 @@ def _merge_lines(current: str, nxt: str) -> str:
 def safe_reflow(text: str) -> str:
     """
     Reflow deterministico preservando paragrafos e dialogos do extrator.
-    V2.1 com Smart Gap Skip e correcao de dialogos longos.
+    V2.2: Lógica do Agente + Constantes do Gemini.
     """
     if not text:
         return text
@@ -118,9 +120,10 @@ def safe_reflow(text: str) -> str:
 
         current = line.strip()
 
-        # 2. Loop de tentativa de juncao (Smart Gap Skip)
+        # 2. Loop de tentativa de juncao (Smart Gap Skip Otimizado pelo Agente)
         while True:
             next_idx = idx + 1
+            # Otimização do agente: while na mesma linha para pular vazios
             while next_idx < total and _is_blank(lines[next_idx]):
                 next_idx += 1
 
@@ -132,7 +135,7 @@ def safe_reflow(text: str) -> str:
 
             if _should_join(current, nxt_line):
                 current = _merge_lines(current, nxt_line)
-                idx = next_idx  # Pula para a linha que foi consumida
+                idx = next_idx  # Pula para a linha que foi consumida e continua o loop
                 continue
 
             break
