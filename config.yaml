@@ -6,8 +6,8 @@ translate_backend: ollama            # ollama ou gemini
 translate_model: gemma3:27b-it-q4_K_M # modelo principal de tradução
 translate_temperature: 0.55          # temperatura para tradução
 translate_repeat_penalty: 1.10       # penalidade de repetição (ollama)
-translate_chunk_chars: 2700          # tamanho alvo por chunk (caracteres)
-translate_num_predict: 1800          # limite de tokens gerados por chunk
+translate_chunk_chars: 2400          # tamanho alvo por chunk (caracteres)
+translate_num_predict: 2048          # limite de tokens gerados por chunk
 
 # Desquebrar (normaliza quebras antes de traduzir)
 use_desquebrar: true                 # ativa desquebrar automaticamente para PDF
@@ -36,8 +36,8 @@ refine_backend: ollama
 refine_model: mistral-small3.1:24b-instruct-2503-q4_K_M
 refine_temperature: 0.20
 refine_repeat_penalty: 1.08
-refine_chunk_chars: 2500
-refine_num_predict: 1200
+refine_chunk_chars: 2400
+refine_num_predict: 1536
 refine_guardrails: strict             # strict | relaxed | off
 
 # Limpeza determinística antes do refine

@@ -66,10 +66,18 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
     )
     t.add_argument("--no-refine", action="store_true", help="Nao executar refine apos traduzir.")
     t.add_argument(
-        "--refine-mode",
+        "--desquebrar-mode",
+        dest="desquebrar_mode",
         choices=["llm", "safe"],
         default="llm",
-        help="Modo de refine: llm (padrão) ou safe (desquebrar conservador sem LLM, preservando layout).",
+        help="Modo do desquebrar: llm (padrão) usa LLM; safe usa desquebrar_safe sem LLM, preservando layout.",
+    )
+    t.add_argument(
+        "--refine-mode",
+        dest="desquebrar_mode",
+        choices=["llm", "safe"],
+        default="llm",
+        help=argparse.SUPPRESS,
     )
     t.add_argument(
         "--resume",
@@ -174,10 +182,18 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
         help="Limite de tokens gerados por chunk no refine (Ollama).",
     )
     r.add_argument(
-        "--refine-mode",
+        "--desquebrar-mode",
+        dest="desquebrar_mode",
         choices=["llm", "safe"],
         default="llm",
-        help="Modo de refine: llm (padrão) ou safe (desquebrar conservador sem LLM, preservando layout).",
+        help="Compatibilidade: controla apenas o desquebrar (safe usa desquebrar_safe). No comando refina não altera o fluxo.",
+    )
+    r.add_argument(
+        "--refine-mode",
+        dest="desquebrar_mode",
+        choices=["llm", "safe"],
+        default="llm",
+        help=argparse.SUPPRESS,
     )
     r.add_argument(
         "--resume",
@@ -270,7 +286,7 @@ def find_markdowns(output_dir: Path, specific: str | None = None) -> list[Path]:
 def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
     """Executa pipeline completo de tradução (com refine opcional)."""
     ensure_paths(cfg)
-    refine_mode = getattr(args, "refine_mode", "llm")
+    desquebrar_mode = getattr(args, "desquebrar_mode", "llm")
     pdfs = find_pdfs(cfg.data_dir, args.input)
     if not pdfs:
         raise SystemExit("Nenhum PDF encontrado em data/ ou caminho inválido.")
@@ -329,7 +345,7 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
         working_text = pre_text
         desquebrar_stats = None
         if use_desquebrar:
-            if refine_mode == "safe":
+            if desquebrar_mode == "safe":
                 logger.info("Modo safe: aplicando desquebrar_safe (sem LLM), preservando layout.")
                 working_text = desquebrar_safe(working_text)
                 if args.debug:
@@ -492,8 +508,8 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
 def run_refine(args, cfg: AppConfig, logger: logging.Logger) -> None:
     """Executa refine sobre arquivos *_pt.md existentes."""
     ensure_paths(cfg)
-    refine_mode = getattr(args, "refine_mode", "llm")
-    if refine_mode == "safe":
+    desquebrar_mode = getattr(args, "desquebrar_mode", "llm")
+    if desquebrar_mode == "safe":
         logger.info("Modo safe afeta apenas o desquebrar; comando refina usa fluxo padrão de refine.")
     md_files = find_markdowns(cfg.output_dir, args.input)
     if not md_files:

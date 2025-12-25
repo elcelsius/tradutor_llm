@@ -72,7 +72,7 @@ Flags (todas opcionais):
 - `--backend {ollama,gemini}` / `--model <nome>`: override de backend/modelo de tradução.
 - `--num-predict <int>`: tokens máximos por chunk na tradução.
 - `--no-refine`: pula o refine (gera só `<slug>_pt.md`).
-- `--refine-mode {llm,safe}`: `safe` usa desquebrar conservador sem LLM (preserva layout) antes da tradução/refine.
+- `--desquebrar-mode {llm,safe}`: `safe` usa desquebrar_safe (sem LLM) no passo de desquebrar, preservando layout. Alias legado: `--refine-mode`.
 - `--resume`: retoma a partir do manifesto de progresso da tradução.
 - `--use-glossary`: injeta glossário manual (JSON) na tradução.
 - `--manual-glossary <path>`: caminho do glossário manual (default `glossario/glossario_manual.json`).
@@ -93,7 +93,7 @@ python -m tradutor.main refina --input "saida/meu_livro_pt.md"
 Flags:
 - `--backend {ollama,gemini}` / `--model <nome>`: override de refine.
 - `--num-predict <int>`: tokens máximos por chunk no refine.
-- `--refine-mode {llm,safe}`: `safe` apenas troca o desquebrar pelo modo conservador (sem LLM); refine segue normal.
+- `--desquebrar-mode {llm,safe}`: compatível com `traduz` (safe usa desquebrar_safe sem LLM). No comando `refina`, não altera o fluxo. Alias legado: `--refine-mode`.
 - `--resume`: retoma a partir do manifesto de refine.
 - `--normalize-paragraphs`: normaliza parágrafos antes de refinar.
 - `--use-glossary`: ativa glossário manual/dinâmico.

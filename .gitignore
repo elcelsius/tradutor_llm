@@ -11,6 +11,7 @@ saida/
 .cache/
 glossario/*.json
 !glossario/glossario_exemplo.json
+pandoc/
 
 # Configuração local
 .env
