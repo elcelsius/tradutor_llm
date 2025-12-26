@@ -47,6 +47,12 @@ from .qa import needs_retry
 from .advanced_preprocess import clean_text as advanced_clean
 from .anti_hallucination import anti_hallucination_filter
 from .cleanup import cleanup_before_refine, detect_obvious_dupes, detect_glued_dialogues
+from .quote_fix import (
+    fix_unbalanced_quotes,
+    count_curly_quotes,
+    fix_blank_lines_inside_quotes,
+    fix_dialogue_artifacts,
+)
 
 
 def _cache_signature_from(cfg: AppConfig, backend: LLMBackend) -> dict:
@@ -158,6 +164,44 @@ def has_meta_noise(text: str) -> bool:
     return any(m in lower for m in markers)
 
 
+def sanitize_refine_chunk_output(
+    text: str,
+    original: str,
+    logger: logging.Logger | None = None,
+    label: str | None = None,
+) -> tuple[str, bool, dict]:
+    """
+    Sanitiza saída do refine sem reflow.
+    - remove aspas triplas no fim de linha
+    - colapsa linhas vazias dentro de diálogos
+    - descola falas consecutivas (” “ -> ”\\n\\n“)
+    - evita quebra entre fala e tag de fala ("”, perguntou")
+    """
+    stats = {"blank_lines_fixed": 0, "dialogue_splits": 0}
+    cleaned = re.sub(r'"""+\s*$', "", text, flags=re.MULTILINE)
+    cleaned, fixes = fix_blank_lines_inside_quotes(cleaned, logger=logger, label=label)
+    stats["blank_lines_fixed"] = fixes
+    cleaned, count_split = re.subn(r"”\s+“", "”\n\n“", cleaned)
+    stats["dialogue_splits"] = count_split
+    cleaned = re.sub(
+        r"”\s*\n\s*\n\s*(?=(perguntou|disse|respondeu|murmurou|exclamou)\b)",
+        "” ",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+
+    artifacts = '"""' in cleaned
+    opens_q, closes_q = count_curly_quotes(cleaned)
+    regression_dialogue = ("”\n\n“" in original) and ("” “" in cleaned)
+    ok = (opens_q == closes_q) and not artifacts and not regression_dialogue
+    return cleaned, ok, {
+        "artifacts": artifacts,
+        "quotes_balanced": opens_q == closes_q,
+        "regression_dialogue": regression_dialogue,
+        **stats,
+    }
+
+
 def save_refine_debug_files(
     output_dir: Path,
     section_index: int,
@@ -260,11 +304,20 @@ def _prepare_progress(
 def build_refine_prompt(section: str, glossary_enabled: bool = False, glossary_block: str | None = None) -> str:
     glossary_section = ""
     if glossary_enabled and glossary_block:
-        glossary_section = f"\nUse como referencia (sem adicionar explicacoes) o glossario a seguir:\n{glossary_block}\n"
+        glossary_section = (
+            f"\nUse como referencia (sem adicionar explicacoes) o glossario a seguir:\n"
+            f"{glossary_block}\n"
+        )
 
-    return f"""
+    prompt = f"""
 Você é um EDITOR PROFISSIONAL DE LIGHT NOVELS, responsável por transformar um texto traduzido para o português brasileiro em uma versão natural, fluida, coerente, com tom literário e qualidade de publicação.
 Não altere absolutamente nada da história, dos eventos, das falas, da linha do tempo ou do conteúdo original. Apenas melhore a escrita.
+
+REGRAS DE PRESERVAÇÃO:
+- Preserve nomes próprios e honoríficos (-san, -kun, etc.) exatamente como no texto de entrada; não invente nem remova.
+- Preserve o estilo de marcação de diálogo do texto de entrada (aspas curvas e/ou travessões). Não converta travessões em aspas nem vice-versa.
+- Não altere apelidos/insultos; apenas corrija gramática, pontuação e fluidez.
+- Nunca remova conteúdo; não resuma; não pule linhas; não introduza aspas triplas.
 
 OBJETIVOS DO EDITOR:
 
@@ -276,19 +329,15 @@ OBJETIVOS DO EDITOR:
 
    * "Kirihara's grupo" → "o grupo do Kirihara"
    * "Agit's blade" → "a lâmina do Agit"
-4. Adaptar humor e trocadilhos para PT-BR mantendo o espírito da piada:
-
-   * "Four Holey Smell-ders" → "Os Quatro Furados Fedorentos"
-   * "Captain Mammaries" → "Capitã Peituda"
-5. Remover ruídos de OCR/PDF como aspas triplas \"\"\" e caracteres soltos.
-6. Melhorar ritmo, coerência e pontuação de diálogos.
-7. Remover calques literais:
+4. Remover ruídos de OCR/PDF como aspas triplas \"\"\" e caracteres soltos.
+5. Melhorar ritmo, coerência e pontuação de diálogos.
+6. Remover calques literais:
 
    * "O que é com essa atitude de superioridade?!" → "Que atitude é essa, todo se achando?!"
-8. Padronizar fluidez narrativa.
-9. Remover repetições consecutivas ou quase idênticas geradas na tradução/refine (falas ou narrativas), mantendo apenas uma ocorrência completa e bem formatada.
-10. Reunir trechos que foram colados na mesma linha por erro (ex.: “Mmm?” “Por que você…”) devolvendo fluxo natural de diálogo, sem alterar sentido.
-11. Manter consistência de gênero/narrador (masculino/feminino) conforme o original; não inverter narrador masculino.
+7. Padronizar fluidez narrativa.
+8. Remover repetições consecutivas ou quase idênticas geradas na tradução/refine (falas ou narrativas), mantendo apenas uma ocorrência completa e bem formatada.
+9. Reunir trechos que foram colados na mesma linha por erro (ex.: “Mmm?” “Por que você…”) devolvendo fluxo natural de diálogo, sem alterar sentido.
+10. Manter consistência de gênero/narrador (masculino/feminino) conforme o original; não inverter narrador masculino.
 
 PROIBIÇÕES ABSOLUTAS:
 
@@ -311,9 +360,9 @@ Retorne apenas:
 Nada antes ou depois dos marcadores.
 
 {glossary_section}Texto para revisao (PT-BR):
-\"\"\"{section}\"\"\"\n"""
-
-
+\"\"\"{section}\"\"\"
+"""
+    return prompt
 def split_markdown_sections(md_text: str) -> List[Tuple[str, str]]:
     """
     Divide o Markdown em seções por headings `##`.
@@ -535,6 +584,29 @@ def refine_section(
                     elif detect_model_collapse(refined_text, original_len=len(chunk), mode="refine"):
                         collapse_flag = True
                         used_fallback = True
+
+                if not used_fallback:
+                    sanitized_refined, ok_fmt, fmt_info = sanitize_refine_chunk_output(
+                        refined_text, chunk, logger=logger, label=f"ref-{index}-{c_idx}"
+                    )
+                    if not ok_fmt:
+                        used_fallback = True
+                        if debug_refine:
+                            fail_dir = cfg.output_dir / "debug_refine_failed"
+                            fail_dir.mkdir(parents=True, exist_ok=True)
+                            (fail_dir / f"ref_{index}_{c_idx}_raw.txt").write_text(refined_text, encoding="utf-8")
+                            (fail_dir / f"ref_{index}_{c_idx}_rejected.txt").write_text(sanitized_refined, encoding="utf-8")
+                        logger.warning(
+                            "Refine chunk %d/%d-%d/%d rejeitado por formatacao (ok_fmt=%s info=%s); usando fallback.",
+                            index,
+                            total,
+                            c_idx,
+                            len(chunks),
+                            ok_fmt,
+                            fmt_info,
+                        )
+                    else:
+                        refined_text = sanitized_refined
 
                 retry, retry_reason = needs_retry(chunk, refined_text)
                 attempt += 1
@@ -811,6 +883,10 @@ def refine_markdown_file(
         raise ValueError(f"Refine produziu texto vazio para {input_path}")
 
     final_md = sanitize_refine_output(final_md)
+    final_md = fix_dialogue_artifacts(final_md, logger=logger, label="refine-final")
+    opens_q, closes_q = count_curly_quotes(final_md)
+    if opens_q != closes_q:
+        final_md, _ = fix_unbalanced_quotes(final_md, logger=logger, label="refine-final")
 
     write_text(output_path, final_md)
     if glossary_state:
