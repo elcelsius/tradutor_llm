@@ -121,21 +121,3 @@ def _collapse_blank_lines_in_quotes(text: str) -> Tuple[str, int]:
         cleaned.append(ch)
         i += 1
     return "".join(cleaned), fixes
-
-
-def fix_dialogue_artifacts(text: str, logger: logging.Logger | None = None, label: str | None = None) -> str:
-    """
-    Corrige artefatos estruturais de diálogo pós-refine de forma determinística.
-    - Separa falas coladas (“ ” ou ”“) em parágrafos distintos.
-    - Colapsa parágrafos em branco dentro de uma mesma fala.
-    """
-    cleaned, dialogue_splits = re.subn(r"”\s*“", "”\n\n“", text)
-    cleaned, collapsed_blanks = _collapse_blank_lines_in_quotes(cleaned)
-    if logger and logger.isEnabledFor(logging.DEBUG):
-        logger.debug(
-            "fix_dialogue_artifacts%s: splits=%d blank_lines_collapsed=%d",
-            f" ({label})" if label else "",
-            dialogue_splits,
-            collapsed_blanks,
-        )
-    return cleaned

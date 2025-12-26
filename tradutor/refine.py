@@ -47,12 +47,8 @@ from .qa import needs_retry
 from .advanced_preprocess import clean_text as advanced_clean
 from .anti_hallucination import anti_hallucination_filter
 from .cleanup import cleanup_before_refine, detect_obvious_dupes, detect_glued_dialogues
-from .quote_fix import (
-    fix_unbalanced_quotes,
-    count_curly_quotes,
-    fix_blank_lines_inside_quotes,
-    fix_dialogue_artifacts,
-)
+from .quote_fix import fix_unbalanced_quotes, count_curly_quotes, fix_blank_lines_inside_quotes
+from .text_postprocess import fix_dialogue_artifacts
 
 
 def _cache_signature_from(cfg: AppConfig, backend: LLMBackend) -> dict:
@@ -883,7 +879,9 @@ def refine_markdown_file(
         raise ValueError(f"Refine produziu texto vazio para {input_path}")
 
     final_md = sanitize_refine_output(final_md)
-    final_md = fix_dialogue_artifacts(final_md, logger=logger, label="refine-final")
+    final_md, dialogue_stats = fix_dialogue_artifacts(final_md)
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug("Pós-processo de diálogo (refine-final): %s", dialogue_stats)
     opens_q, closes_q = count_curly_quotes(final_md)
     if opens_q != closes_q:
         final_md, _ = fix_unbalanced_quotes(final_md, logger=logger, label="refine-final")
