@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import Final, List, Optional
+from typing import Final, List, Optional, Tuple
 
 try:
     import fitz  # PyMuPDF
@@ -91,6 +91,34 @@ def _remove_headers_footers(text: str) -> str:
     return "\n".join(cleaned)
 
 
+def sanitize_extracted_text(text: str, logger: Optional[logging.Logger] = None) -> Tuple[str, dict]:
+    """
+    Remove ruídos determinísticos da extração (caractere U+FFFF e linhas só com números).
+    Preserva estrutura de parágrafos.
+    """
+    stats = {"removed_uffff": 0, "removed_numeric_lines": 0}
+
+    before = text
+    text = text.replace("\uFFFF", "").replace("￿", "")
+    stats["removed_uffff"] = len(before) - len(text)  # proxy de remoções de char
+
+    lines = text.splitlines()
+    cleaned: list[str] = []
+    for ln in lines:
+        if re.fullmatch(r"\s*\d+\s*", ln):
+            stats["removed_numeric_lines"] += 1
+            continue
+        cleaned.append(ln)
+    cleaned_text = "\n".join(cleaned)
+    if logger:
+        logger.debug(
+            "Sanitize extracted: removed_numeric_lines=%d removed_uffff=%d",
+            stats["removed_numeric_lines"],
+            stats["removed_uffff"],
+        )
+    return cleaned_text, stats
+
+
 def _remove_hyphenation(text: str) -> str:
     return re.sub(r"(\w+)-\s*\n(\w+)", r"\1\2\n", text)
 
@@ -161,6 +189,7 @@ def preprocess_text(raw_text: str, logger: Optional[logging.Logger] = None, *, s
     """
 
     text = raw_text.replace("\r\n", "\n").replace("\r", "\n")
+    text, _sanitize_stats = sanitize_extracted_text(text, logger=logger)
     if skip_front_matter:
         text = strip_front_matter(text)
 

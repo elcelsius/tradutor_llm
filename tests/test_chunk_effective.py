@@ -11,7 +11,7 @@ from tradutor.utils import setup_logging
 
 class FakeTranslateBackend:
     def generate(self, prompt: str) -> LLMResponse:
-        return LLMResponse(text="Texto traduzido.\n\nOutra linha.", latency=0.01)
+        return LLMResponse(text="### TEXTO_TRADUZIDO_INICIO\nTexto traduzido.\n\nOutra linha.\n### TEXTO_TRADUZIDO_FIM", latency=0.01)
 
 
 class FakeRefineBackend:

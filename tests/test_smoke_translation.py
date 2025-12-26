@@ -31,7 +31,7 @@ from tradutor.utils import setup_logging
 class FakeBackend:
     def generate(self, prompt: str) -> LLMResponse:
         return LLMResponse(
-            text="Primeiro paragrafo em portugues.\n\nSegundo paragrafo em portugues, continuando a ideia.",
+            text="### TEXTO_TRADUZIDO_INICIO\nPrimeiro paragrafo em portugues.\n\nSegundo paragrafo em portugues, continuando a ideia.\n### TEXTO_TRADUZIDO_FIM",
             latency=0.01,
         )
 

@@ -207,6 +207,8 @@ def sanitize_text(
     if apply_leading_noise_filter:
         text = remove_leading_noise(text)
     report.leading_noise_removed = apply_leading_noise_filter and text != before_noise
+    # remove aspas triplas soltas no fim de linha
+    text = re.sub(r'"""\s*$', "", text, flags=re.MULTILINE)
     text = text.replace("<think>", "").replace("</think>", "")
     report.removed_lines_count = report.removed_meta_lines + report.removed_repeated_lines + report.removed_empty_lines
 

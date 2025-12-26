@@ -38,6 +38,7 @@ from .refine import has_suspicious_repetition  # reuse guardrail
 from .anti_hallucination import anti_hallucination_filter
 from .qa import needs_retry, count_quotes, count_quote_lines
 from .postprocess_translation import postprocess_translation
+from .quote_fix import fix_unbalanced_quotes, count_curly_quotes
 
 
 def _extract_last_sentence(text: str) -> str:
@@ -137,7 +138,7 @@ def _parse_translation_output(raw: str) -> str:
     if start != -1 and end != -1 and end > start:
         content = raw[start + len("### TEXTO_TRADUZIDO_INICIO") : end]
         return content.strip()
-    return raw
+    raise ValueError("Marcadores TEXTO_TRADUZIDO_INICIO/FIM ausentes na resposta do modelo.")
 
 
 def _strip_translate_markers(text: str) -> str:
@@ -632,6 +633,12 @@ def translate_document(
                                 prompt = base_prompt + "\n\nATENÇÃO: Sua saída anterior veio truncada ou repetitiva. Refaça e inclua TODO o conteúdo. Não resuma."
 
                         parsed_clean = postprocess_translation(parsed_clean, chunk)
+                        # correção de aspas curvas
+                        opens_q, closes_q = count_curly_quotes(parsed_clean)
+                        if opens_q != closes_q:
+                            parsed_clean, fixed = fix_unbalanced_quotes(parsed_clean, logger=logger, label=f"trad-{idx}")
+                            if fixed:
+                                opens_q, closes_q = count_curly_quotes(parsed_clean)
                         orig_len = len(chunk.strip())
                         cleaned_len = len(parsed_clean.strip())
                         if orig_len and cleaned_len < orig_len * 0.5:
@@ -694,14 +701,6 @@ def translate_document(
                             (debug_dir / f"{base}_llm_raw.txt").write_text(raw_text, encoding="utf-8")
                             (debug_dir / f"{base}_final_pt.txt").write_text(parsed_clean, encoding="utf-8")
                     except Exception as exc:
-                        failed_chunks.add(idx)
-                        placeholder = f"[ERRO: chunk {idx} nao traduzido - revisar depois]"
-                        logger.error(
-                            "Chunk trad-%d falhou apos tentativas (%d) ou gerou excecao; adicionando placeholder. Erro: %s",
-                            idx,
-                            cfg.max_retries,
-                            exc,
-                        )
                         # debug de falha
                         fail_dir = Path(cfg.output_dir) / "debug_translate_chunks" / "failed"
                         try:
@@ -711,19 +710,21 @@ def translate_document(
                                 (fail_dir / f"chunk{idx:03d}_attempt{attempt_tag}_raw.txt").write_text(raw_text, encoding="utf-8")
                             (fail_dir / f"chunk{idx:03d}_prompt.txt").write_text(prompt, encoding="utf-8")
                             (fail_dir / f"chunk{idx:03d}_context.txt").write_text(previous_context or "", encoding="utf-8")
-                            error_payload = f"{exc}\n\n{traceback.format_exc()}"
-                            (fail_dir / f"chunk{idx:03d}_error.txt").write_text(error_payload, encoding="utf-8")
+                            error_payload = {
+                                "chunk_index": idx,
+                                "label": f"trad-{idx}/{len(chunks)}",
+                                "error": str(exc),
+                                "stack": traceback.format_exc(),
+                            }
+                            (fail_dir / f"chunk{idx:03d}_error.json").write_text(json.dumps(error_payload, ensure_ascii=False, indent=2), encoding="utf-8")
                         except Exception:
                             pass
-                        parsed_clean = placeholder
-                        translated_chunks.append(placeholder)
-                        chunk_outputs[idx] = placeholder
-                        processed_indices.add(idx)
-                        fallbacks += 1
+                        failed_chunks.add(idx)
                         error_message = str(exc)
                         llm_attempts = getattr(exc, "attempts", llm_attempts)
                         if sanitizer_report is None and hasattr(exc, "last_report"):
                             sanitizer_report = getattr(exc, "last_report")
+                        raise RuntimeError(f"Falha ao traduzir chunk {idx}/{len(chunks)}: {exc}") from exc
                     finally:
                         previous_context = _extract_last_sentence(chunk)
                         _write_progress()
@@ -853,6 +854,9 @@ def translate_document(
             logger.info("Arquivo de debug de chunks: %s", debug_file_path)
 
     result, final_report = sanitize_translation_output(result, logger=logger, fail_on_contamination=False)
+    opens_final, closes_final = count_curly_quotes(result)
+    if opens_final != closes_final:
+        result, _ = fix_unbalanced_quotes(result, logger=logger, label="trad-final")
     log_report(final_report, logger, prefix="trad-final")
     try:
         version = (Path(__file__).parent / "VERSION").read_text(encoding="utf-8").strip()

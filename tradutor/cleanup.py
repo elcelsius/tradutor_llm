@@ -116,6 +116,7 @@ def dedupe_prefix_lines(text: str) -> tuple[str, dict]:
     lines = text.splitlines()
     cleaned: list[str] = []
     removed = 0
+    blocked = 0
 
     def _ends_open(ln: str) -> bool:
         return not re.search(r"[.!?.:;]['\")\]]?\s*$", ln)
@@ -130,20 +131,16 @@ def dedupe_prefix_lines(text: str) -> tuple[str, dict]:
             nxt_strip = nxt.strip()
             cur_norm = _normalize_spaces(cur_strip)
             nxt_norm = _normalize_spaces(nxt_strip)
-            if (
-                cur_norm
-                and nxt_norm
-                and len(nxt_norm) > len(cur_norm)
-                and nxt_norm.startswith(cur_norm)
-                and _ends_open(cur_norm)
-            ):
+            if nxt_strip.startswith("“") or re.fullmatch(r"\d+", cur_strip):
+                blocked += 1
+            elif cur_norm and nxt_norm and len(nxt_norm) > len(cur_norm) and nxt_norm.startswith(cur_norm) and _ends_open(cur_norm):
                 removed += 1
                 idx += 1
                 continue
         cleaned.append(current)
         idx += 1
 
-    return "\n".join(cleaned), {"prefix_lines_removed": removed}
+    return "\n".join(cleaned), {"prefix_lines_removed": removed, "prefix_merges_blocked": blocked}
 
 
 def _split_fragments(para: str) -> list[str]:
@@ -163,6 +160,9 @@ def dedupe_adjacent_fragments(text: str) -> tuple[str, dict]:
     removed = 0
     cleaned_paras: list[str] = []
     for para in paragraphs:
+        if "\n“" in para:
+            cleaned_paras.append(para.strip())
+            continue
         frags = _split_fragments(para)
         if not frags:
             cleaned_paras.append(para.strip())
@@ -205,6 +205,7 @@ def cleanup_before_refine(md: str) -> tuple[str, dict]:
         "blocks_removed": stats_dedupe.get("blocks_removed", 0),
         "breaks_inserted": stats_glued.get("breaks_inserted", 0),
         "prefix_lines_removed": stats_prefix.get("prefix_lines_removed", 0),
+        "prefix_merges_blocked": stats_prefix.get("prefix_merges_blocked", 0),
         "fragments_removed": stats_frag.get("fragments_removed", 0),
     }
     return frag_cleaned, combined
