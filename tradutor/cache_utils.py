@@ -6,16 +6,28 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any
 import re
 
-CACHE_DIRS = {
-    "translate": Path("saida/cache_traducao"),
-    "refine": Path("saida/cache_refine"),
-    "desquebrar": Path("saida/cache_desquebrar"),
-}
+_CACHE_BASE_DIR: Path = Path("saida")
+
+
+def set_cache_base_dir(base_dir: str | Path) -> None:
+    """Define o diretório base para todos os caches (padrão: saida)."""
+    global _CACHE_BASE_DIR
+    _CACHE_BASE_DIR = Path(base_dir)
+
+
+def _cache_dirs() -> dict[str, Path]:
+    base = _CACHE_BASE_DIR
+    return {
+        "translate": base / "cache_traducao",
+        "refine": base / "cache_refine",
+        "desquebrar": base / "cache_desquebrar",
+    }
 
 
 def chunk_hash(text: str) -> str:
@@ -25,7 +37,8 @@ def chunk_hash(text: str) -> str:
 
 
 def _cache_path(mode: str, h: str) -> Path:
-    base = CACHE_DIRS.get(mode, Path("saida/cache_misc"))
+    dirs = _cache_dirs()
+    base = dirs.get(mode, _CACHE_BASE_DIR / "cache_misc")
     base.mkdir(parents=True, exist_ok=True)
     return base / f"{h}.json"
 
@@ -72,6 +85,9 @@ def is_near_duplicate(a: str, b: str, threshold: float = 0.95) -> bool:
 
 def detect_model_collapse(text: str, original_len: int | None = None, mode: str = "translate") -> bool:
     """Heurística simples para detectar saída corrompida/colapsada."""
+    if mode == "translate":
+        # Tradução naturalmente expande/contrai; detector de colapso não se aplica.
+        return False
     if not text:
         return True
 
@@ -120,3 +136,21 @@ def detect_model_collapse(text: str, original_len: int | None = None, mode: str 
                 return True
 
     return False
+
+
+def clear_cache(mode: str = "all") -> None:
+    """
+    Remove diretórios de cache respeitando o _CACHE_BASE_DIR atual.
+    mode: all | translate | refine | desquebrar
+    """
+    dirs = _cache_dirs()
+    targets: dict[str, Path] = {}
+    if mode == "all":
+        targets = dirs
+    else:
+        selected = dirs.get(mode)
+        if selected:
+            targets[mode] = selected
+    for _, path in targets.items():
+        if path.exists():
+            shutil.rmtree(path, ignore_errors=True)

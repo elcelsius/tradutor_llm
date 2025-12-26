@@ -16,6 +16,7 @@ import yaml
 
 BackendType = Literal["ollama", "gemini"]
 GuardrailsType = Literal["strict", "relaxed", "off"]
+DialogueGuardrailsType = Literal["strict", "relaxed", "off"]
 DEFAULT_CONFIG_PATHS = (Path("config.yaml"), Path("config.yml"))
 log = logging.getLogger(__name__)
 
@@ -39,6 +40,8 @@ class AppConfig:
     dump_chunks: bool = False
     refine_guardrails: GuardrailsType = "strict"
     use_desquebrar: bool = True
+    desquebrar_mode: Literal["safe", "llm"] = "llm"
+    fail_on_chunk_error: bool = False
 
     # Temperaturas
     translate_temperature: float = 0.15
@@ -47,9 +50,21 @@ class AppConfig:
     translate_repeat_penalty: float = 1.1
     refine_repeat_penalty: float | None = None
     desquebrar_repeat_penalty: float | None = 1.08
+    translate_num_ctx: int | None = None
+    refine_num_ctx: int | None = None
+    desquebrar_num_ctx: int | None = None
+    ollama_keep_alive: str | int = "30m"
+    skip_front_matter: bool = True
+    split_by_sections: bool = True
+    translate_allow_adaptation: bool = False
+    translate_dialogue_guardrails: DialogueGuardrailsType = "strict"
+    translate_dialogue_retry_temps: list[float] = field(default_factory=list)
+    translate_dialogue_split_fallback: bool = True
+    translate_glossary_match_limit: int = 80
+    translate_glossary_fallback_limit: int = 30
 
     # Comprimento de sa¡da
-    translate_num_predict: int = 1536
+    translate_num_predict: int = 3072
     refine_num_predict: int = 1024
     desquebrar_num_predict: int = 1024
 

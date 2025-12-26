@@ -41,7 +41,9 @@ from .cache_utils import (
     load_cache,
     save_cache,
     is_near_duplicate,
+    set_cache_base_dir,
 )
+from .qa import needs_retry
 from .advanced_preprocess import clean_text as advanced_clean
 from .anti_hallucination import anti_hallucination_filter
 from .cleanup import cleanup_before_refine, detect_obvious_dupes, detect_glued_dialogues
@@ -111,16 +113,35 @@ def _next_block_index() -> int:
 
 def has_suspicious_repetition(text: str, min_repeats: int = 3) -> bool:
     """
-    Retorna True se o texto contiver linhas repetidas muitas vezes (possível loop do LLM).
+    Sinais fortes de repetição/loop.
+    Requer pelo menos 2 dos 3 sinais:
+    - bloco >=120 chars repetido
+    - diversidade lexical muito baixa
+    - sentença/parágrafo idêntico repetido >= min_repeats
     """
-    lines = [ln.strip() for ln in text.splitlines()]
-    lines = [ln for ln in lines if ln]
-    if not lines:
+    if not text or not text.strip():
         return False
+    signals = 0
+    if re.search(r"(.{120,}?)(?:\s+\1){1,}", text, flags=re.DOTALL):
+        signals += 1
+    tokens = text.split()
+    if len(tokens) >= 40:
+        unique_ratio = len(set(tokens)) / max(len(tokens), 1)
+        if unique_ratio < 0.25:
+            signals += 1
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
     counts: Dict[str, int] = {}
-    for ln in lines:
-        counts[ln] = counts.get(ln, 0) + 1
-    return any(c >= min_repeats for c in counts.values())
+    for s in sentences:
+        counts[s] = counts.get(s, 0) + 1
+    if any(c >= min_repeats for c in counts.values()):
+        signals += 1
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    para_counts: Dict[str, int] = {}
+    for p in paragraphs:
+        para_counts[p] = para_counts.get(p, 0) + 1
+    if any(c >= min_repeats for c in para_counts.values()):
+        signals += 1
+    return signals >= 2
 
 
 def has_meta_noise(text: str) -> bool:
@@ -265,8 +286,9 @@ OBJETIVOS DO EDITOR:
 
    * "O que é com essa atitude de superioridade?!" → "Que atitude é essa, todo se achando?!"
 8. Padronizar fluidez narrativa.
-9. Ajustar repetições acidentais.
-10. Manter consistência de gênero/narrador (masculino/feminino) conforme o original; não inverter narrador masculino.
+9. Remover repetições consecutivas ou quase idênticas geradas na tradução/refine (falas ou narrativas), mantendo apenas uma ocorrência completa e bem formatada.
+10. Reunir trechos que foram colados na mesma linha por erro (ex.: “Mmm?” “Por que você…”) devolvendo fluxo natural de diálogo, sem alterar sentido.
+11. Manter consistência de gênero/narrador (masculino/feminino) conforme o original; não inverter narrador masculino.
 
 PROIBIÇÕES ABSOLUTAS:
 
@@ -276,6 +298,7 @@ PROIBIÇÕES ABSOLUTAS:
 * Não adicionar conteúdo.
 * Não mudar tom ou personalidade dos personagens.
 * Não reorganizar parágrafos.
+* Não fundir parágrafos ou alterar segmentação original.
 
 FORMATO DE SAÍDA:
 Retorne apenas:
@@ -457,59 +480,84 @@ def refine_section(
         )
         logger.debug("Refinando seção com %d caracteres...", len(chunk))
         try:
-            llm_raw, response_text = _call_with_retry(
-                backend=backend,
-                prompt=prompt,
-                cfg=cfg,
-                logger=logger,
-                label=f"ref-{index}/{total}-{c_idx}/{len(chunks)}",
-                max_retries=1,
-            )
-            refined_candidate = response_text
-            if glossary_state:
-                refined_candidate, suggestion_block = split_refined_and_suggestions(llm_raw)
-                suggestions = parse_glossary_suggestions(suggestion_block or "")
-                if suggestions:
-                    updated = apply_suggestions_to_state(glossary_state, suggestions, logger)
-                    if updated:
-                        save_dynamic_glossary(glossary_state, logger)
-                        glossary_block = format_glossary_for_prompt(
-                            glossary_state.combined_index,
-                            glossary_prompt_limit,
-                        )
+            attempt = 0
+            while True:
+                llm_raw, response_text = _call_with_retry(
+                    backend=backend,
+                    prompt=prompt,
+                    cfg=cfg,
+                    logger=logger,
+                    label=f"ref-{index}/{total}-{c_idx}/{len(chunks)}",
+                    max_retries=1,
+                )
+                refined_candidate = response_text
+                if glossary_state:
+                    refined_candidate, suggestion_block = split_refined_and_suggestions(llm_raw)
+                    suggestions = parse_glossary_suggestions(suggestion_block or "")
+                    if suggestions:
+                        updated = apply_suggestions_to_state(glossary_state, suggestions, logger)
+                        if updated:
+                            save_dynamic_glossary(glossary_state, logger)
+                            glossary_block = format_glossary_for_prompt(
+                                glossary_state.combined_index,
+                                glossary_prompt_limit,
+                            )
 
-            collapse_flag = False
-            used_fallback = False
-            if guard_mode == "off":
-                refined_text = refined_candidate
-                if not refined_text.strip() or has_meta_noise(refined_text) or has_meta_noise(llm_raw or ""):
-                    used_fallback = True
-                elif detect_model_collapse(refined_text, original_len=len(chunk), mode="refine"):
-                    collapse_flag = True
-                    used_fallback = True
-            elif guard_mode == "relaxed":
-                filtered_text = anti_hallucination_filter(orig=chunk, llm_raw=llm_raw, cleaned=refined_candidate, mode="refine")
-                if filtered_text == chunk and refined_candidate.strip() and refined_candidate.strip() != chunk.strip():
+                collapse_flag = False
+                used_fallback = False
+                if guard_mode == "off":
                     refined_text = refined_candidate
-                else:
-                    refined_text = filtered_text
-                severe_issue = False
-                if not refined_text.strip():
-                    severe_issue = True
-                elif has_meta_noise(refined_text) or has_meta_noise(llm_raw or ""):
-                    severe_issue = True
-                elif detect_model_collapse(refined_text, original_len=len(chunk), mode="refine"):
-                    collapse_flag = True
-                    severe_issue = True
-                if severe_issue:
-                    used_fallback = True
-            else:  # strict
-                refined_text = anti_hallucination_filter(orig=chunk, llm_raw=llm_raw, cleaned=refined_candidate, mode="refine")
-                if not refined_text.strip():
-                    used_fallback = True
-                elif detect_model_collapse(refined_text, original_len=len(chunk), mode="refine"):
-                    collapse_flag = True
-                    used_fallback = True
+                    if not refined_text.strip() or has_meta_noise(refined_text) or has_meta_noise(llm_raw or ""):
+                        used_fallback = True
+                    elif detect_model_collapse(refined_text, original_len=len(chunk), mode="refine"):
+                        collapse_flag = True
+                        used_fallback = True
+                elif guard_mode == "relaxed":
+                    filtered_text = anti_hallucination_filter(orig=chunk, llm_raw=llm_raw, cleaned=refined_candidate, mode="refine")
+                    if filtered_text == chunk and refined_candidate.strip() and refined_candidate.strip() != chunk.strip():
+                        refined_text = refined_candidate
+                    else:
+                        refined_text = filtered_text
+                    severe_issue = False
+                    if not refined_text.strip():
+                        severe_issue = True
+                    elif has_meta_noise(refined_text) or has_meta_noise(llm_raw or ""):
+                        severe_issue = True
+                    elif detect_model_collapse(refined_text, original_len=len(chunk), mode="refine"):
+                        collapse_flag = True
+                        severe_issue = True
+                    if severe_issue:
+                        used_fallback = True
+                else:  # strict
+                    refined_text = anti_hallucination_filter(orig=chunk, llm_raw=llm_raw, cleaned=refined_candidate, mode="refine")
+                    if not refined_text.strip():
+                        used_fallback = True
+                    elif detect_model_collapse(refined_text, original_len=len(chunk), mode="refine"):
+                        collapse_flag = True
+                        used_fallback = True
+
+                retry, retry_reason = needs_retry(chunk, refined_text)
+                attempt += 1
+                if retry and attempt < cfg.max_retries:
+                    logger.warning(
+                        "QA retry refine chunk %d/%d-%d/%d: %s (tentativa %d/%d)",
+                        index,
+                        total,
+                        c_idx,
+                        len(chunks),
+                        retry_reason,
+                        attempt + 1,
+                        cfg.max_retries,
+                    )
+                    if "omissao_dialogo" in retry_reason:
+                        prompt = prompt + "\n\nATENÇÃO: Você omitiu falas. Refaça traduzindo TODAS as frases e mantendo cada fala entre aspas exatamente uma vez. Não resuma. Não remova risos/interjeições."
+                    elif "truncado" in retry_reason:
+                        prompt = prompt + "\n\nATENÇÃO: Sua saída foi truncada. Refaça incluindo TODO o conteúdo."
+                    else:
+                        prompt = prompt + "\n\nATENÇÃO: sua saída anterior veio truncada ou repetitiva. Refaça mantendo TODO o conteúdo. Não resuma."
+                    continue
+                # fim do loop de retry
+                break
 
             if used_fallback:
                 refined_text = chunk
@@ -641,6 +689,7 @@ def refine_markdown_file(
     debug_chunks: bool = False,
     cleanup_mode: str = "off",
 ) -> None:
+    set_cache_base_dir(cfg.output_dir)
     raw_md = read_text(input_path)
     md_text = raw_md
     if preprocess_advanced:
@@ -785,7 +834,9 @@ def refine_markdown_file(
         "max_chunk_chars_observed": metrics.get("max_chunk_chars_observed", 0),
     }
     try:
-        (output_path.parent / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        slug_report = Path(input_path).stem
+        report_path = output_path.parent / f"{slug_report}_refine_report.json"
+        report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
         refine_metrics = {
             "total_blocks": stats.total_blocks,
             "cache_hits": metrics.get("cache_hits", 0),

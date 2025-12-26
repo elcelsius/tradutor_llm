@@ -10,7 +10,7 @@ from datetime import datetime
 import re
 
 from .config import AppConfig
-from .cache_utils import cache_exists, chunk_hash, load_cache, save_cache
+from .cache_utils import cache_exists, chunk_hash, load_cache, save_cache, set_cache_base_dir
 from .llm_backend import LLMBackend
 from .preprocess import paragraphs_from_text
 from .utils import chunk_by_paragraphs, timed
@@ -50,6 +50,7 @@ def desquebrar_text(
 
     Retorna (texto_desquebrado, stats).
     """
+    set_cache_base_dir(cfg.output_dir)
     normalized = text.replace("\r\n", "\n").replace("\r", "\n").strip()
     if not normalized:
         return "", DesquebrarStats(total_chunks=0, cache_hits=0, fallbacks=0, blocks=[])

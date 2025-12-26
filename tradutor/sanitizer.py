@@ -9,13 +9,24 @@ import re
 from dataclasses import dataclass
 from typing import List, Tuple
 
+# Meta mínimos para tradução (evitar cortar falas legítimas).
+META_PATTERNS_TRANSLATE = [
+    r"as an ai language model",
+    r"i am an ai",
+    r"\bi cannot\b",
+    r"\bi can't\b",
+    r"como um modelo de linguagem",
+    r"eu sou apenas",
+    r"^\s*sorry[,:]?\s+(but\s+)?i (can't|cannot)\b",
+    r"^\s*desculp\w*[,:]?\s+(mas\s+)?(n[aã]o posso|n[aã]o consigo|eu n[aã]o)\b",
+]
 
-META_PATTERNS = [
+# Conjunto agressivo (refine/strict); remove "desculp" genérico.
+META_PATTERNS_STRICT = [
     r"parece que voc[eˆ] est[ a]",
     r"como um modelo de linguagem",
     r"n[aÆ]o posso",
     r"n[aÆ]o sou capaz",
-    r"desculp",
     r"nÆo posso ajudar",
     r"eu sou apenas",
     r"como um assistente",
@@ -52,14 +63,14 @@ def _remove_think_blocks(text: str) -> Tuple[str, int]:
     return new_text, count
 
 
-def _remove_meta_lines(text: str) -> Tuple[str, int, bool]:
+def _remove_meta_lines(text: str, patterns: List[str]) -> Tuple[str, int, bool]:
     lines = text.splitlines()
     kept: List[str] = []
     removed = 0
     contamination = False
     for line in lines:
         lowered = line.lower()
-        if any(re.search(pat, lowered) for pat in META_PATTERNS):
+        if any(re.search(pat, lowered) for pat in patterns):
             removed += 1
             contamination = True
             continue
@@ -155,6 +166,7 @@ def sanitize_text(
     remove_repeated_sequences: bool = True,
     strip_empty_lines: bool = True,
     apply_leading_noise_filter: bool = True,
+    meta_patterns: List[str] | None = None,
 ) -> Tuple[str, SanitizationReport]:
     """
     Sanitiza saidas de LLM para reduzir alucinacao/ruido.
@@ -167,7 +179,8 @@ def sanitize_text(
     text, count = _remove_think_blocks(text)
     report.removed_think_blocks = count
 
-    text, meta_removed, contamination = _remove_meta_lines(text)
+    meta_used = meta_patterns if meta_patterns is not None else META_PATTERNS_STRICT
+    text, meta_removed, contamination = _remove_meta_lines(text, meta_used)
     report.removed_meta_lines = meta_removed
     report.contamination_detected = contamination
 
@@ -229,6 +242,7 @@ def sanitize_translation_output(
         remove_repeated_sequences=False,
         strip_empty_lines=False,
         apply_leading_noise_filter=True,
+        meta_patterns=META_PATTERNS_TRANSLATE,
     )
 
 

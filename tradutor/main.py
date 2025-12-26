@@ -17,7 +17,7 @@ from .llm_backend import LLMBackend
 from .pdf_export import markdown_to_pdf
 from .pdf_reader import extract_pdf_text
 from .advanced_preprocess import clean_text as advanced_clean
-from .preprocess import preprocess_text
+from .preprocess import preprocess_text, strip_front_matter
 from .refine import refine_markdown_file
 from .postprocess import final_pt_postprocess
 from .translate import translate_document
@@ -27,6 +27,7 @@ from .utils import setup_logging, write_text, read_text
 from .structure_normalizer import normalize_structure
 from .editor import editor_pipeline
 from .pdf import convert_markdown_to_pdf
+from .cache_utils import clear_cache, set_cache_base_dir
 
 
 def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
@@ -69,14 +70,14 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
         "--desquebrar-mode",
         dest="desquebrar_mode",
         choices=["llm", "safe"],
-        default="llm",
-        help="Modo do desquebrar: llm (padrão) usa LLM; safe usa desquebrar_safe sem LLM, preservando layout.",
+        default=cfg.desquebrar_mode,
+        help="Modo do desquebrar: llm usa LLM; safe usa desquebrar_safe sem LLM, preservando layout (padrao: config).",
     )
     t.add_argument(
         "--refine-mode",
         dest="desquebrar_mode",
         choices=["llm", "safe"],
-        default="llm",
+        default=cfg.desquebrar_mode,
         help=argparse.SUPPRESS,
     )
     t.add_argument(
@@ -104,6 +105,31 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
         "--preprocess-advanced",
         action="store_true",
         help="Ativa pre-processamento avancado opcional antes da traducao/refine.",
+    )
+    t.add_argument(
+        "--skip-front-matter",
+        dest="skip_front_matter",
+        action=argparse.BooleanOptionalAction,
+        default=cfg.skip_front_matter,
+        help="Remove automaticamente o front-matter antes do Prologue/Chapter 1 (padrao: config).",
+    )
+    t.add_argument(
+        "--clear-cache",
+        choices=["all", "translate", "refine", "desquebrar"],
+        help="Limpa caches antes de traduzir (respeita output_dir da config).",
+    )
+    t.add_argument(
+        "--split-by-sections",
+        dest="split_by_sections",
+        action=argparse.BooleanOptionalAction,
+        default=cfg.split_by_sections,
+        help="Divide o texto em secoes (Prologue/Chapter/Epilogue) e traduz por secao (padrao: config).",
+    )
+    t.add_argument(
+        "--translate-allow-adaptation",
+        action=argparse.BooleanOptionalAction,
+        default=cfg.translate_allow_adaptation,
+        help="Permite exemplos de adaptacao de piadas/trocadilhos no prompt de traducao (padrao: config).",
     )
     t.add_argument(
         "--cleanup-before-refine",
@@ -160,6 +186,11 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
         help="Ativa debug detalhado por chunk (JSONL) na traducao.",
     )
     t.add_argument(
+        "--fail-on-chunk-error",
+        action="store_true",
+        help="Abortar tradução se qualquer chunk falhar (default: continua com placeholders).",
+    )
+    t.add_argument(
         "--pdf-enabled",
         action=argparse.BooleanOptionalAction,
         default=cfg.pdf_enabled,
@@ -185,20 +216,25 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
         "--desquebrar-mode",
         dest="desquebrar_mode",
         choices=["llm", "safe"],
-        default="llm",
+        default=cfg.desquebrar_mode,
         help="Compatibilidade: controla apenas o desquebrar (safe usa desquebrar_safe). No comando refina não altera o fluxo.",
     )
     r.add_argument(
         "--refine-mode",
         dest="desquebrar_mode",
         choices=["llm", "safe"],
-        default="llm",
+        default=cfg.desquebrar_mode,
         help=argparse.SUPPRESS,
     )
     r.add_argument(
         "--resume",
         action="store_true",
         help="Retoma refine usando manifesto de progresso existente (se houver).",
+    )
+    r.add_argument(
+        "--clear-cache",
+        choices=["all", "translate", "refine", "desquebrar"],
+        help="Limpa caches antes de refinar (respeita output_dir da config).",
     )
     r.add_argument(
         "--normalize-paragraphs",
@@ -286,7 +322,14 @@ def find_markdowns(output_dir: Path, specific: str | None = None) -> list[Path]:
 def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
     """Executa pipeline completo de tradução (com refine opcional)."""
     ensure_paths(cfg)
-    desquebrar_mode = getattr(args, "desquebrar_mode", "llm")
+    set_cache_base_dir(cfg.output_dir)
+    if getattr(args, "clear_cache", None):
+        clear_cache(args.clear_cache)
+        logger.info("Cache %s limpo em %s", args.clear_cache, cfg.output_dir)
+    if hasattr(args, "desquebrar_mode"):
+        desquebrar_mode = getattr(args, "desquebrar_mode", getattr(cfg, "desquebrar_mode", "llm"))
+    else:
+        desquebrar_mode = "llm"
     pdfs = find_pdfs(cfg.data_dir, args.input)
     if not pdfs:
         raise SystemExit("Nenhum PDF encontrado em data/ ou caminho inválido.")
@@ -301,6 +344,8 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
         request_timeout=args.request_timeout,
         repeat_penalty=cfg.translate_repeat_penalty,
         num_predict=args.num_predict,
+        num_ctx=cfg.translate_num_ctx,
+        keep_alive=getattr(cfg, "ollama_keep_alive", "30m"),
     )
     logger.info(
         "LLM de tradução: backend=%s model=%s temp=%.2f chunk=%d timeout=%ds num_predict=%d",
@@ -314,6 +359,9 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
 
     glossary_text = None
     glossary_state = None
+    fail_on_chunk_error = getattr(args, "fail_on_chunk_error", None)
+    if fail_on_chunk_error is None:
+        fail_on_chunk_error = getattr(cfg, "fail_on_chunk_error", False)
     if getattr(args, "use_glossary", False):
         manual_path = Path(args.manual_glossary) if args.manual_glossary else Path("glossario/glossario_manual.json")
         glossary_state = build_glossary_state(manual_path=manual_path, dynamic_path=None, logger=logger, manual_dir=None)
@@ -330,6 +378,8 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
             raise SystemExit(f"PDF {pdf.name} não possui texto extraído (pode ser imagem/scan).")
         if getattr(args, "preprocess_advanced", False):
             raw_text = advanced_clean(raw_text)
+        if getattr(args, "skip_front_matter", cfg.skip_front_matter):
+            raw_text = strip_front_matter(raw_text)
         if args.debug:
             logger.debug("Debug ativado: salvando também raw_extracted e preprocessed.")
             raw_out = cfg.output_dir / f"{pdf.stem}_raw_extracted.md"
@@ -370,6 +420,8 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                     request_timeout=args.request_timeout,
                     num_predict=args.desquebrar_num_predict,
                     repeat_penalty=args.desquebrar_repeat_penalty,
+                    num_ctx=getattr(cfg, "desquebrar_num_ctx", None),
+                    keep_alive=getattr(cfg, "ollama_keep_alive", "30m"),
                 )
                 working_text, desquebrar_stats = desquebrar_text(
                     working_text,
@@ -432,10 +484,14 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
             progress_path=progress_path,
             resume_manifest=resume_manifest,
             glossary_text=glossary_text,
+            glossary_manual_terms=glossary_state.manual_terms if glossary_state else None,
             debug_translation=getattr(args, "debug", False),
             parallel_workers=max(1, getattr(args, "parallel", 1)),
             debug_chunks=getattr(args, "debug_chunks", False),
             already_preprocessed=True,
+            split_by_sections=getattr(args, "split_by_sections", cfg.split_by_sections),
+            allow_adaptation=getattr(args, "translate_allow_adaptation", cfg.translate_allow_adaptation),
+            fail_on_chunk_error=fail_on_chunk_error,
         )
 
         md_path = cfg.output_dir / f"{pdf.stem}_pt.md"
@@ -459,6 +515,8 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                 request_timeout=args.request_timeout,
                 repeat_penalty=cfg.refine_repeat_penalty,
                 num_predict=cfg.refine_num_predict,
+                num_ctx=getattr(cfg, "refine_num_ctx", None),
+                keep_alive=getattr(cfg, "ollama_keep_alive", "30m"),
             )
             logger.info(
                 "LLM de refine (opcional): backend=%s model=%s temp=%.2f chunk=%d timeout=%ds num_predict=%d",
@@ -508,7 +566,14 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
 def run_refine(args, cfg: AppConfig, logger: logging.Logger) -> None:
     """Executa refine sobre arquivos *_pt.md existentes."""
     ensure_paths(cfg)
-    desquebrar_mode = getattr(args, "desquebrar_mode", "llm")
+    set_cache_base_dir(cfg.output_dir)
+    if getattr(args, "clear_cache", None):
+        clear_cache(args.clear_cache)
+        logger.info("Cache %s limpo em %s", args.clear_cache, cfg.output_dir)
+    if hasattr(args, "desquebrar_mode"):
+        desquebrar_mode = getattr(args, "desquebrar_mode", getattr(cfg, "desquebrar_mode", "llm"))
+    else:
+        desquebrar_mode = "llm"
     if desquebrar_mode == "safe":
         logger.info("Modo safe afeta apenas o desquebrar; comando refina usa fluxo padrão de refine.")
     md_files = find_markdowns(cfg.output_dir, args.input)
@@ -523,6 +588,8 @@ def run_refine(args, cfg: AppConfig, logger: logging.Logger) -> None:
         request_timeout=args.request_timeout,
         repeat_penalty=cfg.refine_repeat_penalty,
         num_predict=args.num_predict,
+        num_ctx=getattr(cfg, "refine_num_ctx", None),
+        keep_alive=getattr(cfg, "ollama_keep_alive", "30m"),
     )
     logger.info(
         "LLM de refine: backend=%s model=%s temp=%.2f chunk=%d timeout=%ds num_predict=%d",

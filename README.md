@@ -13,7 +13,7 @@ pip install -r requirements.txt
 ```
 2) Ajuste o `config.yaml` (modelos, caminhos, fonte do PDF). Padrão: Ollama rodando localmente.
 3) Coloque seus PDFs em `data/`.
-4) Rode a tradução completa (com refine; PDF é opcional e só sai se estiver habilitado):
+4) Rode a tradução completa (com refine; PDF é opcional e só sai se estiver habilitado). Flags úteis para PDFs longos: `--skip-front-matter` (padrão), `--split-by-sections` (padrão), `--translate-allow-adaptation` (para permitir exemplos de adaptação no prompt), `--request-timeout`, `--num-predict` e, se usar Ollama, configure `translate_num_ctx`/`refine_num_ctx`/`desquebrar_num_ctx` e `ollama_keep_alive` no `config.yaml`.
 ```bash
 python -m tradutor.main traduz --input "data/meu_livro.pdf"
 ```
@@ -37,9 +37,11 @@ python -m tradutor.main traduz --input "data/meu_livro.pdf"
 
 ## Configuração (config.yaml)
 Principais chaves (padrões já preenchidos):
-- `translate_backend`, `translate_model` (ex.: `gemma3:27b-it-q4_K_M`), `translate_temperature`, `translate_repeat_penalty`, `translate_chunk_chars`, `translate_num_predict`.
-- `use_desquebrar` (true/false) e `desquebrar_*` (backend/model/temp/repeat_penalty/chunk/num_predict).
+- `translate_*`: backend/model (ex.: `gemma3:27b-it-q4_K_M`), temperatura/repeat_penalty/chunk_chars/num_predict/num_ctx e guardrails de diálogo (`translate_dialogue_guardrails`, `translate_dialogue_retry_temps`, `translate_dialogue_split_fallback`). Glossário contextual: `translate_glossary_match_limit`/`translate_glossary_fallback_limit`. `translate_allow_adaptation` deixa exemplos de adaptação de piadas no prompt.
+- `use_desquebrar` (true/false) e `desquebrar_*` (backend/model/temp/repeat_penalty/chunk/num_predict/num_ctx) + `desquebrar_mode` (`safe` usa desquebrar_safe sem LLM).
 - `refine_backend`, `refine_model` (ex.: `mistral-small3.1:24b-instruct-2503-q4_K_M`), `refine_temperature`, `refine_guardrails`, `cleanup_before_refine` (off/auto/on).
+- `fail_on_chunk_error`: se true, aborta a tradução na primeira falha de chunk; se false (default), salva placeholders e segue.
+- `ollama_keep_alive`: mantém o modelo carregado entre chamadas (ex.: `30m`).
 - PDF: `pdf_enabled` (padrão false; habilite no config ou com `--pdf-enabled`), `pdf_font.file/size/leading`, `pdf_font_fallbacks`, `pdf_margin`, `pdf_author`, `pdf_language`.
 - Caminhos: `data_dir`, `output_dir`.
 
@@ -59,6 +61,7 @@ Principais chaves (padrões já preenchidos):
   - `aliases`: lista opcional de variações do termo.
 - Para criar o seu: copie `glossario_exemplo.json`, edite os termos e aponte no CLI com `--manual-glossary <seu_glossario.json>`.
 - Todos os `glossario/*.json` são ignorados no Git, exceto `glossario_exemplo.json`.
+- Na tradução, só são injetados no prompt os termos que aparecem no chunk (limite configurável por `translate_glossary_match_limit`; fallback para `translate_glossary_fallback_limit` quando nada casa).
 
 ---
 
@@ -74,6 +77,7 @@ Flags (todas opcionais):
 - `--no-refine`: pula o refine (gera só `<slug>_pt.md`).
 - `--desquebrar-mode {llm,safe}`: `safe` usa desquebrar_safe (sem LLM) no passo de desquebrar, preservando layout. Alias legado: `--refine-mode`.
 - `--resume`: retoma a partir do manifesto de progresso da tradução.
+- `--clear-cache {all,translate,refine,desquebrar}`: limpa caches antes de rodar.
 - `--use-glossary`: injeta glossário manual (JSON) na tradução.
 - `--manual-glossary <path>`: caminho do glossário manual (default `glossario/glossario_manual.json`).
 - `--parallel <n>`: workers paralelos (tradução força ordem; >1 pode ser limitado).
@@ -95,6 +99,7 @@ Flags:
 - `--num-predict <int>`: tokens máximos por chunk no refine.
 - `--desquebrar-mode {llm,safe}`: compatível com `traduz` (safe usa desquebrar_safe sem LLM). No comando `refina`, não altera o fluxo. Alias legado: `--refine-mode`.
 - `--resume`: retoma a partir do manifesto de refine.
+- `--clear-cache {all,translate,refine,desquebrar}`: limpa caches antes de refinar.
 - `--normalize-paragraphs`: normaliza parágrafos antes de refinar.
 - `--use-glossary`: ativa glossário manual/dinâmico.
 - `--manual-glossary <path>` / `--dynamic-glossary <path>` / `--auto-glossary-dir <dir>`: fontes de glossário.
@@ -105,6 +110,7 @@ Flags:
 - `--debug-chunks`: JSONL detalhado por chunk.
 - Editor opcional pós-refine: `--editor-lite`, `--editor-consistency`, `--editor-voice`, `--editor-strict`, `--editor-report` (gera `editor_report.json`).
 - `--request-timeout <s>`: timeout por chamada.
+- Limpezas extras/robustez: `--skip-front-matter/--no-skip-front-matter` (pula front-matter antes de Prologue/Chapter 1), `--split-by-sections/--no-split-by-sections` (tradução por seção), `--translate-allow-adaptation/--no-translate-allow-adaptation` (permite exemplos de adaptação de piadas no prompt).
 
 ### Gerar PDF a partir de um Markdown existente
 ```bash
@@ -188,7 +194,7 @@ tradutor.py / refinador.py # wrappers legados (chamam main)
   - Tradução: `gemma3:27b-it-q4_K_M`
   - Desquebrar: use o mesmo ou outro em `config.yaml`.
   - Refine: `mistral-small3.1:24b-instruct-2503-q4_K_M`
-- Para evitar truncamentos: mantenha `translate_chunk_chars` em ~2400.
+- Para PDFs longos: mantenha `translate_chunk_chars` em ~2000 e `translate_num_predict` em ~3000 (Ollama). Guardrails de diálogo (`translate_dialogue_guardrails`) ajudam a evitar omissão de falas.
 - Se fonte do PDF não existir, ajuste `pdf_font.file` ou use um fallback válido (ex.: `C:/Windows/Fonts/Arial.ttf`).
 
 ---

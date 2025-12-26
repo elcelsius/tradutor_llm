@@ -42,6 +42,24 @@ FOOTER_PATTERNS: Final[list[str]] = [
     r"\bPage\s+\d+\b",
     r"Goldenagato \| mp4directs\.com",
     r"mp4directs\.com",
+    r"zerobooks?",
+    r"jnovels?",
+    r"newsletter",
+    r"discord\.gg",
+    r"stay up to date",
+    r"download(?:ing)? our mobile app",
+]
+
+NOISE_PARAGRAPH_PATTERNS: Final[list[str]] = [
+    r"stay up to date",
+    r"download(?:ing)? our mobile app",
+    r"zerobooks",
+    r"jnovels",
+    r"join our discord",
+    r"newsletter",
+    r"follow us",
+    r"support us",
+    r"read (more|the latest) on",
 ]
 
 
@@ -102,7 +120,39 @@ def _join_broken_lines(text: str) -> str:
     return "\n\n".join(joined)
 
 
-def preprocess_text(raw_text: str, logger: Optional[logging.Logger] = None) -> str:
+def remove_noise_blocks(text: str) -> str:
+    """Remove paragrafos que pareçam ser ads/newsletter/discord etc."""
+    paragraphs = text.split("\n\n")
+    cleaned: list[str] = []
+    for para in paragraphs:
+        norm = para.lower().strip()
+        if not norm:
+            cleaned.append("")
+            continue
+        if any(re.search(pat, norm, flags=re.IGNORECASE) for pat in NOISE_PARAGRAPH_PATTERNS):
+            continue
+        cleaned.append(para.strip())
+    # reintroduz quebras duplas
+    return "\n\n".join(p for p in cleaned if p != "")
+
+
+def strip_front_matter(text: str) -> str:
+    """
+    Remove tudo antes de Prologue/Chapter 1.
+    """
+    lines = text.splitlines()
+    start_idx = None
+    marker_re = re.compile(r"^(prologue|chapter\s*1:?|cap[ií]tulo\s*1:?|ep[ií]logo)", re.IGNORECASE)
+    for idx, ln in enumerate(lines):
+        if marker_re.match(ln.strip()):
+            start_idx = idx
+            break
+    if start_idx is None:
+        return text
+    return "\n".join(lines[start_idx:]).lstrip()
+
+
+def preprocess_text(raw_text: str, logger: Optional[logging.Logger] = None, *, skip_front_matter: bool = False) -> str:
     """
     Pré-processa o texto bruto extraído do PDF:
     - Normaliza quebras de linha
@@ -111,6 +161,8 @@ def preprocess_text(raw_text: str, logger: Optional[logging.Logger] = None) -> s
     """
 
     text = raw_text.replace("\r\n", "\n").replace("\r", "\n")
+    if skip_front_matter:
+        text = strip_front_matter(text)
 
     for pattern in FOOTER_PATTERNS:
         text = re.sub(pattern, " ", text, flags=re.IGNORECASE)
@@ -120,6 +172,7 @@ def preprocess_text(raw_text: str, logger: Optional[logging.Logger] = None) -> s
     text = re.sub(r"\n{3,}", "\n\n", text)
 
     text = text.strip()
+    text = remove_noise_blocks(text)
 
     if logger is not None:
         logger.debug("Texto pré-processado: %d caracteres", len(text))

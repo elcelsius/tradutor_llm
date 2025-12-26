@@ -9,6 +9,7 @@ import logging
 import re
 import time
 import hashlib
+import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable, List, Sequence
@@ -21,6 +22,7 @@ from .cache_utils import (
     load_cache,
     save_cache,
     is_near_duplicate,
+    set_cache_base_dir,
 )
 from .llm_backend import LLMBackend
 from .preprocess import (
@@ -28,11 +30,14 @@ from .preprocess import (
     paragraphs_from_text,
     preprocess_text,
 )
-from .glossary_utils import format_manual_pairs_for_translation
+from .section_splitter import split_into_sections
+from .glossary_utils import format_manual_pairs_for_translation, select_terms_for_chunk
 from .sanitizer import log_report, sanitize_translation_output, SanitizationReport
 from .utils import timed
 from .refine import has_suspicious_repetition  # reuse guardrail
 from .anti_hallucination import anti_hallucination_filter
+from .qa import needs_retry, count_quotes, count_quote_lines
+from .postprocess_translation import postprocess_translation
 
 
 def _extract_last_sentence(text: str) -> str:
@@ -47,7 +52,12 @@ def _extract_last_sentence(text: str) -> str:
     return ""
 
 
-def build_translation_prompt(chunk: str, context: str | None = None, glossary_text: str | None = None) -> str:
+def build_translation_prompt(
+    chunk: str,
+    context: str | None = None,
+    glossary_text: str | None = None,
+    allow_adaptation: bool = False,
+) -> str:
     """Prompt minimalista para traducao EN -> PT-BR com delimitadores, contexto e glossario manual opcional."""
     context_block = ""
     if context:
@@ -64,6 +74,15 @@ def build_translation_prompt(chunk: str, context: str | None = None, glossary_te
             "NAO DEVE ADICIONAR EXPLICACOES.\n"
             f"{glossary_text}\n\n"
         )
+
+    adaptation_block = ""
+    if allow_adaptation:
+        adaptation_block = """
+6. Em piadas e trocadilhos, manter o espírito e não a literalidade:
+
+   * "Four Holey Smell-ders" → "Os Quatro Furados Fedorentos"
+   * "Captain Mammaries" → "Capitã Peituda"
+"""
 
     return f"""
 Você é um TRADUTOR PROFISSIONAL DE LIGHT NOVELS, especializado em inglês → português brasileiro.
@@ -95,11 +114,7 @@ MELHORIAS OBRIGATÓRIAS:
 5. Adaptar calques literais:
 
    * "What’s with that high-and-mighty attitude?!" → "Que atitude é essa, todo se achando?!"
-6. Em piadas e trocadilhos, manter o espírito e não a literalidade:
-
-   * "Four Holey Smell-ders" → "Os Quatro Furados Fedorentos"
-   * "Captain Mammaries" → "Capitã Peituda"
-7. Garantir fluidez e tom de light novel brasileira.
+{adaptation_block}7. Garantir fluidez e tom de light novel brasileira.
 
 FORMATO DE SAÍDA:
 Retorne exclusivamente:
@@ -142,6 +157,68 @@ def _strip_translate_markers(text: str) -> str:
     return cleaned.strip()
 
 
+def _split_dialogue_blocks(chunk: str) -> list[str]:
+    """
+    Divide o chunk em blocos menores priorizando linhas de diálogo (aspas/travessão).
+    """
+    blocks: list[str] = []
+    buffer: list[str] = []
+
+    def flush() -> None:
+        nonlocal buffer
+        if buffer:
+            joined = "\n".join(buffer).strip()
+            if joined:
+                blocks.append(joined)
+            buffer = []
+
+    for raw_line in chunk.splitlines():
+        line = raw_line.strip()
+        if not line:
+            flush()
+            continue
+        if line.startswith(('"', "“", "”", "’", "-", "—")):
+            flush()
+            blocks.append(line)
+        else:
+            buffer.append(line)
+    flush()
+    return [b for b in blocks if b.strip()]
+
+
+def _build_chunk_glossary(
+    manual_terms: list[dict] | None,
+    chunk: str,
+    *,
+    match_limit: int,
+    fallback_limit: int,
+    logger: logging.Logger,
+    chunk_index: int,
+) -> tuple[str | None, int, int]:
+    """
+    Seleciona termos do glossário que aparecem no chunk.
+    Retorna (glossary_text, matched_count, total_injetados).
+    """
+    if not manual_terms:
+        return None, 0, 0
+    selected, matched = select_terms_for_chunk(
+        manual_terms,
+        chunk,
+        match_limit=match_limit,
+        fallback_limit=fallback_limit,
+    )
+    glossary_text = format_manual_pairs_for_translation(selected, limit=len(selected) or None)
+    injected = len(selected)
+    if injected:
+        logger.debug(
+            "Glossario (chunk %d): injetados=%d matched=%d",
+            chunk_index,
+            injected,
+            matched,
+        )
+    return glossary_text or None, matched, injected
+
+
 def translate_document(
     pdf_text: str,
     backend: LLMBackend,
@@ -151,19 +228,35 @@ def translate_document(
     progress_path: Path | None = None,
     resume_manifest: dict | None = None,
     glossary_text: str | None = None,
+    glossary_manual_terms: list[dict] | None = None,
     debug_translation: bool = False,
     parallel_workers: int = 1,
     debug_chunks: bool = False,
     already_preprocessed: bool = False,
+    split_by_sections: bool | None = None,
+    allow_adaptation: bool | None = None,
+    fail_on_chunk_error: bool | None = None,
 ) -> str:
     """
     Executa pre-processamento (opcional), chunking e traducao por lotes com sanitizacao.
     """
-    clean = pdf_text if already_preprocessed else preprocess_text(pdf_text, logger)
+    set_cache_base_dir(cfg.output_dir)
+    split_flag = cfg.split_by_sections if split_by_sections is None else split_by_sections
+    allow_adapt_flag = cfg.translate_allow_adaptation if allow_adaptation is None else allow_adaptation
+    fail_on_error = cfg.fail_on_chunk_error if fail_on_chunk_error is None else fail_on_chunk_error
+    if not hasattr(backend, "temperature"):
+        backend.temperature = cfg.translate_temperature
+    clean = pdf_text if already_preprocessed else preprocess_text(pdf_text, logger, skip_front_matter=cfg.skip_front_matter)
     doc_hash = chunk_hash(clean)
-    paragraphs = paragraphs_from_text(clean)
-    chunks = chunk_for_translation(paragraphs, max_chars=cfg.translate_chunk_chars, logger=logger)
-    max_chunk_len = max((len(c) for c in chunks), default=0)
+    sections = split_into_sections(clean) if split_flag else [{"title": "Full Text", "body": clean}]
+    chunk_records = []
+    for sidx, sec in enumerate(sections, start=1):
+        paragraphs = paragraphs_from_text(sec["body"])
+        sec_chunks = chunk_for_translation(paragraphs, max_chars=cfg.translate_chunk_chars, logger=logger)
+        for ch in sec_chunks:
+            chunk_records.append({"section": sidx, "title": sec.get("title", ""), "text": ch})
+    chunks = [c["text"] for c in chunk_records]
+    max_chunk_len = max((len(c["text"]) for c in chunk_records), default=0)
     logger.info(
         "Iniciando traducao: %d chunks (alvo=%d, max_observado=%d)",
         len(chunks),
@@ -174,6 +267,15 @@ def translate_document(
         logger.info("Context chaining ativo; paralelismo ajustado para 1 na tradução.")
         parallel_workers = 1
     state_path = Path(cfg.output_dir) / "state_traducao.json"
+    dialogue_guardrails_mode = getattr(cfg, "translate_dialogue_guardrails", "strict")
+    dialogue_split_fallback = getattr(cfg, "translate_dialogue_split_fallback", True)
+    dialogue_retry_temps = getattr(cfg, "translate_dialogue_retry_temps", None) or [
+        cfg.translate_temperature,
+        0.25,
+        0.10,
+    ]
+    glossary_match_limit = getattr(cfg, "translate_glossary_match_limit", 80)
+    glossary_fallback_limit = getattr(cfg, "translate_glossary_fallback_limit", 30)
     try:
         state_payload = {
             "input_file": source_slug or "document",
@@ -216,12 +318,15 @@ def translate_document(
     paragraph_mismatch: dict[str, int] | None = None
     chunk_metrics: list[dict] = []
 
+    glossary_hash = chunk_hash(glossary_text) if glossary_text else None
     current_cache_signature = {
         "backend": getattr(backend, "backend", None),
         "model": getattr(backend, "model", None),
         "num_predict": getattr(backend, "num_predict", None),
         "temperature": getattr(backend, "temperature", None),
         "repeat_penalty": getattr(backend, "repeat_penalty", None),
+        "translate_chunk_chars": cfg.translate_chunk_chars,
+        "glossary_hash": glossary_hash,
     }
 
     def _is_cache_compatible(data: dict) -> bool:
@@ -287,17 +392,9 @@ def translate_document(
     _write_progress()
 
     previous_context: str | None = None
+    current_section: int | None = None
     debug_dir = Path(cfg.output_dir) / "debug_traducao"
-    chunk_offsets: list[tuple[int | None, int | None]] = []
-    offset_cursor = 0
-    for ch in chunks:
-        start_pos = clean.find(ch, offset_cursor)
-        if start_pos == -1:
-            chunk_offsets.append((None, None))
-        else:
-            end_pos = start_pos + len(ch)
-            chunk_offsets.append((start_pos, end_pos))
-            offset_cursor = end_pos
+    chunk_offsets: list[tuple[int | None, int | None]] = [(None, None)] * len(chunks)
 
     debug_file = None
     debug_file_path: Path | None = None
@@ -313,10 +410,25 @@ def translate_document(
             debug_file.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
     def _count_quotes(txt: str) -> int:
-        return len(re.findall(r'["“”\'’]', txt))
+        return sum(1 for ch in txt if ch in {'"', "“", "”", "'"})
 
     
-    for idx, chunk in enumerate(chunks, start=1):
+    for idx, chunk_info in enumerate(chunk_records, start=1):
+        chunk = chunk_info["text"]
+        chunk_glossary_text, glossary_matched, glossary_injected = _build_chunk_glossary(
+            glossary_manual_terms,
+            chunk,
+            match_limit=glossary_match_limit,
+            fallback_limit=glossary_fallback_limit,
+            logger=logger,
+            chunk_index=idx,
+        )
+        if not chunk_glossary_text:
+            chunk_glossary_text = glossary_text
+        section_id = chunk_info.get("section")
+        if current_section is None or section_id != current_section:
+            previous_context = None
+            current_section = section_id
         h = chunk_hash(chunk)
         start_offset, end_offset = chunk_offsets[idx - 1] if idx - 1 < len(chunk_offsets) else (None, None)
         from_cache = False
@@ -371,23 +483,155 @@ def translate_document(
                         reused_dup = True
                         break
                 if not reused_dup:
-                    prompt = build_translation_prompt(chunk, context=previous_context, glossary_text=glossary_text)
+                    base_prompt = build_translation_prompt(
+                        chunk,
+                        context=previous_context,
+                        glossary_text=chunk_glossary_text,
+                        allow_adaptation=allow_adapt_flag,
+                    )
+                    prompt = base_prompt
                     try:
-                        raw_text, _clean_text, llm_attempts, sanitizer_report = _call_with_retry(
-                            backend=backend,
-                            prompt=prompt,
-                            cfg=cfg,
-                            logger=logger,
-                            label=f"trad-{idx}/{len(chunks)}",
-                        )
-                        parsed = _parse_translation_output(raw_text)
-                        parsed = _strip_translate_markers(parsed)
-                        parsed_clean, report = sanitize_translation_output(parsed, logger=logger, fail_on_contamination=False)
-                        sanitizer_report = report
-                        log_report(report, logger, prefix=f"trad-parse-{idx}")
-                        if not parsed_clean.strip():
-                            raise ValueError("Traducao vazia apos parsing/sanitizacao.")
-                        parsed_clean = anti_hallucination_filter(orig=chunk, llm_raw=raw_text, cleaned=parsed_clean, mode="translate")
+                        attempt = 0
+                        retry_reason = ""
+                        while attempt < cfg.max_retries:
+                            prev_temp = backend.temperature
+                            temp_for_attempt = dialogue_retry_temps[min(attempt, len(dialogue_retry_temps) - 1)]
+                            backend.temperature = temp_for_attempt
+                            try:
+                                raw_text, _clean_text, llm_attempts, sanitizer_report = _call_with_retry(
+                                    backend=backend,
+                                    prompt=prompt,
+                                    cfg=cfg,
+                                    logger=logger,
+                                    label=f"trad-{idx}/{len(chunks)}",
+                                )
+                            finally:
+                                backend.temperature = prev_temp
+                            parsed = _parse_translation_output(raw_text)
+                            parsed_raw = _strip_translate_markers(parsed)
+                            parsed_clean, report = sanitize_translation_output(parsed_raw, logger=logger, fail_on_contamination=False)
+                            sanitizer_report = report
+                            log_report(report, logger, prefix=f"trad-parse-{idx}")
+                            if debug_translation and report.contamination_detected:
+                                debug_dir.mkdir(parents=True, exist_ok=True)
+                                attempt_tag = attempt + 1
+                                base = f"chunk{idx:03d}_attempt{attempt_tag}"
+                                (debug_dir / f"{base}_raw.txt").write_text(parsed_raw, encoding="utf-8")
+                                (debug_dir / f"{base}_clean.txt").write_text(parsed_clean, encoding="utf-8")
+                            if not parsed_clean.strip():
+                                raise ValueError("Traducao vazia apos parsing/sanitizacao.")
+                            raw_candidate = anti_hallucination_filter(orig=chunk, llm_raw=raw_text, cleaned=parsed_raw, mode="translate")
+                            parsed_clean = anti_hallucination_filter(orig=chunk, llm_raw=raw_text, cleaned=parsed_clean, mode="translate")
+                            sanitized_ratio = len(parsed_clean.strip()) / max(len(parsed_raw.strip()), 1) if parsed_raw.strip() else 1.0
+                            iq = _count_quotes(chunk)
+                            oq = _count_quotes(parsed_clean)
+                            iql = count_quote_lines(chunk)
+                            oql = count_quote_lines(parsed_clean)
+                            clean_retry, clean_reason = needs_retry(
+                                chunk,
+                                parsed_clean,
+                                input_quotes=iq,
+                                output_quotes=oq,
+                                input_quote_lines=iql,
+                                output_quote_lines=oql,
+                                contamination_detected=bool(report.contamination_detected),
+                                sanitization_ratio=sanitized_ratio,
+                            )
+                            raw_retry, _ = needs_retry(chunk, raw_candidate, input_quotes=iq, output_quotes=_count_quotes(raw_candidate), input_quote_lines=iql, output_quote_lines=count_quote_lines(raw_candidate), contamination_detected=False, sanitization_ratio=1.0)
+                            prefer_raw = report.contamination_detected and not raw_retry and (sanitized_ratio < 0.95 or "omissao_dialogo" in clean_reason)
+                            retry = clean_retry or (report.contamination_detected and sanitized_ratio < 0.95) or (report.contamination_detected and "omissao_dialogo" in clean_reason)
+                            retry_reason = clean_reason if clean_retry else ("sanitizacao_agressiva" if sanitized_ratio < 0.95 else retry_reason)
+                            guardrail_triggered = False
+                            guardrail_reason = ""
+                            if dialogue_guardrails_mode != "off":
+                                guard_ratio = 0.5 if dialogue_guardrails_mode == "relaxed" else 0.4
+                                if iq >= 4 and oq < max(1, int(iq * guard_ratio)):
+                                    guardrail_triggered = True
+                                    guardrail_reason = f"omissao_dialogo_guardrail_quotes ({oq}/{iq})"
+                                elif iql >= 2 and oql < max(1, int(iql * guard_ratio)):
+                                    guardrail_triggered = True
+                                    guardrail_reason = f"omissao_dialogo_guardrail_linhas ({oql}/{iql})"
+                            if guardrail_triggered:
+                                retry = True
+                                retry_reason = guardrail_reason or retry_reason or "omissao_dialogo_guardrail"
+                            if not retry:
+                                # se sanitização falhou mas raw está ok, preferir raw
+                                if prefer_raw:
+                                    parsed_clean = raw_candidate
+                                break
+                            attempt += 1
+                            is_dialogue_retry = "omissao_dialogo" in (retry_reason or "") or guardrail_triggered
+                            if attempt >= cfg.max_retries and is_dialogue_retry and dialogue_split_fallback:
+                                blocks = _split_dialogue_blocks(chunk) or [chunk]
+                                logger.warning(
+                                    "Fallback de split de dialogos no chunk %d/%d (%d blocos).",
+                                    idx,
+                                    len(chunks),
+                                    len(blocks),
+                                )
+                                block_outputs: list[str] = []
+                                for b_idx, block in enumerate(blocks, start=1):
+                                    block_glossary, _, _ = _build_chunk_glossary(
+                                        glossary_manual_terms,
+                                        block,
+                                        match_limit=glossary_match_limit,
+                                        fallback_limit=glossary_fallback_limit,
+                                        logger=logger,
+                                        chunk_index=idx,
+                                    )
+                                    if not block_glossary:
+                                        block_glossary = chunk_glossary_text
+                                    block_prompt = build_translation_prompt(
+                                        block,
+                                        context=None,
+                                        glossary_text=block_glossary,
+                                        allow_adaptation=allow_adapt_flag,
+                                    )
+                                    block_prompt += "\n\nATENÇÃO: NENHUMA fala pode ser omitida. Traduza exatamente este bloco preservando todas as aspas e travessões. Não resuma."
+                                    prev_temp_block = backend.temperature
+                                    backend.temperature = dialogue_retry_temps[-1]
+                                    try:
+                                        block_raw, _block_clean, _, block_report = _call_with_retry(
+                                            backend=backend,
+                                            prompt=block_prompt,
+                                            cfg=cfg,
+                                            logger=logger,
+                                            label=f"trad-split-{idx}-{b_idx}",
+                                        )
+                                    finally:
+                                        backend.temperature = prev_temp_block
+                                    block_parsed = _parse_translation_output(block_raw)
+                                    block_parsed_raw = _strip_translate_markers(block_parsed)
+                                    block_clean, block_clean_report = sanitize_translation_output(
+                                        block_parsed_raw, logger=logger, fail_on_contamination=False
+                                    )
+                                    sanitizer_report = block_clean_report
+                                    block_clean = anti_hallucination_filter(orig=block, llm_raw=block_raw, cleaned=block_clean, mode="translate")
+                                    block_clean = postprocess_translation(block_clean, block)
+                                    block_outputs.append(block_clean)
+                                parsed_clean = "\n\n".join(block_outputs).strip()
+                                retry = False
+                                break
+                            if attempt >= cfg.max_retries:
+                                if prefer_raw:
+                                    parsed_clean = raw_candidate
+                                break
+                            logger.warning(
+                                "QA retry traducao chunk %d/%d: %s (tentativa %d/%d)",
+                                idx,
+                                len(chunks),
+                                retry_reason,
+                                attempt + 1,
+                                cfg.max_retries,
+                            )
+                            if "omissao_dialogo" in retry_reason:
+                                prompt = base_prompt + "\n\nATENÇÃO: Você omitiu falas. Refaça traduzindo TODAS as frases e mantendo cada fala entre aspas exatamente uma vez. Não resuma. Não remova risos/interjeições."
+                            elif "truncado" in retry_reason:
+                                prompt = base_prompt + "\n\nATENÇÃO: Sua saída foi truncada. Refaça incluindo TODO o conteúdo."
+                            else:
+                                prompt = base_prompt + "\n\nATENÇÃO: Sua saída anterior veio truncada ou repetitiva. Refaça e inclua TODO o conteúdo. Não resuma."
+
+                        parsed_clean = postprocess_translation(parsed_clean, chunk)
                         orig_len = len(chunk.strip())
                         cleaned_len = len(parsed_clean.strip())
                         if orig_len and cleaned_len < orig_len * 0.5:
@@ -438,6 +682,8 @@ def translate_document(
                                 "num_predict": getattr(backend, "num_predict", None),
                                 "temperature": getattr(backend, "temperature", None),
                                 "repeat_penalty": getattr(backend, "repeat_penalty", None),
+                                "translate_chunk_chars": cfg.translate_chunk_chars,
+                                "glossary_hash": glossary_hash,
                             },
                         )
                         if debug_translation and idx <= 5:
@@ -456,6 +702,19 @@ def translate_document(
                             cfg.max_retries,
                             exc,
                         )
+                        # debug de falha
+                        fail_dir = Path(cfg.output_dir) / "debug_translate_chunks" / "failed"
+                        try:
+                            fail_dir.mkdir(parents=True, exist_ok=True)
+                            attempt_tag = llm_attempts or 0
+                            if raw_text:
+                                (fail_dir / f"chunk{idx:03d}_attempt{attempt_tag}_raw.txt").write_text(raw_text, encoding="utf-8")
+                            (fail_dir / f"chunk{idx:03d}_prompt.txt").write_text(prompt, encoding="utf-8")
+                            (fail_dir / f"chunk{idx:03d}_context.txt").write_text(previous_context or "", encoding="utf-8")
+                            error_payload = f"{exc}\n\n{traceback.format_exc()}"
+                            (fail_dir / f"chunk{idx:03d}_error.txt").write_text(error_payload, encoding="utf-8")
+                        except Exception:
+                            pass
                         parsed_clean = placeholder
                         translated_chunks.append(placeholder)
                         chunk_outputs[idx] = placeholder
@@ -619,9 +878,9 @@ def translate_document(
         report["paragraph_mismatch"] = paragraph_mismatch
     try:
         Path(cfg.output_dir).mkdir(parents=True, exist_ok=True)
-        (Path(cfg.output_dir) / "report.json").write_text(
-            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        slug = (source_slug or "document").replace("\\", "_").replace("/", "_")
+        report_path = Path(cfg.output_dir) / f"{slug}_translate_report.json"
+        report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
         metrics_payload = {
             "total_chunks": total_chunks,
             "cache_hits": cache_hits,
@@ -633,7 +892,6 @@ def translate_document(
             "effective_translate_chunk_chars": cfg.translate_chunk_chars,
             "max_chunk_chars_observed": max_chunk_len,
         }
-        slug = source_slug or "document"
         metrics_path = Path(cfg.output_dir) / f"{slug}_translate_metrics.json"
         metrics_path.write_text(json.dumps(metrics_payload, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception:
@@ -643,11 +901,15 @@ def translate_document(
         if debug_file_path:
             logger.info("Arquivo de debug de chunks: %s", debug_file_path)
     if failed_chunks:
-        raise RuntimeError(
-            f"Traducao abortada: {len(failed_chunks)}/{total_chunks} chunks falharam ao chamar o modelo. "
-            "Verifique o backend (Ollama/Gemini), reinicie o servico e rode o comando novamente. "
-            "Os placeholders e o arquivo de debug de chunks indicam quais partes falharam."
+        msg = (
+            f"Traducao finalizada com falhas: {len(failed_chunks)}/{total_chunks} chunks nao foram traduzidos. "
+            "Placeholders foram inseridos; consulte debug_translate_chunks/failed."
         )
+        if fail_on_error:
+            raise RuntimeError(
+                msg
+            )
+        logger.error(msg)
     return result
 
 

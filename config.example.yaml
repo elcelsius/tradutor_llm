@@ -3,18 +3,26 @@
 
 translate_backend: ollama            # ollama ou gemini
 translate_model: gemma3:27b-it-q4_K_M # modelo principal de tradução
-translate_temperature: 0.55          # temperatura para tradução
+translate_temperature: 0.40          # temperatura para tradução
 translate_repeat_penalty: 1.10       # penalidade de repetição (ollama)
-translate_chunk_chars: 2400          # tamanho alvo por chunk (caracteres)
-translate_num_predict: 2048          # limite de tokens gerados por chunk
+translate_chunk_chars: 2000          # tamanho alvo por chunk (caracteres)
+translate_num_predict: 3072          # limite de tokens gerados por chunk
+translate_num_ctx: null              # contexto máximo (opcional, Ollama)
+translate_dialogue_guardrails: strict # strict | relaxed | off
+translate_dialogue_retry_temps: [0.40, 0.25, 0.10] # temperaturas usadas em retries de diálogo
+translate_dialogue_split_fallback: true # ativa fallback de split quando omitir falas
+translate_glossary_match_limit: 80   # injeta apenas termos que aparecem no chunk (limite)
+translate_glossary_fallback_limit: 30 # fallback para top-N se nenhum termo casou
 
 use_desquebrar: true                 # ativa desquebrar automaticamente para PDF
 desquebrar_backend: ollama           # backend do desquebrar
 desquebrar_model: cnmoro/gemma3-gaia-ptbr-4b:q4_k_m # modelo usado no desquebrar
+desquebrar_mode: llm                 # safe (determinístico) | llm
 desquebrar_temperature: 0.08         # temperatura do desquebrar (baixa para não reescrever)
 desquebrar_repeat_penalty: 1.08      # penalidade de repetição no desquebrar
 desquebrar_chunk_chars: 2600         # chunk do desquebrar (pode ser um pouco maior que tradução)
 desquebrar_num_predict: 1024         # limite de tokens gerados no desquebrar
+desquebrar_num_ctx: null             # contexto máximo para desquebrar (Ollama)
 
 # PDF (pós-refine)
 pdf_enabled: false                   # gera PDF automaticamente após o refine (defina true para habilitar)
@@ -35,7 +43,9 @@ refine_temperature: 0.20
 refine_repeat_penalty: 1.08
 refine_chunk_chars: 2400
 refine_num_predict: 1536
+refine_num_ctx: null
 refine_guardrails: strict             # strict | relaxed | off
+fail_on_chunk_error: false            # true aborta se algum chunk falhar; false mantém placeholders
 
 cleanup_before_refine: auto           # off | auto | on
 

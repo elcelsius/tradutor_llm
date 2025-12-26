@@ -1,55 +1,83 @@
 # Configuração centralizada — Tradução (PDF) + Desquebrar + Refine
 # Recomendado para Light Novel (fantasia/RPG) com robustez de pipeline.
 
+# ============================================================================
+# Ollama (runtime)
+# ============================================================================
+ollama_keep_alive: "30m"             # mantém o modelo carregado (melhora performance em livros longos)
+
+# Contexto por etapa (se estiver None, Ollama usa o padrão do servidor/modelo)
+# Sugestão inicial para seu hardware:
+# - desquebrar: 4096 (prompt curto, objetivo)
+# - tradução:   6144 (equilíbrio entre qualidade e custo)
+# - refine:     6144 (refine grande demais tende a reestruturar parágrafos)
+desquebrar_num_ctx: 4096
+translate_num_ctx: 6144
+refine_num_ctx: 6144
+
+# ============================================================================
 # Modelos de tradução (PDF -> PT)
+# ============================================================================
 translate_backend: ollama            # ollama ou gemini
-translate_model: gemma3:27b-it-q4_K_M # modelo principal de tradução
-translate_temperature: 0.55          # temperatura para tradução
-translate_repeat_penalty: 1.10       # penalidade de repetição (ollama)
-translate_chunk_chars: 2400          # tamanho alvo por chunk (caracteres)
-translate_num_predict: 2048          # limite de tokens gerados por chunk
+translate_model: gemma3:27b-it-q4_K_M
+translate_temperature: 0.55          # se quiser mais fidelidade, teste 0.30
+translate_repeat_penalty: 1.10
+translate_chunk_chars: 2000          # alvo por chunk (caracteres)
+translate_num_predict: 3072          # limite de tokens gerados por chunk
 
+# ============================================================================
 # Desquebrar (normaliza quebras antes de traduzir)
-use_desquebrar: true                 # ativa desquebrar automaticamente para PDF
-desquebrar_backend: ollama           # backend do desquebrar
-desquebrar_model: gemma3:27b-it-q4_K_M # modelo usado no desquebrar
-desquebrar_temperature: 0.08         # temperatura do desquebrar (baixa para não reescrever)
-desquebrar_repeat_penalty: 1.08      # penalidade de repetição no desquebrar
-desquebrar_chunk_chars: 2600         # chunk do desquebrar (pode ser um pouco maior que tradução)
-desquebrar_num_predict: 1024         # limite de tokens gerados no desquebrar
+# ============================================================================
+use_desquebrar: true
+desquebrar_backend: ollama
+desquebrar_model: gemma3:27b-it-q4_K_M
+desquebrar_temperature: 0.08
+desquebrar_repeat_penalty: 1.08
+desquebrar_chunk_chars: 2600
+desquebrar_num_predict: 1024
 
+# ============================================================================
 # PDF (pós-refine)
-pdf_enabled: false                   # gera PDF automaticamente após o refine (defina true para habilitar)
+# ============================================================================
+pdf_enabled: false
 pdf_font:
-  file: C:/Windows/Fonts/Aptos.ttf    # caminho da fonte principal (TTF/OTF)
-  size: 12                            # tamanho base da fonte
-  leading: 15.0                       # espaçamento entre linhas
+  file: C:/Windows/Fonts/Aptos.ttf
+  size: 12
+  leading: 15.0
 pdf_font_fallbacks:
   - C:/Windows/Fonts/Arial.ttf
   - C:/Windows/Fonts/Tahoma.ttf
-pdf_margin: 48                        # margens (pontos) em todas as bordas
-pdf_author: ""                        # autor opcional no PDF
-pdf_language: pt-BR                   # idioma do PDF
+pdf_margin: 48
+pdf_author: ""
+pdf_language: pt-BR
 
+# ============================================================================
 # Refine (pós-tradução)
+# ============================================================================
 refine_backend: ollama
 refine_model: mistral-small3.1:24b-instruct-2503-q4_K_M
 refine_temperature: 0.20
 refine_repeat_penalty: 1.08
-refine_chunk_chars: 2400
-refine_num_predict: 1536
-refine_guardrails: strict             # strict | relaxed | off
+refine_chunk_chars: 3000
+refine_num_predict: 2048
+refine_guardrails: strict            # strict | relaxed | off
 
+# ============================================================================
 # Limpeza determinística antes do refine
+# ============================================================================
 cleanup_before_refine: auto           # off | auto | on
 
+# ============================================================================
 # Robustez de chamadas
-max_retries: 3                        # tentativas para chamadas LLM
-initial_backoff: 1.5                  # backoff inicial (s)
-backoff_factor: 1.8                   # multiplicador de backoff
-request_timeout: 180                  # timeout por chamada (s)
+# ============================================================================
+max_retries: 3
+initial_backoff: 1.5
+backoff_factor: 1.8
+request_timeout: 180                 # timeout por chamada (s)
 
+# ============================================================================
 # Caminhos padrão
+# ============================================================================
 data_dir: data
 output_dir: saida
 font_dir: .cache/fonts

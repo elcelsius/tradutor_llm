@@ -23,7 +23,7 @@ if "fitz" not in sys.modules:
 
 from tradutor.config import AppConfig
 from tradutor.llm_backend import LLMResponse
-from tradutor.sanitizer import META_PATTERNS
+from tradutor.sanitizer import META_PATTERNS_TRANSLATE
 from tradutor.translate import translate_document
 from tradutor.utils import setup_logging
 
@@ -54,7 +54,7 @@ def test_translate_document_smoke() -> None:
     assert result, "A traducao nao pode ser vazia."
     lower_result = result.lower()
     assert "<think>" not in lower_result
-    for meta in META_PATTERNS:
+    for meta in META_PATTERNS_TRANSLATE:
         assert re.search(meta, lower_result) is None, f"Contem meta: {meta}"
     lines = [l for l in result.splitlines() if l.strip()]
     assert len(lines) >= 2, "Deve haver pelo menos dois paragrafos/linhas nao vazias."

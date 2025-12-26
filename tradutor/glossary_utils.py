@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -199,11 +200,13 @@ def format_glossary_for_prompt(combined_index: GlossaryIndex, limit: int = DEFAU
     return "\n".join(lines)
 
 
-def format_manual_pairs_for_translation(manual_terms: list[GlossaryEntry], limit: int = 30) -> str:
+def format_manual_pairs_for_translation(manual_terms: list[GlossaryEntry], limit: int | None = 30) -> str:
     """Formata pares EN->PT do glossário manual para uso no prompt de tradução."""
     if not manual_terms:
         return ""
-    entries = sorted(manual_terms, key=lambda e: normalize_key(str(e.get("key", ""))))[:limit]
+    entries = sorted(manual_terms, key=lambda e: normalize_key(str(e.get("key", ""))))
+    if limit is not None:
+        entries = entries[:limit]
     lines = ["TERMOS CANONICOS (NAO TRADUZIR DIFERENTE DESTO):"]
     for entry in entries:
         en = str(entry.get("key", "")).strip()
@@ -226,6 +229,35 @@ def split_refined_and_suggestions(text: str) -> Tuple[str, str | None]:
     refined = text[:start].strip()
     block = text[start + len(GLOSSARIO_SUGERIDO_INICIO) : end].strip()
     return refined, block
+
+
+def select_terms_for_chunk(
+    manual_terms: list[GlossaryEntry],
+    chunk_text: str,
+    match_limit: int = 80,
+    fallback_limit: int = 30,
+) -> tuple[list[GlossaryEntry], int]:
+    """
+    Seleciona termos cujo `key` aparece no chunk (case-insensitive).
+    Retorna (termos_para_prompt, matched_count).
+    """
+    if not manual_terms:
+        return [], 0
+    chunk_norm = re.sub(r"\s+", " ", chunk_text.lower())
+    matches: list[GlossaryEntry] = []
+    seen: set[str] = set()
+    for term in manual_terms:
+        key_norm = normalize_key(str(term.get("key", "")))
+        if not key_norm or key_norm in seen:
+            continue
+        if key_norm in chunk_norm:
+            matches.append(term)
+            seen.add(key_norm)
+    matches = sorted(matches, key=lambda e: normalize_key(str(e.get("key", ""))))[:match_limit]
+    if matches:
+        return matches, len(matches)
+    fallback = sorted(manual_terms, key=lambda e: normalize_key(str(e.get("key", ""))))[:fallback_limit]
+    return fallback, 0
 
 
 def parse_glossary_suggestions(block: str) -> List[GlossaryEntry]:

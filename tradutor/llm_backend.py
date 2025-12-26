@@ -39,6 +39,8 @@ class LLMBackend:
         gemini_api_key: Optional[str] = None,
         repeat_penalty: float | None = None,
         num_predict: int = 768,
+        num_ctx: int | None = None,
+        keep_alive: str | int | None = "30m",
     ) -> None:
         self.backend = backend
         self.model = model
@@ -49,6 +51,8 @@ class LLMBackend:
         self.gemini_api_key = gemini_api_key
         self.repeat_penalty = repeat_penalty
         self.num_predict = num_predict
+        self.num_ctx = num_ctx
+        self.keep_alive = keep_alive
 
     def generate(self, prompt: str) -> LLMResponse:
         start = time.perf_counter()
@@ -74,6 +78,10 @@ class LLMBackend:
         }
         if self.repeat_penalty is not None:
             payload["options"]["repeat_penalty"] = self.repeat_penalty
+        if self.num_ctx is not None:
+            payload["options"]["num_ctx"] = self.num_ctx
+        if self.keep_alive is not None:
+            payload["keep_alive"] = self.keep_alive
         try:
             resp = requests.post(url, json=payload, timeout=self.request_timeout)
             resp.raise_for_status()
