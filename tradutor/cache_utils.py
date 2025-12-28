@@ -83,59 +83,77 @@ def is_near_duplicate(a: str, b: str, threshold: float = 0.95) -> bool:
     return ratio >= threshold
 
 
-def detect_model_collapse(text: str, original_len: int | None = None, mode: str = "translate") -> bool:
-    """Heurística simples para detectar saída corrompida/colapsada."""
-    if mode == "translate":
-        # Tradução naturalmente expande/contrai; detector de colapso não se aplica.
-        return False
-    if not text:
-        return True
+def detect_model_collapse(
+    text: str,
+    original_len: int | None = None,
+    mode: str = "translate",
+    return_reasons: bool = False,
+) -> bool | tuple[bool, list[str], dict]:
+    """
+    Heurística simples para detectar saída corrompida/colapsada.
+    Quando return_reasons=True, retorna (flag, reasons, details).
+    """
+    reasons: list[str] = []
+    details: dict[str, int | float] = {}
 
-    # Repetição de linhas
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    counts = {}
+    if mode == "translate":
+        return (False, reasons, details) if return_reasons else False
+    if not text:
+        reasons.append("empty")
+        flag = True
+        return (flag, reasons, details) if return_reasons else flag
+
+    # Repetição de linhas (considera apenas linhas mais longas)
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip() and len(ln.strip()) >= 20]
+    details["line_candidates"] = len(lines)
+    counts: dict[str, int] = {}
     for ln in lines:
         counts[ln] = counts.get(ln, 0) + 1
-    if any(c >= 3 for c in counts.values()):
-        return True
+    if counts:
+        details["max_line_repeats"] = max(counts.values())
+        if any(c >= 3 for c in counts.values()):
+            reasons.append("repeated_lines")
 
-    # Loop de tokens simples (palavra repetida muitas vezes)
-    words = re.findall(r"\w+", text.lower())
-    wc = {}
-    for w in words:
-        wc[w] = wc.get(w, 0) + 1
-    if words and max(wc.values()) >= 10:
-        return True
+    # Loop de tokens consecutivos (palavra com 3+ letras repetida 8+ vezes)
+    token_run = re.search(r"\b(\w{3,})(?:\s+\1){7,}\b", text, flags=re.IGNORECASE)
+    if token_run:
+        repeated_seq = token_run.group(0)
+        details["max_token_run"] = len(re.findall(r"\b\w+\b", repeated_seq))
+        reasons.append("repeated_token_run")
 
-    # CJK ou francês/espanhol em excesso
+    # CJK em excesso
     cjk = len(re.findall(r"[\u4e00-\u9fff]", text))
+    total_chars = len(text)
+    details["cjk_chars"] = cjk
+    details["cjk_ratio"] = cjk / max(total_chars, 1)
     if cjk > 10:
-        return True
-    accent = len(re.findall(r"[éèêçôàùáíóúñ]", text.lower()))
-    french_words = len(re.findall(r"\b(?:bonjour|mon ami|ma ch[eè]re|oui|non)\b", text.lower()))
-    if accent > 30 or french_words >= 2:
-        return True
+        reasons.append("excess_cjk")
 
     # Símbolos indevidos
-    if ("$$$$" in text) or ("<think>" in text) or ("<analysis>" in text):
-        return True
+    symbol_count = sum(1 for ch in text if not ch.isalnum() and not ch.isspace())
+    details["symbol_ratio"] = symbol_count / max(total_chars, 1)
+    if ("$$$$" in text) or ("<think>" in text) or ("<analysis>" in text) or details["symbol_ratio"] > 0.35:
+        reasons.append("bad_symbols")
     if "###" in text and "TEXTO_TRADUZIDO" not in text and "TEXTO_REFINADO" not in text:
-        return True
+        reasons.append("bad_symbols")
 
     # Tamanho relativo
     if original_len:
         ratio = len(text) / max(original_len, 1)
+        details["ratio_out_in"] = ratio
         if mode == "translate":
             if ratio < 0.7 or ratio > 2.0:
-                return True
+                reasons.append("bad_ratio")
         elif mode == "refine":
             if ratio < 0.5 or ratio > 3.0:
-                return True
+                reasons.append("bad_ratio")
         else:
             if ratio < 0.5 or ratio > 3.0:
-                return True
+                reasons.append("bad_ratio")
 
-    return False
+    strong = {"empty", "repeated_token_run", "bad_ratio", "bad_symbols", "excess_cjk", "repeated_lines"}
+    flag = any(r in strong for r in reasons)
+    return (flag, reasons, details) if return_reasons else flag
 
 
 def clear_cache(mode: str = "all") -> None:

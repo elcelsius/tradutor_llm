@@ -48,7 +48,7 @@ from .advanced_preprocess import clean_text as advanced_clean
 from .anti_hallucination import anti_hallucination_filter
 from .cleanup import cleanup_before_refine, detect_obvious_dupes, detect_glued_dialogues
 from .quote_fix import fix_unbalanced_quotes, count_curly_quotes, fix_blank_lines_inside_quotes
-from .text_postprocess import fix_dialogue_artifacts
+from .text_postprocess import apply_structural_normalizers, fix_dialogue_artifacts
 
 
 def _cache_signature_from(cfg: AppConfig, backend: LLMBackend) -> dict:
@@ -113,6 +113,37 @@ def _next_block_index() -> int:
     return _GLOBAL_BLOCK_INDEX
 
 
+def _write_guardrail_debug_file(
+    base_dir: Path,
+    section_index: int,
+    chunk_index: int,
+    block_index: int,
+    reasons: list[str],
+    guardrails_mode: str,
+    collapse_flag: bool,
+    collapse_details: dict | None = None,
+) -> None:
+    if not reasons and not collapse_flag:
+        return
+    debug_dir = Path(base_dir) / "debug_refine_guardrails"
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "section_index": section_index,
+        "chunk_index": chunk_index,
+        "block_index": block_index,
+        "guardrails_mode": guardrails_mode,
+        "collapse_detected": collapse_flag,
+        "reasons": reasons or [],
+        "collapse_details": collapse_details or {},
+        "timestamp": datetime.now().isoformat(),
+    }
+    path = debug_dir / f"refine_chunk{chunk_index:03d}_block{block_index:04d}_guardrails.json"
+    try:
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        return
+
+
 def has_suspicious_repetition(text: str, min_repeats: int = 3) -> bool:
     """
     Sinais fortes de repetição/loop.
@@ -170,8 +201,8 @@ def sanitize_refine_chunk_output(
     Sanitiza saída do refine sem reflow.
     - remove aspas triplas no fim de linha
     - colapsa linhas vazias dentro de diálogos
-    - descola falas consecutivas (” “ -> ”\\n\\n“)
-    - evita quebra entre fala e tag de fala ("”, perguntou")
+    - descola falas consecutivas (" " -> "\\n\\n")
+    - evita quebra entre fala e tag de fala ("", perguntou")
     """
     stats = {"blank_lines_fixed": 0, "dialogue_splits": 0}
     cleaned = re.sub(r'"""+\s*$', "", text, flags=re.MULTILINE)
@@ -187,13 +218,22 @@ def sanitize_refine_chunk_output(
     )
 
     artifacts = '"""' in cleaned
-    opens_q, closes_q = count_curly_quotes(cleaned)
+    opens_curly, closes_curly = count_curly_quotes(cleaned)
+    opens_q = opens_curly + cleaned.count('"')
+    closes_q = closes_curly + cleaned.count('"')
     regression_dialogue = ("”\n\n“" in original) and ("” “" in cleaned)
-    ok = (opens_q == closes_q) and not artifacts and not regression_dialogue
+    quotes_balanced = opens_q == closes_q
+    soft_retry = False
+    ok = True
+    if artifacts or regression_dialogue:
+        ok = False
+    elif not quotes_balanced:
+        soft_retry = True
     return cleaned, ok, {
         "artifacts": artifacts,
-        "quotes_balanced": opens_q == closes_q,
+        "quotes_balanced": quotes_balanced,
         "regression_dialogue": regression_dialogue,
+        "soft_retry": soft_retry,
         **stats,
     }
 
@@ -417,8 +457,24 @@ def refine_section(
         guard_mode = getattr(cfg, "refine_guardrails", "strict")
         h = chunk_hash(chunk)
         block_metrics = metrics.setdefault("block_metrics", [])
+        fallback_reasons: list[str] = []
 
-        def record_block(final_text: str, *, used_fallback: bool = False, from_cache: bool = False, from_duplicate: bool = False, collapse: bool = False) -> None:
+        def _apply_normalizers(text: str) -> tuple[str, dict]:
+            normalized, norm_stats = apply_structural_normalizers(text)
+            metrics["dialogue_splits"] = metrics.get("dialogue_splits", 0) + norm_stats.get("dialogue_splits", 0)
+            metrics["triple_quotes_removed"] = metrics.get("triple_quotes_removed", 0) + norm_stats.get("triple_quotes_removed", 0)
+            return normalized, norm_stats
+
+        def record_block(
+            final_text: str,
+            *,
+            used_fallback: bool = False,
+            from_cache: bool = False,
+            from_duplicate: bool = False,
+            collapse: bool = False,
+            normalizer_stats: dict | None = None,
+            guardrail_reasons: list[str] | None = None,
+        ) -> None:
             ratio = (len(final_text.strip()) / max(len(chunk.strip()), 1)) if chunk.strip() else 0.0
             block_metrics.append(
                 {
@@ -432,32 +488,37 @@ def refine_section(
                     "from_cache": from_cache,
                     "from_duplicate": from_duplicate,
                     "collapse_detected": collapse,
+                    "dialogue_splits": (normalizer_stats or {}).get("dialogue_splits", 0),
+                    "triple_quotes_removed": (normalizer_stats or {}).get("triple_quotes_removed", 0),
+                    "guardrail_reasons": guardrail_reasons or [],
                 }
             )
         llm_raw: str | None = None
         for prev_chunk, prev_final in seen_chunks:
             if is_near_duplicate(prev_chunk, chunk):
                 logger.info("Chunk ref-%d/%d-%d/%d marcado como duplicado; reuso habilitado.", index, total, c_idx, len(chunks))
-                refined_parts.append(prev_final)
+                normalized_dup, norm_stats = _apply_normalizers(prev_final)
+                refined_parts.append(normalized_dup)
                 metrics["duplicates"] = metrics.get("duplicates", 0) + 1
                 if stats:
                     stats.success_blocks += 1
                 if progress:
                     progress.refined_blocks.add(block_idx)
                     progress.error_blocks.discard(block_idx)
-                    progress.chunk_outputs[block_idx] = prev_final
+                    progress.chunk_outputs[block_idx] = normalized_dup
                 _write_progress(progress, logger)
-                record_block(prev_final, from_duplicate=True)
+                record_block(normalized_dup, from_duplicate=True, normalizer_stats=norm_stats)
                 if debug_writer:
                     debug_writer(
                         {
                             "para_index": block_idx,
                             "original_text": chunk,
                             "original_chars": len(chunk),
-                            "refined_text": prev_final,
-                            "refined_chars": len(prev_final),
+                            "refined_text": normalized_dup,
+                            "refined_chars": len(normalized_dup),
                             "llm_raw_output": None,
                             "sanitizer_report": None,
+                            "normalizer_stats": norm_stats,
                         }
                     )
                 continue
@@ -469,38 +530,42 @@ def refine_section(
                 cached = data.get("final_output")
                 if cached:
                     logger.info("Reusando cache de refine para bloco ref-%d/%d-%d/%d", index, total, c_idx, len(chunks))
-                    refined_parts.append(cached)
+                    normalized_cached, norm_stats = _apply_normalizers(cached)
+                    refined_parts.append(normalized_cached)
                     metrics["cache_hits"] = metrics.get("cache_hits", 0) + 1
                     if stats:
                         stats.success_blocks += 1
                     if progress:
                         progress.refined_blocks.add(block_idx)
                         progress.error_blocks.discard(block_idx)
-                        progress.chunk_outputs[block_idx] = cached
+                        progress.chunk_outputs[block_idx] = normalized_cached
                     _write_progress(progress, logger)
-                    record_block(cached, from_cache=True)
+                    record_block(normalized_cached, from_cache=True, normalizer_stats=norm_stats)
                     if debug_writer:
                         debug_writer(
                             {
                                 "para_index": block_idx,
                                 "original_text": chunk,
                                 "original_chars": len(chunk),
-                                "refined_text": cached,
-                                "refined_chars": len(cached),
+                                "refined_text": normalized_cached,
+                                "refined_chars": len(normalized_cached),
                                 "llm_raw_output": None,
                                 "sanitizer_report": None,
+                                "normalizer_stats": norm_stats,
                             }
                         )
                     continue
         if progress and block_idx in progress.refined_blocks and block_idx in progress.chunk_outputs:
             logger.info("Reusando refinamento salvo para bloco ref-%d/%d-%d/%d", index, total, c_idx, len(chunks))
-            refined_parts.append(progress.chunk_outputs[block_idx])
+            normalized_cached, norm_stats = _apply_normalizers(progress.chunk_outputs[block_idx])
+            refined_parts.append(normalized_cached)
             if stats:
                 stats.success_blocks += 1
             _write_progress(progress, logger)
-            record_block(progress.chunk_outputs[block_idx])
+            progress.chunk_outputs[block_idx] = normalized_cached
+            record_block(normalized_cached, normalizer_stats=norm_stats)
             if debug_writer:
-                reused = progress.chunk_outputs[block_idx]
+                reused = normalized_cached
                 debug_writer(
                     {
                         "para_index": block_idx,
@@ -510,6 +575,7 @@ def refine_section(
                         "refined_chars": len(reused),
                         "llm_raw_output": None,
                         "sanitizer_report": None,
+                        "normalizer_stats": norm_stats,
                     }
                 )
             continue
@@ -549,14 +615,22 @@ def refine_section(
                             )
 
                 collapse_flag = False
+                collapse_reasons = None
+                collapse_details = None
+                fallback_reasons = []
                 used_fallback = False
                 if guard_mode == "off":
                     refined_text = refined_candidate
                     if not refined_text.strip() or has_meta_noise(refined_text) or has_meta_noise(llm_raw or ""):
                         used_fallback = True
-                    elif detect_model_collapse(refined_text, original_len=len(chunk), mode="refine"):
-                        collapse_flag = True
-                        used_fallback = True
+                        fallback_reasons.append("empty_or_meta_guardrail")
+                    else:
+                        collapse_flag, collapse_reasons, collapse_details = detect_model_collapse(
+                            refined_text, original_len=len(chunk), mode="refine", return_reasons=True
+                        )
+                        if collapse_flag:
+                            used_fallback = True
+                            fallback_reasons.append("collapse_detector")
                 elif guard_mode == "relaxed":
                     filtered_text = anti_hallucination_filter(orig=chunk, llm_raw=llm_raw, cleaned=refined_candidate, mode="refine")
                     if filtered_text == chunk and refined_candidate.strip() and refined_candidate.strip() != chunk.strip():
@@ -566,27 +640,41 @@ def refine_section(
                     severe_issue = False
                     if not refined_text.strip():
                         severe_issue = True
+                        fallback_reasons.append("empty_after_guardrail")
                     elif has_meta_noise(refined_text) or has_meta_noise(llm_raw or ""):
                         severe_issue = True
-                    elif detect_model_collapse(refined_text, original_len=len(chunk), mode="refine"):
-                        collapse_flag = True
-                        severe_issue = True
+                        fallback_reasons.append("meta_noise")
+                    else:
+                        collapse_flag, collapse_reasons, collapse_details = detect_model_collapse(
+                            refined_text, original_len=len(chunk), mode="refine", return_reasons=True
+                        )
+                        if collapse_flag:
+                            severe_issue = True
+                            fallback_reasons.append("collapse_detector")
                     if severe_issue:
                         used_fallback = True
                 else:  # strict
                     refined_text = anti_hallucination_filter(orig=chunk, llm_raw=llm_raw, cleaned=refined_candidate, mode="refine")
                     if not refined_text.strip():
                         used_fallback = True
-                    elif detect_model_collapse(refined_text, original_len=len(chunk), mode="refine"):
-                        collapse_flag = True
-                        used_fallback = True
+                        fallback_reasons.append("empty_after_guardrail")
+                    else:
+                        collapse_flag, collapse_reasons, collapse_details = detect_model_collapse(
+                            refined_text, original_len=len(chunk), mode="refine", return_reasons=True
+                        )
+                        if collapse_flag:
+                            used_fallback = True
+                            fallback_reasons.append("collapse_detector")
 
+                fmt_soft_retry = False
                 if not used_fallback:
                     sanitized_refined, ok_fmt, fmt_info = sanitize_refine_chunk_output(
                         refined_text, chunk, logger=logger, label=f"ref-{index}-{c_idx}"
                     )
-                    if not ok_fmt:
+                    fmt_soft_retry = fmt_info.get("soft_retry", False)
+                    if not ok_fmt and not fmt_soft_retry:
                         used_fallback = True
+                        fallback_reasons.append(f"format_validation:{fmt_info}")
                         if debug_refine:
                             fail_dir = cfg.output_dir / "debug_refine_failed"
                             fail_dir.mkdir(parents=True, exist_ok=True)
@@ -605,6 +693,16 @@ def refine_section(
                         refined_text = sanitized_refined
 
                 retry, retry_reason = needs_retry(chunk, refined_text)
+                if fmt_soft_retry:
+                    retry = True
+                    retry_reason = retry_reason or "soft_quote_balance"
+                    logger.warning(
+                        "Refine chunk %d/%d-%d/%d com aspas desbalanceadas; retry suave.",
+                        index,
+                        total,
+                        c_idx,
+                        len(chunks),
+                    )
                 attempt += 1
                 if retry and attempt < cfg.max_retries:
                     logger.warning(
@@ -651,6 +749,21 @@ def refine_section(
                         len(chunks),
                         title or f"#{index}",
                     )
+            refined_text, norm_stats = _apply_normalizers(refined_text)
+            if used_fallback or collapse_flag:
+                reasons_payload = fallback_reasons
+                if collapse_reasons:
+                    reasons_payload = reasons_payload + [f"collapse:{r}" for r in collapse_reasons]
+                _write_guardrail_debug_file(
+                    cfg.output_dir,
+                    section_index=index,
+                    chunk_index=c_idx,
+                    block_index=block_idx,
+                    reasons=reasons_payload,
+                    guardrails_mode=guard_mode,
+                    collapse_flag=collapse_flag,
+                    collapse_details=collapse_details,
+                )
             # Debug opcional: salva até os 5 primeiros chunks
             if debug_refine and block_idx <= 5:
                 debug_dir = cfg.output_dir / "debug_refine"
@@ -672,7 +785,13 @@ def refine_section(
                 progress.error_blocks.discard(block_idx)
                 progress.chunk_outputs[block_idx] = refined_text
             seen_chunks.append((chunk, refined_text))
-            record_block(refined_text, used_fallback=used_fallback, collapse=collapse_flag)
+            record_block(
+                refined_text,
+                used_fallback=used_fallback,
+                collapse=collapse_flag,
+                normalizer_stats=norm_stats,
+                guardrail_reasons=fallback_reasons if (used_fallback or collapse_flag) else None,
+            )
             save_cache(
                 "refine",
                 h,
@@ -700,6 +819,7 @@ def refine_section(
                         "refined_chars": len(refined_text),
                         "llm_raw_output": llm_raw,
                         "sanitizer_report": None,
+                        "normalizer_stats": norm_stats,
                     }
                 )
         except RuntimeError as exc:
@@ -711,24 +831,35 @@ def refine_section(
                 len(chunks),
                 exc,
             )
-            refined_parts.append(chunk)
+            fallback_text, norm_stats = _apply_normalizers(chunk)
+            refined_parts.append(fallback_text)
             if stats:
                 stats.error_blocks += 1
             if progress:
                 progress.error_blocks.add(block_idx)
-                progress.chunk_outputs[block_idx] = chunk
+                progress.chunk_outputs[block_idx] = fallback_text
             metrics["fallbacks"] = metrics.get("fallbacks", 0) + 1
-            record_block(chunk, used_fallback=True)
+            _write_guardrail_debug_file(
+                cfg.output_dir,
+                section_index=index,
+                chunk_index=c_idx,
+                block_index=block_idx,
+                reasons=["exception"],
+                guardrails_mode=guard_mode,
+                collapse_flag=False,
+            )
+            record_block(fallback_text, used_fallback=True, normalizer_stats=norm_stats, guardrail_reasons=["exception"])
             if debug_writer:
                 debug_writer(
                     {
                         "para_index": block_idx,
                         "original_text": chunk,
                         "original_chars": len(chunk),
-                        "refined_text": chunk,
-                        "refined_chars": len(chunk),
+                        "refined_text": fallback_text,
+                        "refined_chars": len(fallback_text),
                         "llm_raw_output": llm_raw,
                         "sanitizer_report": None,
+                        "normalizer_stats": norm_stats,
                     }
                 )
         finally:
@@ -796,6 +927,8 @@ def refine_markdown_file(
         "fallbacks": 0,
         "collapse": 0,
         "duplicates": 0,
+        "dialogue_splits": 0,
+        "triple_quotes_removed": 0,
         "block_metrics": [],
     }
     metrics["cleanup_mode"] = cleanup_mode
@@ -880,6 +1013,7 @@ def refine_markdown_file(
 
     final_md = sanitize_refine_output(final_md)
     final_md, dialogue_stats = fix_dialogue_artifacts(final_md)
+    final_md, _ = apply_structural_normalizers(final_md)
     if logger.isEnabledFor(logging.DEBUG):
         logger.debug("Pós-processo de diálogo (refine-final): %s", dialogue_stats)
     opens_q, closes_q = count_curly_quotes(final_md)
@@ -906,6 +1040,8 @@ def refine_markdown_file(
         "refine_guardrails": getattr(cfg, "refine_guardrails", "strict"),
         "effective_refine_chunk_chars": cfg.refine_chunk_chars,
         "max_chunk_chars_observed": metrics.get("max_chunk_chars_observed", 0),
+        "dialogue_splits": metrics.get("dialogue_splits", 0),
+        "triple_quotes_removed": metrics.get("triple_quotes_removed", 0),
     }
     try:
         slug_report = Path(input_path).stem
@@ -926,6 +1062,8 @@ def refine_markdown_file(
             "cleanup_preview_hash_after": metrics.get("cleanup_preview_hash_after"),
             "effective_refine_chunk_chars": cfg.refine_chunk_chars,
             "max_chunk_chars_observed": metrics.get("max_chunk_chars_observed", 0),
+            "dialogue_splits": metrics.get("dialogue_splits", 0),
+            "triple_quotes_removed": metrics.get("triple_quotes_removed", 0),
         }
         slug = Path(input_path).stem
         metrics_path = output_path.parent / f"{slug}_refine_metrics.json"

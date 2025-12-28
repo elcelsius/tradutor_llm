@@ -14,6 +14,7 @@ from .cache_utils import cache_exists, chunk_hash, load_cache, save_cache, set_c
 from .llm_backend import LLMBackend
 from .preprocess import paragraphs_from_text
 from .utils import chunk_by_paragraphs, timed
+from .text_postprocess import normalize_dialogue_breaks
 
 
 DESQUEBRAR_PROMPT = """
@@ -31,6 +32,7 @@ class DesquebrarStats:
     total_chunks: int = 0
     cache_hits: int = 0
     fallbacks: int = 0
+    dialogue_splits: int = 0
     blocks: list[dict] | None = None
 
 
@@ -153,6 +155,8 @@ def desquebrar_text(
             )
 
     combined = "\n\n".join(outputs).strip()
+    combined, norm_stats = normalize_dialogue_breaks(combined)
+    stats.dialogue_splits = norm_stats.get("dialogue_splits", 0)
     return combined, stats
 
 
@@ -163,6 +167,7 @@ def desquebrar_stats_to_dict(stats: DesquebrarStats | None, cfg: AppConfig) -> d
         "total_chunks": stats.total_chunks,
         "cache_hits": stats.cache_hits,
         "fallbacks": stats.fallbacks,
+        "dialogue_splits": stats.dialogue_splits,
         "blocks": stats.blocks or [],
         "effective_desquebrar_chunk_chars": cfg.desquebrar_chunk_chars,
         "backend": getattr(cfg, "desquebrar_backend", None),

@@ -39,6 +39,7 @@ from .anti_hallucination import anti_hallucination_filter
 from .qa import needs_retry, count_quotes, count_quote_lines
 from .postprocess_translation import postprocess_translation
 from .quote_fix import fix_unbalanced_quotes, count_curly_quotes
+from .text_postprocess import apply_structural_normalizers
 
 
 def _extract_last_sentence(text: str) -> str:
@@ -316,6 +317,7 @@ def translate_document(
     error_count = 0
     orig_chars_total = 0
     sanitized_chars_total = 0
+    normalization_totals = {"dialogue_splits": 0, "triple_quotes_removed": 0}
     paragraph_mismatch: dict[str, int] | None = None
     chunk_metrics: list[dict] = []
 
@@ -439,6 +441,9 @@ def translate_document(
         sanitizer_report = None
         error_message: str | None = None
         parsed_clean: str | None = None
+        normalizer_stats = {"dialogue_splits": 0, "triple_quotes_removed": 0}
+        cache_payload: dict | None = None
+        cache_raw_output: str | None = None
 
         if cache_exists("translate", h):
             data = load_cache("translate", h)
@@ -675,31 +680,19 @@ def translate_document(
                         chunk_outputs[idx] = parsed_clean
                         processed_indices.add(idx)
                         seen_chunks.append((chunk, parsed_clean))
-                        save_cache(
-                            "translate",
-                            h,
-                            raw_output=raw_text,
-                            final_output=parsed_clean,
-                            metadata={
-                                "chunk_index": idx,
-                                "mode": "translate",
-                                "source": source_slug or "",
-                                "backend": getattr(backend, "backend", None),
-                                "model": getattr(backend, "model", None),
-                                "num_predict": getattr(backend, "num_predict", None),
-                                "temperature": getattr(backend, "temperature", None),
-                                "repeat_penalty": getattr(backend, "repeat_penalty", None),
-                                "translate_chunk_chars": cfg.translate_chunk_chars,
-                                "glossary_hash": glossary_hash,
-                            },
-                        )
-                        if debug_translation and idx <= 5:
-                            debug_dir.mkdir(parents=True, exist_ok=True)
-                            base = f"chunk{idx:03d}"
-                            (debug_dir / f"{base}_original_en.txt").write_text(chunk, encoding="utf-8")
-                            (debug_dir / f"{base}_context.txt").write_text(previous_context or "", encoding="utf-8")
-                            (debug_dir / f"{base}_llm_raw.txt").write_text(raw_text, encoding="utf-8")
-                            (debug_dir / f"{base}_final_pt.txt").write_text(parsed_clean, encoding="utf-8")
+                        cache_raw_output = raw_text
+                        cache_payload = {
+                            "chunk_index": idx,
+                            "mode": "translate",
+                            "source": source_slug or "",
+                            "backend": getattr(backend, "backend", None),
+                            "model": getattr(backend, "model", None),
+                            "num_predict": getattr(backend, "num_predict", None),
+                            "temperature": getattr(backend, "temperature", None),
+                            "repeat_penalty": getattr(backend, "repeat_penalty", None),
+                            "translate_chunk_chars": cfg.translate_chunk_chars,
+                            "glossary_hash": glossary_hash,
+                        }
                     except Exception as exc:
                         # debug de falha
                         fail_dir = Path(cfg.output_dir) / "debug_translate_chunks" / "failed"
@@ -729,7 +722,28 @@ def translate_document(
                         previous_context = _extract_last_sentence(chunk)
                         _write_progress()
 
-        final_output = parsed_clean if parsed_clean is not None else ""
+        final_output = parsed_clean if parsed_clean is not None else chunk_outputs.get(idx, "")
+        final_output, normalizer_stats = apply_structural_normalizers(final_output)
+        normalization_totals["dialogue_splits"] += normalizer_stats.get("dialogue_splits", 0)
+        normalization_totals["triple_quotes_removed"] += normalizer_stats.get("triple_quotes_removed", 0)
+        chunk_outputs[idx] = final_output
+        _write_progress()
+        if debug_translation and idx <= 5:
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            base = f"chunk{idx:03d}"
+            (debug_dir / f"{base}_original_en.txt").write_text(chunk, encoding="utf-8")
+            (debug_dir / f"{base}_context.txt").write_text(previous_context or "", encoding="utf-8")
+            if raw_text:
+                (debug_dir / f"{base}_llm_raw.txt").write_text(raw_text, encoding="utf-8")
+            (debug_dir / f"{base}_final_pt.txt").write_text(final_output, encoding="utf-8")
+        if cache_payload is not None:
+            save_cache(
+                "translate",
+                h,
+                raw_output=cache_raw_output,
+                final_output=final_output,
+                metadata=cache_payload,
+            )
         orig_len_for_stats = len(chunk)
         orig_chars_total += orig_len_for_stats
         sanitized_chars_total += len(final_output)
@@ -767,6 +781,8 @@ def translate_document(
                 "too_long": too_long,
                 "suspicious_repetition": suspicious,
                 "possible_omission": possible_omission,
+                "dialogue_splits": normalizer_stats.get("dialogue_splits", 0),
+                "triple_quotes_removed": normalizer_stats.get("triple_quotes_removed", 0),
             }
         )
 
@@ -794,6 +810,7 @@ def translate_document(
                 "sanitized_chars": len(final_output),
                 "sanitized_hash": hashlib.sha256(final_output.encode("utf-8")).hexdigest(),
                 "sanitizer_report": report_dict,
+                "normalizer_stats": normalizer_stats,
                 "error": error_message,
             }
             _write_chunk_debug(entry)
@@ -877,6 +894,8 @@ def translate_document(
         "pipeline_version": version,
         "effective_translate_chunk_chars": cfg.translate_chunk_chars,
         "max_chunk_chars_observed": max_chunk_len,
+        "dialogue_splits": normalization_totals.get("dialogue_splits", 0),
+        "triple_quotes_removed": normalization_totals.get("triple_quotes_removed", 0),
     }
     if paragraph_mismatch:
         report["paragraph_mismatch"] = paragraph_mismatch
@@ -895,6 +914,8 @@ def translate_document(
             "chunks": chunk_metrics,
             "effective_translate_chunk_chars": cfg.translate_chunk_chars,
             "max_chunk_chars_observed": max_chunk_len,
+            "dialogue_splits": normalization_totals.get("dialogue_splits", 0),
+            "triple_quotes_removed": normalization_totals.get("triple_quotes_removed", 0),
         }
         metrics_path = Path(cfg.output_dir) / f"{slug}_translate_metrics.json"
         metrics_path.write_text(json.dumps(metrics_payload, ensure_ascii=False, indent=2), encoding="utf-8")

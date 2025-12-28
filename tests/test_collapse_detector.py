@@ -1,0 +1,32 @@
+from tradutor.cache_utils import detect_model_collapse
+
+
+def test_stopwords_do_not_trigger_collapse():
+    text = "Eu acho que isso é de de de de de de de de de de de de alguma forma correto e de novo."
+    assert detect_model_collapse(text, mode="refine") is False
+
+
+def test_repeated_token_run_triggers_collapse():
+    text = "sim sim sim sim sim sim sim sim"
+    assert detect_model_collapse(text, mode="refine") is True
+
+
+def test_repeated_lines_triggers_collapse():
+    text = "Linha longa repetida aqui\nLinha longa repetida aqui\nLinha longa repetida aqui\ncontinua"
+    assert detect_model_collapse(text, mode="refine") is True
+
+
+def test_short_repeated_lines_do_not_trigger():
+    text = "curta\ncurta\ncurta\nseguindo"
+    assert detect_model_collapse(text, mode="refine") is False
+
+
+def test_accent_heavy_pt_does_not_collapse():
+    phrase = "Ação e emoção são parte da sua decisão, coração difícil e útil para você."
+    text = " ".join([phrase] * 10)  # muitas ocorrências com acento
+    assert detect_model_collapse(text, mode="refine") is False
+
+
+def test_bad_ratio_triggers_collapse_refine():
+    text = "curto demais"
+    assert detect_model_collapse(text, original_len=200, mode="refine") is True
