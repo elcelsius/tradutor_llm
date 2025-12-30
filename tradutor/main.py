@@ -21,7 +21,7 @@ from .preprocess import preprocess_text, strip_front_matter
 from .refine import refine_markdown_file
 from .postprocess import final_pt_postprocess
 from .translate import translate_document
-from .desquebrar import desquebrar_text, desquebrar_stats_to_dict
+from .desquebrar import desquebrar_text, desquebrar_stats_to_dict, normalize_md_paragraphs
 from .desquebrar_safe import desquebrar_safe
 from .utils import setup_logging, write_text, read_text
 from .structure_normalizer import normalize_structure
@@ -195,6 +195,94 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=cfg.pdf_enabled,
         help="Gera PDF automaticamente após o refine (padrão: config).",
+    )
+
+    # Subcomando: traduzir Markdown/texto já desquebrado
+    tm = sub.add_parser(
+        "traduz-md",
+        parents=[common],
+        help="Traduz um arquivo .md/.txt j  desquebrado (pula extra‡Æo de PDF).",
+    )
+    tm.add_argument("--input", type=str, required=True, help="Arquivo .md ou .txt j  desquebrado para traduzir.")
+    tm.add_argument("--backend", type=str, choices=["ollama", "gemini"], default=cfg.translate_backend)
+    tm.add_argument("--model", type=str, default=cfg.translate_model)
+    tm.add_argument(
+        "--num-predict",
+        type=int,
+        default=cfg.translate_num_predict,
+        help="Limite de tokens gerados por chunk (Ollama).",
+    )
+    tm.add_argument("--no-refine", action="store_true", help="Nao executar refine apos traduzir.")
+    tm.add_argument(
+        "--resume",
+        action="store_true",
+        help="Retoma tradu‡Æo usando manifesto de progresso existente (se houver).",
+    )
+    tm.add_argument(
+        "--use-glossary",
+        action="store_true",
+        help="Ativa uso do glossario manual durante a traducao (EN->PT).",
+    )
+    tm.add_argument(
+        "--manual-glossary",
+        type=str,
+        help="Arquivo JSON de glossario manual para a traducao (padrao: glossario/glossario_manual.json).",
+    )
+    tm.add_argument(
+        "--parallel",
+        type=int,
+        default=1,
+        help="Numero de workers paralelos (traducao). Contexto mantem ordem; valores >1 sao ajustados se necessario.",
+    )
+    tm.add_argument(
+        "--preprocess-advanced",
+        action="store_true",
+        help="Ativa limpeza extra antes de traduzir o markdown/texto.",
+    )
+    tm.add_argument(
+        "--normalize-paragraphs",
+        action="store_true",
+        help="Normaliza paragrafos do Markdown antes de traduzir.",
+    )
+    tm.add_argument(
+        "--clear-cache",
+        choices=["all", "translate", "refine", "desquebrar"],
+        help="Limpa caches antes de traduzir (respeita output_dir da config).",
+    )
+    tm.add_argument(
+        "--split-by-sections",
+        dest="split_by_sections",
+        action=argparse.BooleanOptionalAction,
+        default=cfg.split_by_sections,
+        help="Divide o texto em secoes (Prologue/Chapter/Epilogue) e traduz por secao (padrao: config).",
+    )
+    tm.add_argument(
+        "--translate-allow-adaptation",
+        action=argparse.BooleanOptionalAction,
+        default=cfg.translate_allow_adaptation,
+        help="Permite exemplos de adaptacao de piadas/trocadilhos no prompt de traducao (padrao: config).",
+    )
+    tm.add_argument(
+        "--cleanup-before-refine",
+        choices=["off", "auto", "on"],
+        default=None,
+        help="Controle de limpeza deterministica antes do refine: off, auto, on.",
+    )
+    tm.add_argument(
+        "--debug-chunks",
+        action="store_true",
+        help="Ativa debug detalhado por chunk (JSONL) na traducao.",
+    )
+    tm.add_argument(
+        "--fail-on-chunk-error",
+        action="store_true",
+        help="Abortar tradu‡Æo se qualquer chunk falhar (default: continua com placeholders).",
+    )
+    tm.add_argument(
+        "--pdf-enabled",
+        action=argparse.BooleanOptionalAction,
+        default=cfg.pdf_enabled,
+        help="Gera PDF automaticamente ap¢s o refine (padrÆo: config).",
     )
 
     # Subcomando: refinar
@@ -563,6 +651,173 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                     logger.error("Falha ao gerar PDF automaticamente: %s", exc)
 
 
+def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
+    """Traduz um arquivo .md/.txt j  desquebrado diretamente, com refine opcional."""
+    ensure_paths(cfg)
+    set_cache_base_dir(cfg.output_dir)
+    if getattr(args, "clear_cache", None):
+        clear_cache(args.clear_cache)
+        logger.info("Cache %s limpo em %s", args.clear_cache, cfg.output_dir)
+
+    text_path = Path(args.input)
+    if not text_path.exists():
+        raise SystemExit(f"Arquivo nÆo encontrado: {text_path}")
+
+    raw_text = read_text(text_path)
+    if not raw_text.strip():
+        raise SystemExit(f"Arquivo {text_path} vazio.")
+
+    if getattr(args, "preprocess_advanced", False):
+        raw_text = advanced_clean(raw_text)
+    if getattr(args, "normalize_paragraphs", False):
+        raw_text = normalize_md_paragraphs(raw_text)
+
+    backend = LLMBackend(
+        backend=args.backend,
+        model=args.model,
+        temperature=cfg.translate_temperature,
+        logger=logger,
+        request_timeout=args.request_timeout,
+        repeat_penalty=cfg.translate_repeat_penalty,
+        num_predict=args.num_predict,
+        num_ctx=cfg.translate_num_ctx,
+        keep_alive=getattr(cfg, "ollama_keep_alive", "30m"),
+    )
+    logger.info(
+        "LLM de tradu‡Æo: backend=%s model=%s temp=%.2f chunk=%d timeout=%ds num_predict=%d",
+        args.backend,
+        args.model,
+        cfg.translate_temperature,
+        cfg.translate_chunk_chars,
+        args.request_timeout,
+        args.num_predict,
+    )
+
+    glossary_text = None
+    glossary_state = None
+    fail_on_chunk_error = getattr(args, "fail_on_chunk_error", None)
+    if fail_on_chunk_error is None:
+        fail_on_chunk_error = getattr(cfg, "fail_on_chunk_error", False)
+    if getattr(args, "use_glossary", False):
+        manual_path = Path(args.manual_glossary) if args.manual_glossary else Path("glossario/glossario_manual.json")
+        glossary_state = build_glossary_state(manual_path=manual_path, dynamic_path=None, logger=logger, manual_dir=None)
+        if glossary_state:
+            glossary_text = format_manual_pairs_for_translation(glossary_state.manual_terms, limit=30)
+            logger.info("Gloss rio manual carregado para tradu‡Æo: %d termos (usando at‚ 30 no prompt).", len(glossary_state.manual_terms))
+        else:
+            logger.warning("Uso de gloss rio solicitado, mas nenhum gloss rio manual carregado.")
+
+    progress_path = cfg.output_dir / f"{text_path.stem}_pt_progress.json"
+    resume_manifest = None
+    if getattr(args, "resume", False):
+        try:
+            loaded = json.loads(progress_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                resume_manifest = loaded
+            else:
+                logger.warning(
+                    "Manifesto de progresso %s tem formato inesperado; traduzindo do zero.",
+                    progress_path,
+                )
+        except FileNotFoundError:
+            logger.warning(
+                "Manifesto de progresso nÆo encontrado em %s; tradu‡Æo completa ser  executada.",
+                progress_path,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Falha ao ler manifesto de progresso %s (%s); tradu‡Æo completa ser  executada.",
+                progress_path,
+                exc,
+            )
+
+    translated_md = translate_document(
+        pdf_text=raw_text,
+        backend=backend,
+        cfg=cfg,
+        logger=logger,
+        source_slug=text_path.stem,
+        progress_path=progress_path,
+        resume_manifest=resume_manifest,
+        glossary_text=glossary_text,
+        glossary_manual_terms=glossary_state.manual_terms if glossary_state else None,
+        debug_translation=getattr(args, "debug", False),
+        parallel_workers=max(1, getattr(args, "parallel", 1)),
+        debug_chunks=getattr(args, "debug_chunks", False),
+        already_preprocessed=True,
+        split_by_sections=getattr(args, "split_by_sections", cfg.split_by_sections),
+        allow_adaptation=getattr(args, "translate_allow_adaptation", cfg.translate_allow_adaptation),
+        fail_on_chunk_error=fail_on_chunk_error,
+    )
+
+    md_path = cfg.output_dir / f"{text_path.stem}_pt.md"
+    write_text(md_path, translated_md)
+    logger.info("Markdown salvo em %s", md_path)
+
+    if args.no_refine:
+        logger.info("Refinamento desabilitado (--no-refine); apenas *_pt.md ser  gerado.")
+        return
+
+    logger.info("Executando refine opcional para %s", md_path.name)
+    cleanup_mode = args.cleanup_before_refine or getattr(cfg, "cleanup_before_refine", "off")
+    if cleanup_mode not in ("off", "auto", "on"):
+        cleanup_mode = "off"
+    refine_backend = LLMBackend(
+        backend=cfg.refine_backend,
+        model=cfg.refine_model,
+        temperature=cfg.refine_temperature,
+        logger=logger,
+        request_timeout=args.request_timeout,
+        repeat_penalty=cfg.refine_repeat_penalty,
+        num_predict=cfg.refine_num_predict,
+        num_ctx=getattr(cfg, "refine_num_ctx", None),
+        keep_alive=getattr(cfg, "ollama_keep_alive", "30m"),
+    )
+    logger.info(
+        "LLM de refine (opcional): backend=%s model=%s temp=%.2f chunk=%d timeout=%ds num_predict=%d",
+        cfg.refine_backend,
+        cfg.refine_model,
+        cfg.refine_temperature,
+        cfg.refine_chunk_chars,
+        args.request_timeout,
+        cfg.refine_num_predict,
+    )
+    output_refined = cfg.output_dir / f"{text_path.stem}_pt_refinado.md"
+    refine_markdown_file(
+        input_path=md_path,
+        output_path=output_refined,
+        backend=refine_backend,
+        cfg=cfg,
+        logger=logger,
+        progress_path=cfg.output_dir / f"{text_path.stem}_pt_refinado_progress.json",
+        resume_manifest=None,
+        debug_chunks=getattr(args, "debug_chunks", False),
+        cleanup_mode=cleanup_mode,
+    )
+    logger.info("ConversÆo para PDF desativada temporariamente; sa¡da principal ‚ o arquivo .md refinado.")
+    try:
+        refined_text = read_text(output_refined)
+        refined_text = normalize_structure(refined_text)
+        write_text(output_refined, refined_text)
+    except Exception as exc:
+        logger.warning("Falha ao normalizar estrutura do refinado: %s", exc)
+    pdf_enabled = bool(getattr(args, "pdf_enabled", cfg.pdf_enabled))
+    if pdf_enabled:
+        try:
+            pdf_dir = cfg.output_dir / "pdf"
+            pdf_output = pdf_dir / f"{output_refined.stem}.pdf"
+            convert_markdown_to_pdf(
+                md_path=output_refined,
+                output_path=pdf_output,
+                cfg=cfg,
+                logger=logger,
+                title=output_refined.stem,
+            )
+            logger.info("PDF gerado em %s", pdf_output)
+        except Exception as exc:
+            logger.error("Falha ao gerar PDF automaticamente: %s", exc)
+
+
 def run_refine(args, cfg: AppConfig, logger: logging.Logger) -> None:
     """Executa refine sobre arquivos *_pt.md existentes."""
     ensure_paths(cfg)
@@ -712,6 +967,8 @@ def main() -> None:
 
     if args.command == "traduz":
         run_translate(args, cfg, logger)
+    elif args.command == "traduz-md":
+        run_translate_md(args, cfg, logger)
     elif args.command == "refina":
         run_refine(args, cfg, logger)
     elif args.command == "pdf":

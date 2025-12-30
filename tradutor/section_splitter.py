@@ -30,6 +30,9 @@ def split_into_sections(text: str) -> List[Dict]:
         end_line = matches[i + 1][0] if i + 1 < len(matches) else len(lines)
         body_lines = lines[start_line + 1 : end_line]
         body = "\n".join(body_lines).strip()
+        if not body and i + 1 < len(matches):
+            # Possível entrada de sumário; ignora se o corpo é vazio e há próximo marcador.
+            continue
         header = f"# {title}"
         full_body = f"{header}\n\n{body}".strip()
         start_idx = sum(len(l) + 1 for l in lines[:start_line])  # approx byte offset

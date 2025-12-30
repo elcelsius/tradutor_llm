@@ -20,7 +20,7 @@ refine_num_ctx: 6144
 # ============================================================================
 translate_backend: ollama            # ollama ou gemini
 translate_model: gemma3:27b-it-q4_K_M
-translate_temperature: 0.50          # se quiser mais fidelidade, teste 0.30
+translate_temperature: 0.55          # se quiser mais fidelidade, teste 0.30
 translate_repeat_penalty: 1.10
 translate_chunk_chars: 2048          # alvo por chunk (caracteres)
 translate_num_predict: 3072          # limite de tokens gerados por chunk
@@ -59,7 +59,7 @@ refine_model: mistral-small3.1:24b-instruct-2503-q4_K_M
 refine_temperature: 0.20
 refine_repeat_penalty: 1.08
 refine_chunk_chars: 3072
-refine_num_predict: 3072
+refine_num_predict: 4096
 refine_guardrails: strict            # strict | relaxed | off
 
 # ============================================================================

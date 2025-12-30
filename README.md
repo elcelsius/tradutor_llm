@@ -90,6 +90,17 @@ Flags (todas opcionais):
 - `--pdf-enabled` / `--no-pdf-enabled`: liga/desliga PDF automático após refine (se refine estiver ativo).
 - `--request-timeout <s>`: timeout por chamada de modelo.
 
+### Traduzir Markdown já desquebrado (pula extração e desquebrar)
+```bash
+python -m tradutor.main traduz-md --input "saida/meu_texto_desquebrado.md"
+```
+Flags principais (opcionais):
+- `--backend {ollama,gemini}` / `--model <nome>` / `--num-predict <int>`
+- `--no-refine` para só gerar `<slug>_pt.md`
+- `--use-glossary` / `--manual-glossary <path>`
+- `--normalize-paragraphs` (normaliza parágrafos do MD antes de traduzir)
+- `--translate-allow-adaptation` / `--debug-chunks` / `--pdf-enabled`
+
 ### Refine separado em um Markdown PT-BR
 ```bash
 python -m tradutor.main refina --input "saida/meu_livro_pt.md"

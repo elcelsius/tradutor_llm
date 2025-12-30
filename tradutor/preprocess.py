@@ -62,6 +62,11 @@ NOISE_PARAGRAPH_PATTERNS: Final[list[str]] = [
     r"read (more|the latest) on",
 ]
 
+TOC_MARKER_RE = re.compile(
+    r"^(prologue|epilogue|afterword|chapter\s+\d+(?::[^\n]+)?)\s*$",
+    re.IGNORECASE,
+)
+
 
 def extract_text_from_pdf(path: Path, logger: logging.Logger) -> str:
     """Extrai texto de um PDF usando PyMuPDF."""
@@ -180,6 +185,68 @@ def strip_front_matter(text: str) -> str:
     return "\n".join(lines[start_idx:]).lstrip()
 
 
+def strip_toc(
+    text: str,
+    logger: Optional[logging.Logger] = None,
+    *,
+    max_lines: int = 200,
+    min_markers: int = 4,
+    max_body_len: int = 50,
+) -> str:
+    """
+    Remove sumário/TOC no início detectando marcadores curtos em sequência.
+    Heurística: >= min_markers nos primeiros max_lines e maioria dos corpos entre eles vazios/curtos.
+    """
+    lines = text.splitlines()
+    search_lines = lines[:max_lines]
+    marker_idxs: list[int] = []
+    for idx, raw in enumerate(search_lines):
+        normalized = raw.strip()
+        if normalized.startswith("#"):
+            normalized = normalized.lstrip("#").strip()
+        if TOC_MARKER_RE.match(normalized):
+            marker_idxs.append(idx)
+
+    if len(marker_idxs) < min_markers:
+        return text
+
+    short_bodies = 0
+    total_bodies = 0
+    for i, start_idx in enumerate(marker_idxs):
+        end_idx = marker_idxs[i + 1] if i + 1 < len(marker_idxs) else len(search_lines)
+        body_text = "\n".join(search_lines[start_idx + 1 : end_idx]).strip()
+        total_bodies += 1
+        if len(body_text) < max_body_len:
+            short_bodies += 1
+
+    if not total_bodies or short_bodies / total_bodies < 0.6:
+        return text
+
+    cutoff_line = marker_idxs[-1] + 1
+    # Avan‡a al‚m de linhas vazias ou num‚ricas logo ap¢s o £ltimo marcador (ex.: n£mero de p gina do sum rio).
+    while cutoff_line < len(lines):
+        candidate = lines[cutoff_line].strip()
+        if not candidate:
+            cutoff_line += 1
+            continue
+        if len(candidate) < max_body_len and not re.search(r"[A-Za-z]", candidate):
+            cutoff_line += 1
+            continue
+        break
+    remaining = lines[cutoff_line:]
+    cleaned = "\n".join(remaining)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).lstrip()
+    if logger:
+        logger.info(
+            "strip_toc: removido TOC inicial (markers=%d, short_bodies=%d/%d, cutoff_line=%d)",
+            len(marker_idxs),
+            short_bodies,
+            total_bodies,
+            cutoff_line,
+        )
+    return cleaned
+
+
 def preprocess_text(raw_text: str, logger: Optional[logging.Logger] = None, *, skip_front_matter: bool = False) -> str:
     """
     Pré-processa o texto bruto extraído do PDF:
@@ -192,6 +259,7 @@ def preprocess_text(raw_text: str, logger: Optional[logging.Logger] = None, *, s
     text, _sanitize_stats = sanitize_extracted_text(text, logger=logger)
     if skip_front_matter:
         text = strip_front_matter(text)
+        text = strip_toc(text, logger=logger)
 
     for pattern in FOOTER_PATTERNS:
         text = re.sub(pattern, " ", text, flags=re.IGNORECASE)

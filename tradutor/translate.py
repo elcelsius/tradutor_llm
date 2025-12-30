@@ -41,6 +41,11 @@ from .postprocess_translation import postprocess_translation
 from .quote_fix import fix_unbalanced_quotes, count_curly_quotes
 from .text_postprocess import apply_structural_normalizers
 
+STUB_HEADER_RE = re.compile(
+    r"^#?\s*(prologue|chapter\s+\d+(?::[^\n]+)?|epilogue|afterword)\s*$",
+    re.IGNORECASE,
+)
+
 
 def _extract_last_sentence(text: str) -> str:
     """Extrai a ultima frase simples (delimitada por .!?) e limpa marcadores."""
@@ -133,13 +138,27 @@ Nada antes ou depois dos marcadores.
 
 
 def _parse_translation_output(raw: str) -> str:
-    """Extrai bloco entre TEXTO_TRADUZIDO_INICIO/FIM; fallback para texto inteiro."""
-    start = raw.find("### TEXTO_TRADUZIDO_INICIO")
-    end = raw.find("### TEXTO_TRADUZIDO_FIM")
-    if start != -1 and end != -1 and end > start:
-        content = raw[start + len("### TEXTO_TRADUZIDO_INICIO") : end]
-        return content.strip()
-    raise ValueError("Marcadores TEXTO_TRADUZIDO_INICIO/FIM ausentes na resposta do modelo.")
+    """Extrai bloco entre TEXTO_TRADUZIDO_INICIO/FIM; se ausentes, retorna o texto util."""
+    match = re.search(
+        r"###\s*TEXTO_TRADUZIDO_INICIO\s*(.*?)(?:###\s*TEXTO_TRADUZIDO_FIM\s*|$)",
+        raw,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if match:
+        candidate = match.group(1).strip()
+        if candidate:
+            return candidate
+
+    end_only = re.search(r"^(.*?)###\s*TEXTO_TRADUZIDO_FIM", raw, flags=re.IGNORECASE | re.DOTALL)
+    if end_only:
+        candidate = end_only.group(1).strip()
+        if candidate:
+            return candidate
+
+    cleaned = raw.strip()
+    if cleaned:
+        return cleaned
+    raise ValueError("Saida vazia apos tentar extrair texto traduzido.")
 
 
 def _strip_translate_markers(text: str) -> str:
@@ -186,6 +205,15 @@ def _split_dialogue_blocks(chunk: str) -> list[str]:
             buffer.append(line)
     flush()
     return [b for b in blocks if b.strip()]
+
+
+def _is_stub_chunk(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return True
+    if STUB_HEADER_RE.fullmatch(stripped):
+        return True
+    return len(stripped) < 200
 
 
 def _build_chunk_glossary(
@@ -257,6 +285,28 @@ def translate_document(
         sec_chunks = chunk_for_translation(paragraphs, max_chars=cfg.translate_chunk_chars, logger=logger)
         for ch in sec_chunks:
             chunk_records.append({"section": sidx, "title": sec.get("title", ""), "text": ch})
+    sanitized_records: list[dict] = []
+    for i, rec in enumerate(chunk_records):
+        text = rec.get("text", "")
+        if _is_stub_chunk(text):
+            if i + 1 < len(chunk_records):
+                chunk_records[i + 1]["text"] = (text.strip() + "\n\n" + chunk_records[i + 1]["text"]).strip()
+                logger.warning(
+                    "chunk_toc_stub: merged chunk %d (title=%s, len=%d) into next chunk",
+                    i + 1,
+                    rec.get("title", ""),
+                    len(text.strip()),
+                )
+            else:
+                logger.warning(
+                    "chunk_toc_stub: dropped last stub chunk %d (title=%s, len=%d)",
+                    i + 1,
+                    rec.get("title", ""),
+                    len(text.strip()),
+                )
+            continue
+        sanitized_records.append(rec)
+    chunk_records = sanitized_records
     chunks = [c["text"] for c in chunk_records]
     max_chunk_len = max((len(c["text"]) for c in chunk_records), default=0)
     logger.info(
@@ -418,6 +468,19 @@ def translate_document(
     
     for idx, chunk_info in enumerate(chunk_records, start=1):
         chunk = chunk_info["text"]
+        if _is_stub_chunk(chunk):
+            logger.warning(
+                "chunk_toc_stub: skipping chunk %d/%d (title=%s, len=%d)",
+                idx,
+                total_chunks,
+                chunk_info.get("title", ""),
+                len(chunk.strip()),
+            )
+            translated_ok.add(idx)
+            processed_indices.add(idx)
+            chunk_outputs[idx] = ""
+            _write_progress()
+            continue
         chunk_glossary_text, glossary_matched, glossary_injected = _build_chunk_glossary(
             glossary_manual_terms,
             chunk,
