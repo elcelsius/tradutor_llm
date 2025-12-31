@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
 import re
 
 from .config import AppConfig
@@ -14,7 +13,6 @@ from .cache_utils import cache_exists, chunk_hash, load_cache, save_cache, set_c
 from .llm_backend import LLMBackend
 from .preprocess import paragraphs_from_text
 from .utils import chunk_by_paragraphs, timed
-from .text_postprocess import normalize_dialogue_breaks
 
 
 DESQUEBRAR_PROMPT = """
@@ -26,6 +24,12 @@ RETORNE SOMENTE O TEXTO CORRIGIDO, SEM CABECALHOS OU COMENTARIOS.
 TEXTO:
 \"\"\"{chunk}\"\"\""""
 
+ELLIPSIS_RE = re.compile(r"\.\.\.|…")
+SAFE_DIALOGUE_BREAK_PATTERNS = (
+    (re.compile(r"”{2,}\s*“"), "”\n\n“"),
+    (re.compile(r"”\s*“"), "”\n\n“"),
+)
+
 
 @dataclass
 class DesquebrarStats:
@@ -34,6 +38,89 @@ class DesquebrarStats:
     fallbacks: int = 0
     dialogue_splits: int = 0
     blocks: list[dict] | None = None
+
+
+def _count_alnum(text: str) -> int:
+    return sum(1 for ch in text if ch.isalnum())
+
+
+def _count_ellipses(text: str) -> int:
+    return len(ELLIPSIS_RE.findall(text))
+
+
+def _has_lonely_quote_line(text: str) -> bool:
+    return any(line.strip() in {'"', "“", "”"} for line in text.splitlines())
+
+
+def validate_desquebrar_output(orig: str, output: str) -> tuple[bool, list[str]]:
+    """
+    Valida a saida do desquebrar para garantir que nada foi corrompido.
+    Retorna (ok, motivos_de_rejeicao).
+    """
+    reasons: list[str] = []
+    if _has_lonely_quote_line(output):
+        reasons.append("lonely_quote_line")
+    if _count_ellipses(output) != _count_ellipses(orig):
+        reasons.append("ellipsis_mismatch")
+    orig_alnum = _count_alnum(orig)
+    out_alnum = _count_alnum(output)
+    if orig_alnum and out_alnum < orig_alnum * 0.99:
+        reasons.append("alnum_loss")
+    return not reasons, reasons
+
+
+def deterministic_unbreak(text: str) -> str:
+    """
+    Reflow deterministico que apenas junta linhas do mesmo paragrafo.
+    - Nao atravessa linhas em branco.
+    - Mantem headings isolados (linhas que comecam com #).
+    - Remove hifenizacao no fim de linha apenas quando a proxima comeca minuscula.
+    """
+    if not text:
+        return text
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    paragraphs = normalized.split("\n\n")
+    rebuilt: list[str] = []
+    for para in paragraphs:
+        if para.strip() == "":
+            rebuilt.append("")
+            continue
+        lines = para.split("\n")
+        acc = ""
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("#"):
+                if acc:
+                    rebuilt.append(acc.strip())
+                    acc = ""
+                rebuilt.append(stripped)
+                continue
+            if acc:
+                if acc.endswith("-") and stripped[:1].islower():
+                    acc = acc[:-1] + stripped
+                else:
+                    acc = f"{acc} {stripped}"
+            else:
+                acc = stripped
+        if acc or (not rebuilt or rebuilt[-1] != ""):
+            rebuilt.append(acc.strip())
+    return "\n\n".join(rebuilt).strip()
+
+
+def normalize_dialogue_breaks_source_safe(text: str) -> tuple[str, dict]:
+    """
+    Variante segura que nao introduz linhas contendo apenas aspas retas.
+    """
+    if not text:
+        return text, {"dialogue_splits": 0}
+    cleaned = text
+    total = 0
+    for pattern, replacement in SAFE_DIALOGUE_BREAK_PATTERNS:
+        cleaned, count = pattern.subn(replacement, cleaned)
+        total += count
+    return cleaned, {"dialogue_splits": total}
 
 
 def build_desquebrar_prompt(chunk: str) -> str:
@@ -110,6 +197,30 @@ def desquebrar_text(
             cleaned = response.text.strip()
             if not cleaned:
                 raise ValueError("Resposta vazia do desquebrar.")
+            is_valid, reasons = validate_desquebrar_output(chunk, cleaned)
+            if not is_valid:
+                fallback_text = deterministic_unbreak(chunk)
+                outputs.append(fallback_text)
+                stats.fallbacks += 1
+                reason_str = ",".join(reasons) or "invalid_output"
+                logger.warning(
+                    "desq-%d/%d invalid output; usando fallback deterministico (reasons=%s)",
+                    idx,
+                    total_chunks,
+                    reason_str,
+                )
+                stats.blocks.append(
+                    {
+                        "chunk_index": idx,
+                        "chars_in": len(chunk),
+                        "chars_out": len(fallback_text),
+                        "latency": latency,
+                        "from_cache": False,
+                        "fallback": True,
+                        "fallback_reason": reason_str,
+                    }
+                )
+                continue
             outputs.append(cleaned)
             logger.info("desq-%d/%d ok (%.2fs, %d chars)", idx, total_chunks, latency, len(cleaned))
             stats.blocks.append(
@@ -139,23 +250,25 @@ def desquebrar_text(
                 },
             )
         except Exception as exc:  # pragma: no cover - network/LLM failure path
-            logger.warning("Bloco %d do desquebrar falhou; mantendo texto original. Erro: %s", idx, exc)
-            outputs.append(chunk)
+            logger.warning("Bloco %d do desquebrar falhou; usando fallback deterministico. Erro: %s", idx, exc)
+            fallback_text = deterministic_unbreak(chunk)
+            outputs.append(fallback_text)
             stats.fallbacks += 1
             logger.info("desq-%d/%d fallback", idx, total_chunks)
             stats.blocks.append(
                 {
                     "chunk_index": idx,
                     "chars_in": len(chunk),
-                    "chars_out": len(chunk),
+                    "chars_out": len(fallback_text),
                     "from_cache": False,
                     "fallback": True,
+                    "fallback_reason": "exception",
                     "error": str(exc),
                 }
             )
 
     combined = "\n\n".join(outputs).strip()
-    combined, norm_stats = normalize_dialogue_breaks(combined)
+    combined, norm_stats = normalize_dialogue_breaks_source_safe(combined)
     combined = normalize_wrapped_lines(combined)
     stats.dialogue_splits = norm_stats.get("dialogue_splits", 0)
     return combined, stats

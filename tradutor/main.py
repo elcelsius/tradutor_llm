@@ -201,9 +201,9 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
     tm = sub.add_parser(
         "traduz-md",
         parents=[common],
-        help="Traduz um arquivo .md/.txt j  desquebrado (pula extra‡Æo de PDF).",
+        help="Traduz um arquivo .md/.txt já desquebrado (pula extração de PDF).",
     )
-    tm.add_argument("--input", type=str, required=True, help="Arquivo .md ou .txt j  desquebrado para traduzir.")
+    tm.add_argument("--input", type=str, required=True, help="Arquivo .md ou .txt já desquebrado para traduzir.")
     tm.add_argument("--backend", type=str, choices=["ollama", "gemini"], default=cfg.translate_backend)
     tm.add_argument("--model", type=str, default=cfg.translate_model)
     tm.add_argument(
@@ -216,7 +216,7 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
     tm.add_argument(
         "--resume",
         action="store_true",
-        help="Retoma tradu‡Æo usando manifesto de progresso existente (se houver).",
+        help="Retoma tradução usando manifesto de progresso existente (se houver).",
     )
     tm.add_argument(
         "--use-glossary",

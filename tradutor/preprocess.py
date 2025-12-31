@@ -251,8 +251,8 @@ def preprocess_text(raw_text: str, logger: Optional[logging.Logger] = None, *, s
     """
     Pré-processa o texto bruto extraído do PDF:
     - Normaliza quebras de linha
-    - Remove rodapés/watermarks
-    - Mantém todo o conteúdo original
+    - Remove rodapés/watermarks e blocos de ruído (ads/newsletter/discord)
+    - Remove front-matter/TOC quando skip_front_matter=True
     """
 
     text = raw_text.replace("\r\n", "\n").replace("\r", "\n")

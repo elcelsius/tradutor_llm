@@ -326,8 +326,10 @@ def translate_document(
             sections = [{"title": "Full Text", "body": clean, "start_idx": 0, "end_idx": len(clean)}]
             split_flag = False
     chunk_records = []
+    original_paragraphs_total = 0
     for sidx, sec in enumerate(sections, start=1):
         paragraphs = paragraphs_from_text(sec["body"])
+        original_paragraphs_total += len(paragraphs)
         sec_chunks = chunk_for_translation(paragraphs, max_chars=cfg.translate_chunk_chars, logger=logger)
         for ch in sec_chunks:
             chunk_records.append({"section": sidx, "title": sec.get("title", ""), "text": ch})
@@ -996,13 +998,13 @@ def translate_document(
         raise ValueError("Traducao resultou em texto vazio.")
 
     translated_paragraphs = [p for p in result.split("\n\n") if p.strip()]
-    if len(translated_paragraphs) < len(paragraphs):
+    if len(translated_paragraphs) < original_paragraphs_total:
         logger.error(
             "Paragrafos ausentes apos traducao: original=%d traduzido=%d",
-            len(paragraphs),
+            original_paragraphs_total,
             len(translated_paragraphs),
         )
-        paragraph_mismatch = {"original": len(paragraphs), "translated": len(translated_paragraphs)}
+        paragraph_mismatch = {"original": original_paragraphs_total, "translated": len(translated_paragraphs)}
 
     if debug_chunks:
         reduction_pct = (sanitized_chars_total / orig_chars_total * 100) if orig_chars_total else 0.0
