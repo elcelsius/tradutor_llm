@@ -1,8 +1,8 @@
 # Tradutor de Light Novels (EN → PT-BR) – Windows-friendly
 
-Pipeline completo para traduzir PDFs/Markdown usando LLMs (Ollama/Gemini), com etapas automáticas de limpeza, desquebrar, tradução, refine e PDF final.
+Este projeto é um **pipeline completo** para traduzir Light Novels em PDF/Markdown usando LLMs (Ollama ou Gemini). Ele cuida de tudo: extração do texto, limpeza, “desquebrar” (unir linhas quebradas), tradução, refine (revisão automática) e geração de PDF final.
 
-> Para iniciantes: siga a seção **Passo a passo rápido**. Tudo é configurado pelo `config.yaml`.
+> **Para iniciantes:** siga a seção **Passo a passo rápido**. Toda a configuração central fica no `config.yaml`.
 
 ---
 
@@ -11,32 +11,34 @@ Pipeline completo para traduzir PDFs/Markdown usando LLMs (Ollama/Gemini), com e
 ```bash
 pip install -r requirements.txt
 ```
-2) Ajuste o `config.yaml` (modelos, caminhos, fonte do PDF). Padrão: Ollama rodando localmente.
+2) Ajuste o `config.yaml` (modelos, caminhos, fonte do PDF). **Padrão:** Ollama rodando localmente.
 3) Coloque seus PDFs em `data/`.
-4) Rode a tradução completa (com refine; PDF é opcional e só sai se estiver habilitado). Flags úteis para PDFs longos: `--skip-front-matter` (padrão), `--split-by-sections` (padrão), `--translate-allow-adaptation` (para permitir exemplos de adaptação no prompt), `--request-timeout`, `--num-predict` e, se usar Ollama, configure `translate_num_ctx`/`refine_num_ctx`/`desquebrar_num_ctx` e `ollama_keep_alive` no `config.yaml`.
+4) Rode a tradução completa (com refine; o PDF só sai se estiver habilitado).
+   - Flags úteis para PDFs longos: `--skip-front-matter` (padrão), `--split-by-sections` (padrão), `--translate-allow-adaptation`, `--request-timeout`, `--num-predict`.
+   - Se usar Ollama, ajuste também `translate_num_ctx`/`refine_num_ctx`/`desquebrar_num_ctx` e `ollama_keep_alive` no `config.yaml`.
 ```bash
 python -m tradutor.main traduz --input "data/meu_livro.pdf"
 ```
-5) Saídas em `saida/`:
+5) Confira as saídas em `saida/`:
    - `<slug>_pt.md` (tradução)
    - `<slug>_pt_refinado.md` (refine)
-   - `pdf/<slug>_pt_refinado.pdf` (apenas se `pdf_enabled: true` ou flag `--pdf-enabled`)
+   - `pdf/<slug>_pt_refinado.pdf` (se `pdf_enabled: true` ou `--pdf-enabled`)
    - métricas/manifestos para auditoria.
 
 ---
 
-## O que o pipeline faz
-- **Pré-processa** o PDF (limpa lixo básico, remove front-matter/TOC quando habilitado).
-- **Desquebra** linhas (usa LLM configurado em `desquebrar_*`).
-- **Traduz** EN → PT-BR com contexto leve e glossário opcional.
-- **Cleanup antes do refine** (remove duplicatas/glued, etc).
-- **Refina** o PT-BR com guardrails.
-- **Gera PDF** com fonte configurável (ReportLab).
+## O que o pipeline faz (em linguagem simples)
+ - **Pré-processa** o PDF (limpa lixo básico, remove front-matter/TOC quando habilitado).
+ - **Desquebra** linhas (une linhas quebradas; usa LLM se configurado).
+ - **Traduz** EN → PT-BR com contexto leve e glossário opcional.
+ - **Limpa o texto** antes do refine (remove duplicatas, colagens e artefatos).
+ - **Refina** o PT-BR com guardrails (revisão automática).
+ - **Gera PDF** com fonte configurável (ReportLab).
 
 ---
 
 ## Configuração (config.yaml)
-Principais chaves (padrões já preenchidos):
+Principais chaves (com valores padrão já preenchidos):
 - `translate_*`: backend/model (ex.: `gemma3:27b-it-q4_K_M`), temperatura/repeat_penalty/chunk_chars/num_predict/num_ctx e guardrails de diálogo (`translate_dialogue_guardrails`, `translate_dialogue_retry_temps`, `translate_dialogue_split_fallback`). Glossário contextual: `translate_glossary_match_limit`/`translate_glossary_fallback_limit`. `translate_allow_adaptation` deixa exemplos de adaptação de piadas no prompt.
 - `use_desquebrar` (true/false) e `desquebrar_*` (backend/model/temp/repeat_penalty/chunk/num_predict/num_ctx) + `desquebrar_mode` (`safe` usa desquebrar_safe sem LLM).
 - `refine_backend`, `refine_model` (ex.: `mistral-small3.1:24b-instruct-2503-q4_K_M`), `refine_temperature`, `refine_guardrails`, `cleanup_before_refine` (off/auto/on).
@@ -67,6 +69,7 @@ Principais chaves (padrões já preenchidos):
 ---
 
 ## Comandos principais e flags
+> Dica para iniciantes: copie e cole os comandos abaixo e mude apenas o caminho do arquivo.
 
 ### Traduzir PDF → PT-BR (com refine e PDF, se habilitado)
 ```bash
@@ -88,6 +91,7 @@ Flags (todas opcionais):
 - `--desquebrar-backend/model/temperature/repeat-penalty/chunk-chars/num-predict`: overrides específicos do desquebrar.
 - `--debug`: salva artefatos intermediários (`*_raw_extracted.md`, `*_preprocessed.md`, `*_raw_desquebrado.md`).
 - `--debug-chunks`: JSONL detalhado por chunk.
+- `--fail-on-chunk-error`: aborta na primeira falha de chunk (padrão é continuar com placeholders).
 - `--pdf-enabled` / `--no-pdf-enabled`: liga/desliga PDF automático após refine (se refine estiver ativo).
 - `--request-timeout <s>`: timeout por chamada de modelo.
 
@@ -101,6 +105,7 @@ Flags principais (opcionais):
 - `--use-glossary` / `--manual-glossary <path>`
 - `--normalize-paragraphs` (normaliza parágrafos do MD antes de traduzir)
 - `--translate-allow-adaptation` / `--debug-chunks` / `--pdf-enabled`
+- `--fail-on-chunk-error` (interrompe se algum chunk falhar)
 
 ### Refine separado em um Markdown PT-BR
 ```bash
@@ -197,7 +202,9 @@ tradutor.py / refinador.py # wrappers legados (chamam main)
 ## Requisitos
 - Windows 11 (prioritário), Python 3.10+.
 - Dependências: `pip install -r requirements.txt`.
-- Backend: Ollama (padrão) ou Gemini (`GEMINI_API_KEY` no ambiente).
+- Backend:
+  - **Ollama (padrão):** precisa estar rodando localmente.
+  - **Gemini:** defina `GEMINI_API_KEY` no ambiente.
 
 ---
 
