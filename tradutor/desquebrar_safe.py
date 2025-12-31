@@ -36,7 +36,7 @@ def _is_dialogue_start(line: str) -> bool:
     """Detecta linhas que parecem iniciar dialogo (aspas retas/curvas ou travessao)."""
     stripped = line.lstrip()
     # Adicionei de volta a aspa curva de abertura (“)
-    return stripped.startswith(('"', "'", "-", "“", "”"))
+    return stripped.startswith(('"', "'", "-", "—", "“", "”"))
 
 
 def _is_title_like(line: str) -> bool:
