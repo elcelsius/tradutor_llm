@@ -156,8 +156,49 @@ def desquebrar_text(
 
     combined = "\n\n".join(outputs).strip()
     combined, norm_stats = normalize_dialogue_breaks(combined)
+    combined = normalize_wrapped_lines(combined)
     stats.dialogue_splits = norm_stats.get("dialogue_splits", 0)
     return combined, stats
+
+
+def normalize_wrapped_lines(text: str) -> str:
+    """
+    Junta quebras de linha erradas em narrativas curtas (sem mexer em falas/headers).
+    Critérios de junção:
+    - Linha não termina com pontuação final (.?!…:"”)
+    - Próxima linha começa minúscula
+    - Nenhuma das duas começa com aspas/travessão/heading
+    """
+    if not text:
+        return text
+    lines = text.split("\n")
+    new_lines: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+        if not stripped:
+            new_lines.append(line)
+            i += 1
+            continue
+        if stripped.startswith(('"', "“", "”", "-", "—", "#")):
+            new_lines.append(line)
+            i += 1
+            continue
+        ends_ok = stripped.endswith((".", "?", "!", "…", ":", "”", '"'))
+        if i + 1 < len(lines):
+            nxt = lines[i + 1]
+            nxt_stripped = nxt.strip()
+            starts_lower = bool(nxt_stripped) and nxt_stripped[:1].islower()
+            nxt_block = nxt_stripped.startswith(('"', "“", "”", "-", "—", "#"))
+            if (not ends_ok) and starts_lower and not nxt_block:
+                merged = f"{stripped} {nxt_stripped}"
+                new_lines.append(merged)
+                i += 2
+                continue
+        new_lines.append(line)
+        i += 1
+    return "\n".join(new_lines)
 
 
 def desquebrar_stats_to_dict(stats: DesquebrarStats | None, cfg: AppConfig) -> dict:

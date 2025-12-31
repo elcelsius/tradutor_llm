@@ -39,7 +39,7 @@ from .anti_hallucination import anti_hallucination_filter
 from .qa import needs_retry, count_quotes, count_quote_lines
 from .postprocess_translation import postprocess_translation
 from .quote_fix import fix_unbalanced_quotes, count_curly_quotes
-from .text_postprocess import apply_structural_normalizers
+from .text_postprocess import apply_structural_normalizers, apply_custom_normalizers
 
 STUB_HEADER_RE = re.compile(
     r"^#?\s*(prologue|chapter\s+\d+(?::[^\n]+)?|epilogue|afterword)\s*$",
@@ -104,6 +104,7 @@ REGRAS PRINCIPAIS:
 5. NÃO mudar tom ou personalidade dos personagens.
 6. Manter nomes exatos conforme glossário.
 7. Manter número/pessoa corretos: não inverter singular/plural; não use "vocês" quando o original está no singular.
+8. NÃO use "..." ou "…" para omitir trechos; só use reticências quando elas já existirem no original.
 
 MELHORIAS OBRIGATÓRIAS:
 
@@ -213,7 +214,36 @@ def _is_stub_chunk(text: str) -> bool:
         return True
     if STUB_HEADER_RE.fullmatch(stripped):
         return True
-    return len(stripped) < 200
+    return False
+
+
+def _is_short_dialogue_line(line: str) -> bool:
+    ln = line.strip()
+    if not ln:
+        return False
+    if re.match(r'^[\"“].+[\"”]$', ln):
+        return True
+    words = ln.split()
+    if not words or len(words) > 6:
+        return False
+    if re.search(r'[?!…\.][\"”]?$', ln):
+        return True
+    return False
+
+
+def _separate_short_dialogues(text: str) -> str:
+    """Insere linha em branco entre falas curtíssimas consecutivas para preservar parágrafos."""
+    lines = text.splitlines()
+    new_lines: list[str] = []
+    prev_short = False
+    for ln in lines:
+        current_short = _is_short_dialogue_line(ln)
+        if current_short and prev_short:
+            if new_lines and new_lines[-1].strip() != "":
+                new_lines.append("")
+        new_lines.append(ln)
+        prev_short = current_short if ln.strip() else False
+    return "\n".join(new_lines)
 
 
 def _build_chunk_glossary(
@@ -277,8 +307,24 @@ def translate_document(
     if not hasattr(backend, "temperature"):
         backend.temperature = cfg.translate_temperature
     clean = pdf_text if already_preprocessed else preprocess_text(pdf_text, logger, skip_front_matter=cfg.skip_front_matter)
+    clean = _separate_short_dialogues(clean)
     doc_hash = chunk_hash(clean)
     sections = split_into_sections(clean) if split_flag else [{"title": "Full Text", "body": clean}]
+    if split_flag:
+        total_sections = len(sections)
+        heading_starts = [s.get("start_idx", 0) for s in sections if s.get("title") and s.get("title") != "Full Text"]
+        first_heading = min(heading_starts) if heading_starts else 0
+        late_first = first_heading > len(clean) * 0.05
+        long_text = len(clean) > 50000
+        if total_sections <= 2 and (late_first or long_text):
+            logger.warning(
+                "split_by_sections fallback: disabling section split (sections=%d, first_heading=%d len=%d)",
+                total_sections,
+                first_heading,
+                len(clean),
+            )
+            sections = [{"title": "Full Text", "body": clean, "start_idx": 0, "end_idx": len(clean)}]
+            split_flag = False
     chunk_records = []
     for sidx, sec in enumerate(sections, start=1):
         paragraphs = paragraphs_from_text(sec["body"])
@@ -297,6 +343,14 @@ def translate_document(
                     rec.get("title", ""),
                     len(text.strip()),
                 )
+                continue
+            if not sanitized_records:
+                logger.warning(
+                    "chunk_toc_stub: keeping last stub chunk %d (title=%s, len=%d) because it is the only chunk",
+                    i + 1,
+                    rec.get("title", ""),
+                    len(text.strip()),
+                )
             else:
                 logger.warning(
                     "chunk_toc_stub: dropped last stub chunk %d (title=%s, len=%d)",
@@ -304,7 +358,7 @@ def translate_document(
                     rec.get("title", ""),
                     len(text.strip()),
                 )
-            continue
+                continue
         sanitized_records.append(rec)
     chunk_records = sanitized_records
     chunks = [c["text"] for c in chunk_records]
@@ -465,9 +519,10 @@ def translate_document(
     def _count_quotes(txt: str) -> int:
         return sum(1 for ch in txt if ch in {'"', "“", "”", "'"})
 
-    
     for idx, chunk_info in enumerate(chunk_records, start=1):
         chunk = chunk_info["text"]
+        suspect_output = False
+        suspect_reason = ""
         if _is_stub_chunk(chunk):
             logger.warning(
                 "chunk_toc_stub: skipping chunk %d/%d (title=%s, len=%d)",
@@ -562,6 +617,9 @@ def translate_document(
                     try:
                         attempt = 0
                         retry_reason = ""
+                        last_retry_reason = ""
+                        suspect_output = False
+                        suspect_reason = ""
                         while attempt < cfg.max_retries:
                             prev_temp = backend.temperature
                             temp_for_attempt = dialogue_retry_temps[min(attempt, len(dialogue_retry_temps) - 1)]
@@ -623,6 +681,17 @@ def translate_document(
                             if guardrail_triggered:
                                 retry = True
                                 retry_reason = guardrail_reason or retry_reason or "omissao_dialogo_guardrail"
+                            if retry:
+                                retry_log_reason = retry_reason or guardrail_reason or "retry"
+                                last_retry_reason = retry_log_reason
+                                logger.warning(
+                                    "QA retry traducao chunk %d/%d: reason=%s attempt=%d/%d",
+                                    idx,
+                                    len(chunks),
+                                    retry_log_reason,
+                                    attempt + 1,
+                                    cfg.max_retries,
+                                )
                             if not retry:
                                 # se sanitização falhou mas raw está ok, preferir raw
                                 if prefer_raw:
@@ -630,6 +699,7 @@ def translate_document(
                                 break
                             attempt += 1
                             is_dialogue_retry = "omissao_dialogo" in (retry_reason or "") or guardrail_triggered
+                            fallback_done = False
                             if attempt >= cfg.max_retries and is_dialogue_retry and dialogue_split_fallback:
                                 blocks = _split_dialogue_blocks(chunk) or [chunk]
                                 logger.warning(
@@ -671,19 +741,38 @@ def translate_document(
                                         backend.temperature = prev_temp_block
                                     block_parsed = _parse_translation_output(block_raw)
                                     block_parsed_raw = _strip_translate_markers(block_parsed)
-                                    block_clean, block_clean_report = sanitize_translation_output(
-                                        block_parsed_raw, logger=logger, fail_on_contamination=False
-                                    )
-                                    sanitizer_report = block_clean_report
+                                    try:
+                                        block_clean, block_clean_report = sanitize_translation_output(
+                                            block_parsed_raw, logger=logger, fail_on_contamination=False
+                                        )
+                                    except ValueError:
+                                        logger.warning(
+                                            "Fallback split: block %d/%d sanitized to empty; keeping raw.",
+                                            b_idx,
+                                            len(blocks),
+                                        )
+                                        block_clean = block_parsed_raw or block
+                                        block_clean_report = None
+                                    sanitizer_report = block_clean_report or sanitizer_report
                                     block_clean = anti_hallucination_filter(orig=block, llm_raw=block_raw, cleaned=block_clean, mode="translate")
                                     block_clean = postprocess_translation(block_clean, block)
                                     block_outputs.append(block_clean)
                                 parsed_clean = "\n\n".join(block_outputs).strip()
                                 retry = False
-                                break
+                                fallback_done = True
                             if attempt >= cfg.max_retries:
+                                suspect_output = True
+                                suspect_reason = last_retry_reason or retry_reason or guardrail_reason or "max_retries_exceeded"
                                 if prefer_raw:
                                     parsed_clean = raw_candidate
+                                logger.warning(
+                                    "Max retries atingido no chunk %d/%d; mantendo ultima saida (reason=%s)",
+                                    idx,
+                                    len(chunks),
+                                    suspect_reason,
+                                )
+                                break
+                            if fallback_done:
                                 break
                             logger.warning(
                                 "QA retry traducao chunk %d/%d: %s (tentativa %d/%d)",
@@ -787,6 +876,7 @@ def translate_document(
 
         final_output = parsed_clean if parsed_clean is not None else chunk_outputs.get(idx, "")
         final_output, normalizer_stats = apply_structural_normalizers(final_output)
+        final_output = apply_custom_normalizers(final_output)
         normalization_totals["dialogue_splits"] += normalizer_stats.get("dialogue_splits", 0)
         normalization_totals["triple_quotes_removed"] += normalizer_stats.get("triple_quotes_removed", 0)
         chunk_outputs[idx] = final_output
@@ -841,13 +931,15 @@ def translate_document(
                 "from_duplicate": from_duplicate,
                 "llm_attempts": llm_attempts,
                 "too_short": too_short,
-                "too_long": too_long,
-                "suspicious_repetition": suspicious,
-                "possible_omission": possible_omission,
-                "dialogue_splits": normalizer_stats.get("dialogue_splits", 0),
-                "triple_quotes_removed": normalizer_stats.get("triple_quotes_removed", 0),
-            }
-        )
+                                "too_long": too_long,
+                                "suspicious_repetition": suspicious,
+                                "possible_omission": possible_omission,
+                                "dialogue_splits": normalizer_stats.get("dialogue_splits", 0),
+                                "triple_quotes_removed": normalizer_stats.get("triple_quotes_removed", 0),
+                                "suspect_output": suspect_output,
+                                "suspect_reason": suspect_reason,
+                            }
+                        )
 
         report_dict = {
             "contamination_detected": bool(sanitizer_report.contamination_detected) if sanitizer_report else False,

@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import re
 
+ELLIPSIS_IN_WORD_RE = re.compile(r"[A-Za-zÀ-ÿ]\.\.\.[A-Za-zÀ-ÿ]|[A-Za-zÀ-ÿ]…[A-Za-zÀ-ÿ]")
+LOWERCASE_START_RE = re.compile(r"^[a-zà-ÿ].*")
+TRUNCATED_ELLIPSIS_RE = re.compile(r"(?:\b[A-Za-zÀ-ÿ]+(?:\.{3}|…)\b|\b(?:\.{3}|…)[A-Za-zÀ-ÿ]+)")
+
 
 def _has_suspicious_repetition(text: str, min_repeats: int = 3) -> bool:
     """Sinais fortes; precisa de 2 ou mais."""
@@ -57,6 +61,23 @@ def needs_retry(
         return True, "omissao_dialogo_linhas"
     if not output_text or not output_text.strip():
         return True, "output vazio"
+    if ELLIPSIS_IN_WORD_RE.search(output_text):
+        return True, "ellipsis_in_word"
+    paragraphs = [p.strip() for p in re.split(r"\n{2,}", output_text) if p.strip()]
+    for p in paragraphs:
+        if len(paragraphs) > 1 and len(p) <= 30 and LOWERCASE_START_RE.match(p) and not p.startswith(('"', "“", "”", "-", "—")):
+            return True, "lowercased_fragment"
+    for p in paragraphs:
+        if LOWERCASE_START_RE.match(p) and not p.startswith(('"', "“", "”", "-", "—")):
+            return True, "lowercase_narration_start"
+    if TRUNCATED_ELLIPSIS_RE.search(output_text) or re.search(r"[A-Za-zÀ-ÿ]{1,6}\.{3}", output_text) or re.search(r"[A-Za-zÀ-ÿ]{1,6}…", output_text):
+        return True, "truncated_token_ellipsis"
+    input_ellipsis = input_text.count("...") + input_text.count("…")
+    output_ellipsis = output_text.count("...") + output_text.count("…")
+    if input_ellipsis == 0 and output_ellipsis >= 2:
+        ellipsis_ratio = output_ellipsis / max(len(output_text), 1)
+        if len(output_text) < 500 or ellipsis_ratio > 0.01:
+            return True, "ellipsis_suspect"
     ratio = len(output_text.strip()) / max(len(input_text.strip()), 1)
     if ratio < 0.6:
         return True, "output truncado (ratio < 0.6)"

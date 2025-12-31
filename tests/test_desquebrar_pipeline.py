@@ -80,7 +80,7 @@ def test_run_translate_uses_desquebrar_before_translate(monkeypatch, tmp_path):
     def fake_extract_pdf_text(path, logger):
         return "raw pdf text"
 
-    def fake_preprocess_text(text, logger=None):
+    def fake_preprocess_text(text, logger=None, **kwargs):
         return "preprocessed text"
 
     def fake_desquebrar_text(text, cfg, logger, backend, chunk_chars=None):
@@ -152,7 +152,7 @@ def test_run_translate_skips_desquebrar_when_disabled(monkeypatch, tmp_path):
     def fake_extract_pdf_text(path, logger):
         return "raw pdf text"
 
-    def fake_preprocess_text(text, logger=None):
+    def fake_preprocess_text(text, logger=None, **kwargs):
         return "preprocessed text"
 
     def fake_translate_document(pdf_text, backend, cfg, logger, **kwargs):

@@ -91,6 +91,14 @@ def _load_terms(path: Path, source: str, logger: logging.Logger) -> List[Glossar
         pt = str(entry.get("pt", "")).strip()
         if not key or not pt:
             continue
+        raw_aliases = entry.get("aliases") or []
+        aliases: list[str] = []
+        if isinstance(raw_aliases, str):
+            raw_aliases = [raw_aliases]
+        if isinstance(raw_aliases, list):
+            for alias in raw_aliases:
+                if isinstance(alias, str) and alias.strip():
+                    aliases.append(alias.strip())
         normalized: GlossaryEntry = {
             "key": key,
             "pt": pt,
@@ -98,6 +106,8 @@ def _load_terms(path: Path, source: str, logger: logging.Logger) -> List[Glossar
             "notes": entry.get("notes"),
             "source": "manual" if source == "manual" else "dynamic",
             "locked": bool(entry.get("locked", source == "manual")),
+            "aliases": aliases,
+            "aliases_norm": [normalize_key(a) for a in aliases],
         }
         terms.append(normalized)
     logger.info("Glossário %s carregado: %d termos.", source, len(terms))
@@ -238,7 +248,7 @@ def select_terms_for_chunk(
     fallback_limit: int = 30,
 ) -> tuple[list[GlossaryEntry], int]:
     """
-    Seleciona termos cujo `key` aparece no chunk (case-insensitive).
+    Seleciona termos cujo `key` ou `alias` aparece no chunk (case-insensitive).
     Retorna (termos_para_prompt, matched_count).
     """
     if not manual_terms:
@@ -250,7 +260,12 @@ def select_terms_for_chunk(
         key_norm = normalize_key(str(term.get("key", "")))
         if not key_norm or key_norm in seen:
             continue
-        if key_norm in chunk_norm:
+        aliases_norm: list[str] = []
+        raw_aliases = term.get("aliases_norm") or term.get("aliases") or []
+        if isinstance(raw_aliases, list):
+            aliases_norm = [normalize_key(str(a)) for a in raw_aliases if str(a).strip()]
+        matched = key_norm in chunk_norm or any(a in chunk_norm for a in aliases_norm)
+        if matched:
             matches.append(term)
             seen.add(key_norm)
     matches = sorted(matches, key=lambda e: normalize_key(str(e.get("key", ""))))[:match_limit]

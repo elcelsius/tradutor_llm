@@ -45,7 +45,7 @@ def test_translation_retry_on_missing_dialogues(tmp_path: Path) -> None:
         already_preprocessed=True,
     )
 
-    assert '"C"' in result and '"D"' in result
+    assert "C" in result and "D" in result
     assert backend.calls >= 2
 
 

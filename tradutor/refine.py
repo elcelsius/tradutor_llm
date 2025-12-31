@@ -48,7 +48,7 @@ from .advanced_preprocess import clean_text as advanced_clean
 from .anti_hallucination import anti_hallucination_filter
 from .cleanup import cleanup_before_refine, detect_obvious_dupes, detect_glued_dialogues
 from .quote_fix import fix_unbalanced_quotes, count_curly_quotes, fix_blank_lines_inside_quotes
-from .text_postprocess import apply_structural_normalizers, fix_dialogue_artifacts
+from .text_postprocess import apply_structural_normalizers, apply_custom_normalizers, fix_dialogue_artifacts
 
 
 def _cache_signature_from(cfg: AppConfig, backend: LLMBackend) -> dict:
@@ -401,17 +401,22 @@ Nada antes ou depois dos marcadores.
     return prompt
 def split_markdown_sections(md_text: str) -> List[Tuple[str, str]]:
     """
-    Divide o Markdown em seções por headings `##`.
+    Divide o Markdown em seções por headings `#` até `######`.
 
     Retorna lista de tuplas (título, corpo). Se não houver headings,
-    retorna uma única seção com título vazio.
+    retorna uma única seção com título vazio. Preserva prefixo antes do primeiro heading.
     """
-    pattern = re.compile(r"^##\s+.+$", flags=re.MULTILINE)
+    pattern = re.compile(r"^#{1,6}\s+.+$", flags=re.MULTILINE)
     matches = list(pattern.finditer(md_text))
     sections: List[Tuple[str, str]] = []
 
     if not matches:
         return [("", md_text.strip())]
+
+    # Prefixo antes do primeiro heading
+    prefix = md_text[: matches[0].start()].strip()
+    if prefix:
+        sections.append(("", prefix))
 
     for idx, match in enumerate(matches):
         start = match.end()
@@ -461,6 +466,7 @@ def refine_section(
 
         def _apply_normalizers(text: str) -> tuple[str, dict]:
             normalized, norm_stats = apply_structural_normalizers(text)
+            normalized = apply_custom_normalizers(normalized)
             metrics["dialogue_splits"] = metrics.get("dialogue_splits", 0) + norm_stats.get("dialogue_splits", 0)
             metrics["triple_quotes_removed"] = metrics.get("triple_quotes_removed", 0) + norm_stats.get("triple_quotes_removed", 0)
             return normalized, norm_stats
@@ -1014,6 +1020,7 @@ def refine_markdown_file(
     final_md = sanitize_refine_output(final_md)
     final_md, dialogue_stats = fix_dialogue_artifacts(final_md)
     final_md, _ = apply_structural_normalizers(final_md)
+    final_md = apply_custom_normalizers(final_md)
     if logger.isEnabledFor(logging.DEBUG):
         logger.debug("Pós-processo de diálogo (refine-final): %s", dialogue_stats)
     opens_q, closes_q = count_curly_quotes(final_md)

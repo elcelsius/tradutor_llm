@@ -466,15 +466,17 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
             raise SystemExit(f"PDF {pdf.name} não possui texto extraído (pode ser imagem/scan).")
         if getattr(args, "preprocess_advanced", False):
             raw_text = advanced_clean(raw_text)
-        if getattr(args, "skip_front_matter", cfg.skip_front_matter):
-            raw_text = strip_front_matter(raw_text)
         if args.debug:
             logger.debug("Debug ativado: salvando também raw_extracted e preprocessed.")
             raw_out = cfg.output_dir / f"{pdf.stem}_raw_extracted.md"
             write_text(raw_out, raw_text)
             logger.info("Texto bruto salvo em %s", raw_out)
 
-        pre_text = preprocess_text(raw_text, logger)
+        pre_text = preprocess_text(
+            raw_text,
+            logger,
+            skip_front_matter=getattr(args, "skip_front_matter", cfg.skip_front_matter),
+        )
         if args.debug:
             pre_out = cfg.output_dir / f"{pdf.stem}_preprocessed.md"
             write_text(pre_out, pre_text)

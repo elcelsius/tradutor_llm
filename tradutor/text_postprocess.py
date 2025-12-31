@@ -99,6 +99,60 @@ def apply_structural_normalizers(text: str) -> tuple[str, dict]:
     }
 
 
+def apply_custom_normalizers(text: str) -> str:
+    """
+    Ajustes determinísticos adicionais:
+    - Canoniza variantes de Touka.
+    - Onomatopeia: linha/parágrafo "Gulp." -> "Glup.".
+    - Fala inteira entre aspas vira travessão (sem mexer em narração mista).
+    - Corrige typo comum: "poderam" -> "puderam".
+    - Junta fala + verbo de elocução em seguida (perguntou/disse/respondeu Nome).
+    """
+    if not text:
+        return text
+
+    # Canoniza Touka
+    touka_pattern = re.compile(r"\b(?:too\s*[-‑–—]?\s*ka|tou\s*[-‑–—]?\s*ka)\b", flags=re.IGNORECASE)
+    text = touka_pattern.sub("Touka", text)
+    text = re.sub(r"\bpoderam\b", "puderam", text, flags=re.IGNORECASE)
+
+    lines = text.splitlines()
+    normalized_lines: list[str] = []
+    for ln in lines:
+        stripped = ln.strip()
+        # Onomatopeia Gulp.
+        if re.fullmatch(r"gulp[\.!?…]?", stripped, flags=re.IGNORECASE):
+            normalized_lines.append("Glup.")
+            continue
+        # Fala inteira entre aspas (sem narração)
+        if re.fullmatch(r'[\"“].+[\"”]', stripped):
+            inner = stripped[1:-1].strip()
+            normalized_lines.append(f"— {inner}")
+            continue
+        normalized_lines.append(ln)
+
+    rebuilt = "\n".join(normalized_lines)
+
+    # Junta fala isolada + verbo de elocução no parágrafo seguinte
+    paragraphs = rebuilt.split("\n\n")
+    merged_paragraphs: list[str] = []
+    i = 0
+    speech_re = re.compile(r'^(?:[\"“].+[\"”]\s*|—\s?.+)$')
+    verb_re = re.compile(r"^(perguntou|disse|respondeu)\s+\w+\.?$", flags=re.IGNORECASE)
+    while i < len(paragraphs):
+        current = paragraphs[i].strip()
+        if speech_re.match(current) and i + 1 < len(paragraphs):
+            nxt = paragraphs[i + 1].strip()
+            if verb_re.match(nxt):
+                merged_paragraphs.append(f"{current} {nxt}")
+                i += 2
+                continue
+        merged_paragraphs.append(paragraphs[i])
+        i += 1
+
+    return "\n\n".join(merged_paragraphs)
+
+
 def fix_dialogue_artifacts(text: str) -> tuple[str, dict]:
     """
     Corrige artefatos estruturais pós-refine em diálogos.

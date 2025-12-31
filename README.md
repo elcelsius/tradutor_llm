@@ -26,7 +26,7 @@ python -m tradutor.main traduz --input "data/meu_livro.pdf"
 ---
 
 ## O que o pipeline faz
-- **Pré-processa** o PDF (limpa lixo básico).
+- **Pré-processa** o PDF (limpa lixo básico, remove front-matter/TOC quando habilitado).
 - **Desquebra** linhas (usa LLM configurado em `desquebrar_*`).
 - **Traduz** EN → PT-BR com contexto leve e glossário opcional.
 - **Cleanup antes do refine** (remove duplicatas/glued, etc).
@@ -44,6 +44,7 @@ Principais chaves (padrões já preenchidos):
 - `ollama_keep_alive`: mantém o modelo carregado entre chamadas (ex.: `30m`).
 - PDF: `pdf_enabled` (padrão false; habilite no config ou com `--pdf-enabled`), `pdf_font.file/size/leading`, `pdf_font_fallbacks`, `pdf_margin`, `pdf_author`, `pdf_language`.
 - Caminhos: `data_dir`, `output_dir`.
+- Robustez contra TOC: `skip_front_matter: true` (default) ativa heurística de remoção de sumário inicial (`strip_toc`); headings vazios (# Prologue/# Chapter N) são mesclados/pulados antes de chamar o LLM.
 
 > O desquebrar usa exatamente o modelo/backend definidos em `config.yaml`; nada hardcoded.
 
@@ -207,6 +208,7 @@ tradutor.py / refinador.py # wrappers legados (chamam main)
   - Refine: `mistral-small3.1:24b-instruct-2503-q4_K_M`
 - Para PDFs longos: mantenha `translate_chunk_chars` em ~2000 e `translate_num_predict` em ~3000 (Ollama). Guardrails de diálogo (`translate_dialogue_guardrails`) ajudam a evitar omissão de falas.
 - Se fonte do PDF não existir, ajuste `pdf_font.file` ou use um fallback válido (ex.: `C:/Windows/Fonts/Arial.ttf`).
+- Se o debug mostrar `chunk001_original_en.txt` só com `# Prologue`, habilite `skip_front_matter` (já é padrão); o pipeline agora remove TOC curto e não envia headings vazios para o modelo.
 
 ---
 

@@ -5,7 +5,7 @@ from typing import List, Dict
 
 
 SECTION_PATTERN = re.compile(
-    r"^(?P<title>(?:prologue|epilogue|afterword|chapter\s+\d+(?::[^\n]+)?))\s*$",
+    r"^(?P<title>(?:prologue|epilogue|afterword|chapter\s+\d+(?:(?::|\s*[–—-])\s*[^\n]*)?))\s*$",
     re.IGNORECASE,
 )
 
@@ -26,6 +26,12 @@ def split_into_sections(text: str) -> List[Dict]:
         return [{"title": "Full Text", "body": text.strip(), "start_idx": 0, "end_idx": len(text)}]
 
     sections: List[Dict] = []
+    first_start = matches[0][0]
+    if first_start > 0:
+        pre_body = "\n".join(lines[:first_start]).strip()
+        if pre_body:
+            pre_end_idx = sum(len(l) + 1 for l in lines[:first_start])
+            sections.append({"title": "Full Text", "body": pre_body, "start_idx": 0, "end_idx": pre_end_idx})
     for i, (start_line, title) in enumerate(matches):
         end_line = matches[i + 1][0] if i + 1 < len(matches) else len(lines)
         body_lines = lines[start_line + 1 : end_line]

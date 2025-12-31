@@ -41,7 +41,7 @@ def test_translate_retries_on_truncated_output(tmp_path: Path) -> None:
     cfg = AppConfig(output_dir=tmp_path, max_retries=2, split_by_sections=False)
     backend = _RetryBackend()
     logger = logging.getLogger("retry-test")
-    input_text = "This is a longer input text that should be fully present after translation."
+    input_text = ("This is a longer input text that should be fully present after translation. " * 8).strip()
 
     result = translate_document(
         pdf_text=input_text,
@@ -66,7 +66,7 @@ def test_translate_parses_output_without_end_marker(tmp_path: Path) -> None:
     cfg = AppConfig(output_dir=tmp_path, max_retries=1, split_by_sections=False)
     backend = _MissingMarkerBackend()
     logger = logging.getLogger("missing-marker")
-    input_text = "Epilogue"
+    input_text = ("Epilogue content that should be passed through without missing markers. " * 5).strip()
 
     result = translate_document(
         pdf_text=input_text,
