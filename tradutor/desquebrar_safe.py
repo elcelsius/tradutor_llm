@@ -11,7 +11,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-# Adicionei de volta as aspas curvas (” e “) que o agente removeu
+# Adicionei de volta a aspa curva de fechamento (”) que o agente removeu
 END_PUNCTUATION = {".", "?", "!", '"', "'", ":", "”"}
 SHORT_TITLE_LEN = 25
 
