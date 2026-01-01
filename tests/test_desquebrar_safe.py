@@ -22,6 +22,12 @@ def test_preserve_dialogue_and_blank_lines():
     assert safe_reflow(raw) == expected
 
 
+def test_preserve_em_dash_dialogue_start():
+    raw = "Linha anterior\n— Então comecou.\ncontinua aqui"
+    expected = "Linha anterior\n— Então comecou.\ncontinua aqui"
+    assert safe_reflow(raw) == expected
+
+
 def test_block_join_when_next_is_uppercase_or_title():
     raw = "final de frase\nProximo Paragrafo\nCAPITULO UM\ntexto inicia"
     expected = "final de frase\nProximo Paragrafo\nCAPITULO UM\ntexto inicia"

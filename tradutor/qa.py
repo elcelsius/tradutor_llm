@@ -81,6 +81,8 @@ def needs_retry(
     ratio = len(output_text.strip()) / max(len(input_text.strip()), 1)
     if ratio < 0.6:
         return True, "output truncado (ratio < 0.6)"
+    if ratio > 1.8:
+        return True, "output longo (ratio > 1.8)"
     if _has_suspicious_repetition(output_text):
         return True, "repeticao suspeita"
     if _has_meta_noise(output_text):

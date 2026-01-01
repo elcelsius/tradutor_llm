@@ -65,7 +65,7 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
         default=cfg.translate_num_predict,
         help="Limite de tokens gerados por chunk (Ollama).",
     )
-    t.add_argument("--no-refine", action="store_true", help="Nao executar refine apos traduzir.")
+    t.add_argument("--no-refine", action="store_true", help="Não executar refine após traduzir.")
     t.add_argument(
         "--desquebrar-mode",
         dest="desquebrar_mode",
@@ -212,7 +212,7 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
         default=cfg.translate_num_predict,
         help="Limite de tokens gerados por chunk (Ollama).",
     )
-    tm.add_argument("--no-refine", action="store_true", help="Nao executar refine apos traduzir.")
+    tm.add_argument("--no-refine", action="store_true", help="Não executar refine após traduzir.")
     tm.add_argument(
         "--resume",
         action="store_true",

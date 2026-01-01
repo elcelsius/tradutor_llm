@@ -11,7 +11,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-# Adicionei de volta as aspas curvas (” e “) que o agente removeu
+# Adicionei de volta a aspa curva de fechamento (”) que o agente removeu
 END_PUNCTUATION = {".", "?", "!", '"', "'", ":", "”"}
 SHORT_TITLE_LEN = 25
 
@@ -36,7 +36,7 @@ def _is_dialogue_start(line: str) -> bool:
     """Detecta linhas que parecem iniciar dialogo (aspas retas/curvas ou travessao)."""
     stripped = line.lstrip()
     # Adicionei de volta a aspa curva de abertura (“)
-    return stripped.startswith(('"', "'", "-", "“", "”"))
+    return stripped.startswith(('"', "'", "-", "—", "“", "”"))
 
 
 def _is_title_like(line: str) -> bool:

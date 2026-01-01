@@ -17,27 +17,74 @@ class _StubBackend:
         return types.SimpleNamespace(text=out)
 
 
-def test_desquebrar_fallback_on_stray_quote_line():
-    cfg = AppConfig(desquebrar_chunk_chars=500)
+def _run_desquebrar(original, llm_output, **cfg_overrides):
+    cfg = AppConfig(desquebrar_chunk_chars=500, **cfg_overrides)
     logger = setup_logging()
-    original = "Mechanical devices.\nOh, what a savage prospect…"
-    bad_output = 'Mechanical devices.\n"\nOh, what a savage prospect…'
-    backend = _StubBackend([bad_output])
-
+    backend = _StubBackend([llm_output])
     result, stats = desquebrar_text(original, cfg, logger, backend)
+    return result, stats, backend
 
-    assert result.replace("\n\n", "\n") == safe_reflow(original)
+
+def test_desquebrar_stray_quote_line_vol8_case():
+    original = "“devices.”\n“Oh, what…”"
+    llm_output = "“devices.”\n\"\n“Oh, what…”."
+
+    result, stats, backend = _run_desquebrar(original, llm_output)
+
+    assert backend.calls == 1
+    assert stats.fallbacks == 1
+    assert stats.blocks[0]["fallback_reason"] == "qa_stray_quote_lines"
+    assert result == "“devices.”\n\n“Oh, what…”"
+
+
+def test_desquebrar_fallback_on_stray_quote_line():
+    original = "Mechanical devices.\nOh, what a savage prospect…"
+    llm_output = 'Mechanical devices.\n"\nOh, what a savage prospect…'
+
+    result, stats, backend = _run_desquebrar(original, llm_output)
+
+    assert backend.calls == 1
     assert stats.fallbacks == 1
     assert stats.stray_quote_lines >= 1
+    assert stats.blocks[0]["fallback_reason"] == "qa_stray_quote_lines"
+    assert result.replace("\n\n", "\n") == safe_reflow(original)
+
+
+def test_desquebrar_fixes_stutter_space():
+    original = "D- do."
+    llm_output = "D- do."
+
+    result, stats, _ = _run_desquebrar(original, llm_output)
+
+    assert stats.fallbacks == 0
+    assert result == "D-do."
+
+
+def test_desquebrar_fixes_hyphen_linewrap():
+    original = "hang-\nups"
+    llm_output = "hang-\nups"
+
+    result, stats, _ = _run_desquebrar(original, llm_output)
+
+    assert stats.fallbacks == 0
+    assert result == "hang-ups"
+
+
+def test_desquebrar_isolates_asterisks():
+    original = "alpha\n***\nomega"
+    llm_output = "alpha\n***\nomega"
+
+    result, stats, _ = _run_desquebrar(original, llm_output)
+
+    assert stats.fallbacks == 0
+    assert result == "alpha\n\n***\n\nomega"
 
 
 def test_desquebrar_hyphen_and_asterisks_postprocess(tmp_path):
-    cfg = AppConfig(desquebrar_chunk_chars=500, output_dir=tmp_path)
-    logger = setup_logging()
     original = "D- do\nhang-\nups\nbefore\n***\nafter"
-    backend = _StubBackend([original])
+    llm_output = original
 
-    result, stats = desquebrar_text(original, cfg, logger, backend)
+    result, stats, _ = _run_desquebrar(original, llm_output, output_dir=tmp_path)
 
     assert "D-do" in result
     assert "hang-ups" in result

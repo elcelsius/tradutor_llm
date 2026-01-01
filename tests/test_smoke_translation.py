@@ -52,6 +52,8 @@ def test_translate_document_smoke() -> None:
     )
 
     assert result, "A traducao nao pode ser vazia."
+    assert "TEXTO_TRADUZIDO_INICIO" not in result
+    assert "TEXTO_TRADUZIDO_FIM" not in result
     lower_result = result.lower()
     assert "<think>" not in lower_result
     for meta in META_PATTERNS_TRANSLATE:

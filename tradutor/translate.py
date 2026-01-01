@@ -428,6 +428,7 @@ def translate_document(
     chunk_metrics: list[dict] = []
 
     glossary_hash = chunk_hash(glossary_text) if glossary_text else None
+    chunk_hashes = [chunk_hash(c) for c in chunks]
     current_cache_signature = {
         "backend": getattr(backend, "backend", None),
         "model": getattr(backend, "model", None),
@@ -436,6 +437,8 @@ def translate_document(
         "repeat_penalty": getattr(backend, "repeat_penalty", None),
         "translate_chunk_chars": cfg.translate_chunk_chars,
         "glossary_hash": glossary_hash,
+        "doc_hash": doc_hash,
+        "source": source_slug or "",
     }
 
     def _is_cache_compatible(data: dict) -> bool:
@@ -443,6 +446,14 @@ def translate_document(
         if not isinstance(meta, dict):
             return False
         return all(meta.get(k) == v for k, v in current_cache_signature.items())
+
+    if resume_manifest:
+        manifest_doc_hash = resume_manifest.get("doc_hash")
+        if manifest_doc_hash and manifest_doc_hash != doc_hash:
+            logger.warning(
+                "Manifesto de progresso pertence a outro documento (doc_hash diferente); ignorando resume.",
+            )
+            resume_manifest = None
 
     if resume_manifest:
         manifest_total = resume_manifest.get("total_chunks")
@@ -453,6 +464,7 @@ def translate_document(
                 total_chunks,
             )
         raw_chunks = resume_manifest.get("chunks") or {}
+        raw_hashes = resume_manifest.get("chunk_hashes") or {}
         if isinstance(raw_chunks, dict):
             for key, val in raw_chunks.items():
                 try:
@@ -460,6 +472,14 @@ def translate_document(
                 except (TypeError, ValueError):
                     continue
                 if isinstance(val, str):
+                    expected_hash = raw_hashes.get(str(idx)) if isinstance(raw_hashes, dict) else None
+                    current_hash = chunk_hashes[idx - 1] if 0 < idx <= len(chunk_hashes) else None
+                    if expected_hash and current_hash and expected_hash != current_hash:
+                        logger.warning(
+                            "Manifesto resume ignorado para chunk %d: hash diferente do input atual.",
+                            idx,
+                        )
+                        continue
                     chunk_outputs[idx] = val
 
         raw_translated = resume_manifest.get("translated_chunks") or []
@@ -491,6 +511,8 @@ def translate_document(
             "translated_chunks": sorted(translated_ok),
             "failed_chunks": sorted(failed_chunks),
             "timestamp": datetime.now().isoformat(),
+            "doc_hash": doc_hash,
+            "chunk_hashes": {str(i + 1): h for i, h in enumerate(chunk_hashes)},
             "chunks": {str(idx): text for idx, text in chunk_outputs.items()},
         }
         try:
@@ -839,6 +861,7 @@ def translate_document(
                             "chunk_index": idx,
                             "mode": "translate",
                             "source": source_slug or "",
+                            "doc_hash": doc_hash,
                             "backend": getattr(backend, "backend", None),
                             "model": getattr(backend, "model", None),
                             "num_predict": getattr(backend, "num_predict", None),
