@@ -13,6 +13,7 @@ from .cache_utils import cache_exists, chunk_hash, load_cache, save_cache, set_c
 from .llm_backend import LLMBackend
 from .preprocess import paragraphs_from_text
 from .utils import chunk_by_paragraphs, timed
+from .desquebrar_safe import safe_reflow
 
 
 DESQUEBRAR_PROMPT = """
@@ -29,6 +30,11 @@ SAFE_DIALOGUE_BREAK_PATTERNS = (
     (re.compile(r"”{2,}\s*“"), "”\n\n“"),
     (re.compile(r"”\s*“"), "”\n\n“"),
 )
+QUOTE_LINE_TOKENS = {'"', "“", "”", "'''", '"""'}
+QUOTE_CHARS = {'"', "“", "”"}
+HYPHEN_LINEBREAK_RE = re.compile(r"(\w)-\s*\n\s*(\w)")
+STUTTER_SPACE_RE = re.compile(r"\b([A-Za-zÀ-ÿ])-\s+([A-Za-zÀ-ÿ])")
+POSTPROCESS_VERSION = 1
 
 
 @dataclass
@@ -37,6 +43,9 @@ class DesquebrarStats:
     cache_hits: int = 0
     fallbacks: int = 0
     dialogue_splits: int = 0
+    hyphen_linewrap_count: int = 0
+    stutter_space_count: int = 0
+    stray_quote_lines: int = 0
     blocks: list[dict] | None = None
 
 
@@ -49,7 +58,80 @@ def _count_ellipses(text: str) -> int:
 
 
 def _has_lonely_quote_line(text: str) -> bool:
-    return any(line.strip() in {'"', "“", "”"} for line in text.splitlines())
+    return any(line.strip() in QUOTE_LINE_TOKENS for line in text.splitlines())
+
+
+def _strip_triple_quote_wrapper(text: str) -> str:
+    stripped = text.strip()
+    if stripped.startswith('"""') and stripped.endswith('"""') and len(stripped) >= 6:
+        return stripped[3:-3].strip()
+    return stripped
+
+
+def _remove_stray_quote_lines(text: str) -> tuple[str, int]:
+    lines = text.splitlines()
+    kept: list[str] = []
+    removed = 0
+    for line in lines:
+        if line.strip() in QUOTE_LINE_TOKENS:
+            removed += 1
+            continue
+        kept.append(line)
+    return "\n".join(kept), removed
+
+
+def _isolate_asterisks(text: str) -> str:
+    lines = text.splitlines()
+    output: list[str] = []
+
+    def append_blank() -> None:
+        if output and output[-1] != "":
+            output.append("")
+
+    for line in lines:
+        if line.strip() == "***":
+            append_blank()
+            output.append("***")
+            output.append("")
+            continue
+        output.append(line)
+
+    compact: list[str] = []
+    for line in output:
+        if line == "":
+            if not compact or compact[-1] != "":
+                compact.append("")
+        else:
+            compact.append(line)
+    return "\n".join(compact)
+
+
+def _count_quotes(text: str) -> int:
+    return sum(1 for ch in text if ch in QUOTE_CHARS)
+
+
+def _has_quote_inflation(orig: str, output: str) -> bool:
+    orig_count = _count_quotes(orig)
+    out_count = _count_quotes(output)
+    if out_count <= orig_count:
+        return False
+    return out_count >= orig_count * 1.5 and (out_count - orig_count) >= 4
+
+
+def postprocess_llm_output(text: str) -> tuple[str, dict]:
+    cleaned = _strip_triple_quote_wrapper(text)
+    cleaned, stray_quote_lines = _remove_stray_quote_lines(cleaned)
+    cleaned, hyphen_linewrap_count = HYPHEN_LINEBREAK_RE.subn(r"\1-\2", cleaned)
+    cleaned, stutter_space_count = STUTTER_SPACE_RE.subn(r"\1-\2", cleaned)
+    cleaned = _isolate_asterisks(cleaned)
+    return (
+        cleaned,
+        {
+            "hyphen_linewrap_count": hyphen_linewrap_count,
+            "stutter_space_count": stutter_space_count,
+            "stray_quote_lines": stray_quote_lines,
+        },
+    )
 
 
 def validate_desquebrar_output(orig: str, output: str) -> tuple[bool, list[str]]:
@@ -167,6 +249,7 @@ def desquebrar_text(
                 "temperature": getattr(backend, "temperature", None),
                 "chunk_chars": max_chars,
                 "repeat_penalty": getattr(backend, "repeat_penalty", None),
+                "postprocess_version": POSTPROCESS_VERSION,
             }
             if isinstance(meta, dict):
                 meta_ok = all(meta.get(k) == v for k, v in expected.items())
@@ -194,9 +277,53 @@ def desquebrar_text(
         prompt = build_desquebrar_prompt(chunk)
         try:
             latency, response = timed(backend.generate, prompt)
-            cleaned = response.text.strip()
+            cleaned, post_stats = postprocess_llm_output(response.text)
+            stats.hyphen_linewrap_count += post_stats["hyphen_linewrap_count"]
+            stats.stutter_space_count += post_stats["stutter_space_count"]
+            stats.stray_quote_lines += post_stats["stray_quote_lines"]
+            cleaned = cleaned.strip()
             if not cleaned:
                 raise ValueError("Resposta vazia do desquebrar.")
+            if post_stats["stray_quote_lines"] > 0:
+                fallback_text = safe_reflow(chunk)
+                outputs.append(fallback_text)
+                stats.fallbacks += 1
+                logger.warning(
+                    "desq-%d/%d qa fallback (stray_quote_lines=%d)",
+                    idx,
+                    total_chunks,
+                    post_stats["stray_quote_lines"],
+                )
+                stats.blocks.append(
+                    {
+                        "chunk_index": idx,
+                        "chars_in": len(chunk),
+                        "chars_out": len(fallback_text),
+                        "latency": latency,
+                        "from_cache": False,
+                        "fallback": True,
+                        "fallback_reason": "qa_stray_quote_lines",
+                        "stray_quote_lines": post_stats["stray_quote_lines"],
+                    }
+                )
+                continue
+            if _has_quote_inflation(chunk, cleaned):
+                fallback_text = safe_reflow(chunk)
+                outputs.append(fallback_text)
+                stats.fallbacks += 1
+                logger.warning("desq-%d/%d qa fallback (quote_inflation)", idx, total_chunks)
+                stats.blocks.append(
+                    {
+                        "chunk_index": idx,
+                        "chars_in": len(chunk),
+                        "chars_out": len(fallback_text),
+                        "latency": latency,
+                        "from_cache": False,
+                        "fallback": True,
+                        "fallback_reason": "qa_quote_inflation",
+                    }
+                )
+                continue
             is_valid, reasons = validate_desquebrar_output(chunk, cleaned)
             if not is_valid:
                 fallback_text = deterministic_unbreak(chunk)
@@ -247,6 +374,7 @@ def desquebrar_text(
                     "temperature": getattr(backend, "temperature", None),
                     "chunk_chars": max_chars,
                     "repeat_penalty": getattr(backend, "repeat_penalty", None),
+                    "postprocess_version": POSTPROCESS_VERSION,
                 },
             )
         except Exception as exc:  # pragma: no cover - network/LLM failure path
@@ -271,6 +399,12 @@ def desquebrar_text(
     combined, norm_stats = normalize_dialogue_breaks_source_safe(combined)
     combined = normalize_wrapped_lines(combined)
     stats.dialogue_splits = norm_stats.get("dialogue_splits", 0)
+    logger.info(
+        "desquebrar metrics: hyphen_linewrap_count=%d stutter_space_count=%d stray_quote_lines=%d",
+        stats.hyphen_linewrap_count,
+        stats.stutter_space_count,
+        stats.stray_quote_lines,
+    )
     return combined, stats
 
 
@@ -322,6 +456,9 @@ def desquebrar_stats_to_dict(stats: DesquebrarStats | None, cfg: AppConfig) -> d
         "cache_hits": stats.cache_hits,
         "fallbacks": stats.fallbacks,
         "dialogue_splits": stats.dialogue_splits,
+        "hyphen_linewrap_count": stats.hyphen_linewrap_count,
+        "stutter_space_count": stats.stutter_space_count,
+        "stray_quote_lines": stats.stray_quote_lines,
         "blocks": stats.blocks or [],
         "effective_desquebrar_chunk_chars": cfg.desquebrar_chunk_chars,
         "backend": getattr(cfg, "desquebrar_backend", None),

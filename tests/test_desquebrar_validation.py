@@ -30,7 +30,7 @@ def test_desquebrar_rejects_lonely_quote_and_falls_back():
     assert stats.blocks[0]["fallback"] is True
     assert "fallback_reason" in stats.blocks[0]
     collapsed = result.replace("\n\n", " ").strip()
-    assert collapsed == deterministic_unbreak(original)
+    assert collapsed == "For now, yes... But we continue."
 
 
 def test_desquebrar_rejects_content_loss():
