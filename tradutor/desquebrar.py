@@ -13,6 +13,7 @@ from .cache_utils import cache_exists, chunk_hash, load_cache, save_cache, set_c
 from .llm_backend import LLMBackend
 from .preprocess import paragraphs_from_text
 from .utils import chunk_by_paragraphs, timed
+from .desquebrar_safe import safe_reflow
 
 
 DESQUEBRAR_PROMPT = """
@@ -38,6 +39,9 @@ class DesquebrarStats:
     fallbacks: int = 0
     dialogue_splits: int = 0
     blocks: list[dict] | None = None
+    hyphen_linewrap_count: int = 0
+    stutter_space_count: int = 0
+    stray_quote_lines: int = 0
 
 
 def _count_alnum(text: str) -> int:
@@ -50,6 +54,54 @@ def _count_ellipses(text: str) -> int:
 
 def _has_lonely_quote_line(text: str) -> bool:
     return any(line.strip() in {'"', "“", "”"} for line in text.splitlines())
+
+
+def _count_quotes(text: str) -> int:
+    return sum(1 for ch in text if ch in {'"', "“", "”"})
+
+
+def _isolate_asterisks(text: str) -> str:
+    lines = text.splitlines()
+    new_lines: list[str] = []
+    for i, ln in enumerate(lines):
+        if ln.strip() == "***":
+            if new_lines and new_lines[-1].strip() != "":
+                new_lines.append("")
+            new_lines.append("***")
+            if i + 1 < len(lines) and lines[i + 1].strip() != "":
+                new_lines.append("")
+            continue
+        new_lines.append(ln)
+    return "\n".join(new_lines)
+
+
+def _postprocess_output(orig: str, text: str) -> tuple[str, dict]:
+    """
+    Ajustes determinísticos pós-LLM para o desquebrar.
+    """
+    metrics = {"hyphen_linewrap_count": 0, "stutter_space_count": 0, "stray_quote_lines": 0}
+    cleaned = text.strip()
+    for _ in range(2):
+        if cleaned.startswith('"""'):
+            cleaned = cleaned[3:].lstrip()
+        if cleaned.endswith('"""'):
+            cleaned = cleaned[:-3].rstrip()
+    lines = cleaned.splitlines()
+    kept_lines: list[str] = []
+    for ln in lines:
+        if ln.strip() in {'"', "“", "”", "'''", '"""'}:
+            metrics["stray_quote_lines"] += 1
+            continue
+        kept_lines.append(ln)
+    cleaned = "\n".join(kept_lines)
+
+    cleaned, hcount = re.subn(r"(\w)-\s*\n\s*(\w)", r"\1-\2", cleaned)
+    metrics["hyphen_linewrap_count"] += hcount
+    cleaned, scount = re.subn(r"\b([A-Za-zÀ-ÿ])-\s+([A-Za-zÀ-ÿ])", r"\1-\2", cleaned)
+    metrics["stutter_space_count"] += scount
+
+    cleaned = _isolate_asterisks(cleaned)
+    return cleaned, metrics
 
 
 def validate_desquebrar_output(orig: str, output: str) -> tuple[bool, list[str]]:
@@ -194,12 +246,24 @@ def desquebrar_text(
         prompt = build_desquebrar_prompt(chunk)
         try:
             latency, response = timed(backend.generate, prompt)
-            cleaned = response.text.strip()
-            if not cleaned:
+            cleaned = response.text
+            cleaned, pp_metrics = _postprocess_output(chunk, cleaned)
+            stats.hyphen_linewrap_count += pp_metrics.get("hyphen_linewrap_count", 0)
+            stats.stutter_space_count += pp_metrics.get("stutter_space_count", 0)
+            stats.stray_quote_lines += pp_metrics.get("stray_quote_lines", 0)
+            if not cleaned.strip():
                 raise ValueError("Resposta vazia do desquebrar.")
+            in_quotes = _count_quotes(chunk)
+            out_quotes = _count_quotes(cleaned)
+            quote_inflation = in_quotes == 0 and out_quotes > 2 or (in_quotes > 0 and out_quotes > max(int(in_quotes * 1.5), in_quotes + 2))
+            fallback_trigger = pp_metrics.get("stray_quote_lines", 0) > 0 or quote_inflation
             is_valid, reasons = validate_desquebrar_output(chunk, cleaned)
+            if fallback_trigger:
+                reasons = reasons or []
+                reasons.append("quote_inflation" if quote_inflation else "stray_quote_lines")
+                is_valid = False
             if not is_valid:
-                fallback_text = deterministic_unbreak(chunk)
+                fallback_text = safe_reflow(chunk)
                 outputs.append(fallback_text)
                 stats.fallbacks += 1
                 reason_str = ",".join(reasons) or "invalid_output"
@@ -271,6 +335,12 @@ def desquebrar_text(
     combined, norm_stats = normalize_dialogue_breaks_source_safe(combined)
     combined = normalize_wrapped_lines(combined)
     stats.dialogue_splits = norm_stats.get("dialogue_splits", 0)
+    logger.info(
+        "Desquebrar métricas: hyphen_linewrap=%d stutter_space=%d stray_quote_lines=%d",
+        stats.hyphen_linewrap_count,
+        stats.stutter_space_count,
+        stats.stray_quote_lines,
+    )
     return combined, stats
 
 
@@ -322,6 +392,9 @@ def desquebrar_stats_to_dict(stats: DesquebrarStats | None, cfg: AppConfig) -> d
         "cache_hits": stats.cache_hits,
         "fallbacks": stats.fallbacks,
         "dialogue_splits": stats.dialogue_splits,
+        "hyphen_linewrap_count": stats.hyphen_linewrap_count,
+        "stutter_space_count": stats.stutter_space_count,
+        "stray_quote_lines": stats.stray_quote_lines,
         "blocks": stats.blocks or [],
         "effective_desquebrar_chunk_chars": cfg.desquebrar_chunk_chars,
         "backend": getattr(cfg, "desquebrar_backend", None),

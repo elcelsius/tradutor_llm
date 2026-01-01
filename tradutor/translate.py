@@ -923,6 +923,29 @@ def translate_document(
                 orig_quotes,
                 translated_quotes,
             )
+        reject_reasons: list[str] = []
+        if cleaned_ratio > getattr(cfg, "translate_max_ratio", 1.8):
+            reject_reasons.append(f"ratio_out_in_{cleaned_ratio:.2f}")
+        if fail_on_error and suspect_output:
+            reject_reasons.append(suspect_reason or "suspect_output")
+        rejected_output = bool(reject_reasons)
+        if rejected_output:
+            failed_chunks.add(idx)
+            translated_ok.discard(idx)
+            placeholder = f"[CHUNK_TRANSLATION_REJECTED_{idx}] ({';'.join(reject_reasons)})"
+            translated_chunks[-1] = placeholder
+            final_output = placeholder
+            chunk_outputs[idx] = placeholder
+            logger.error(
+                "Chunk %d/%d rejeitado por guardrail: %s (ratio=%.2f)",
+                idx,
+                total_chunks,
+                ";".join(reject_reasons),
+                cleaned_ratio,
+            )
+            if fail_on_error:
+                raise RuntimeError(f"Tradução rejeitada no chunk {idx}/{total_chunks}: {', '.join(reject_reasons)}")
+
         chunk_metrics.append(
             {
                 "chunk_index": idx,
@@ -940,6 +963,8 @@ def translate_document(
                                 "triple_quotes_removed": normalizer_stats.get("triple_quotes_removed", 0),
                                 "suspect_output": suspect_output,
                                 "suspect_reason": suspect_reason,
+                                "rejected_output": rejected_output,
+                                "reject_reason": ";".join(reject_reasons),
                             }
                         )
 

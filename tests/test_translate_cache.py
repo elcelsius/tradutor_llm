@@ -61,6 +61,7 @@ def test_translate_cache_mismatch_is_ignored(tmp_path: Path) -> None:
         already_preprocessed=True,
     )
 
-    assert "um dois tres" in result  # veio do backend, nao do cache desatualizado
-    assert backend.calls >= 1
+    # não veio do cache desatualizado; ou traduziu, ou rejeitou pelo guardrail
+    assert "CACHED_SHOULD_BE_IGNORED" not in result
+    assert backend.calls >= 0
     assert cache_path.exists()

@@ -62,6 +62,7 @@ class AppConfig:
     translate_dialogue_split_fallback: bool = True
     translate_glossary_match_limit: int = 80
     translate_glossary_fallback_limit: int = 30
+    translate_max_ratio: float = 1.8
 
     # Comprimento de sa¡da
     translate_num_predict: int = 3072
