@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import time
+import hashlib
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -41,6 +42,7 @@ from .cache_utils import (
     load_cache,
     save_cache,
     is_near_duplicate,
+    is_duplicate_reuse_safe,
     set_cache_base_dir,
 )
 from .qa import needs_retry
@@ -49,6 +51,13 @@ from .anti_hallucination import anti_hallucination_filter
 from .cleanup import cleanup_before_refine, detect_obvious_dupes, detect_glued_dialogues
 from .quote_fix import fix_unbalanced_quotes, count_curly_quotes, fix_blank_lines_inside_quotes
 from .text_postprocess import apply_structural_normalizers, apply_custom_normalizers, fix_dialogue_artifacts
+
+REFINE_PIPELINE_VERSION = "1"
+
+
+def refine_prompt_fingerprint() -> str:
+    template = build_refine_prompt("{section}", glossary_enabled=True, glossary_block="{glossary}")
+    return hashlib.sha256(template.encode("utf-8")).hexdigest()
 
 
 def _cache_signature_from(cfg: AppConfig, backend: LLMBackend) -> dict:
@@ -59,6 +68,8 @@ def _cache_signature_from(cfg: AppConfig, backend: LLMBackend) -> dict:
         "temperature": getattr(backend, "temperature", None),
         "repeat_penalty": getattr(backend, "repeat_penalty", None),
         "guardrails": getattr(cfg, "refine_guardrails", None),
+        "prompt_hash": refine_prompt_fingerprint(),
+        "pipeline_version": REFINE_PIPELINE_VERSION,
     }
 
 
@@ -501,7 +512,7 @@ def refine_section(
             )
         llm_raw: str | None = None
         for prev_chunk, prev_final in seen_chunks:
-            if is_near_duplicate(prev_chunk, chunk):
+            if is_near_duplicate(prev_chunk, chunk) and is_duplicate_reuse_safe(prev_chunk, chunk):
                 logger.info("Chunk ref-%d/%d-%d/%d marcado como duplicado; reuso habilitado.", index, total, c_idx, len(chunks))
                 normalized_dup, norm_stats = _apply_normalizers(prev_final)
                 refined_parts.append(normalized_dup)
@@ -813,6 +824,8 @@ def refine_section(
                     "temperature": getattr(backend, "temperature", None),
                     "repeat_penalty": getattr(backend, "repeat_penalty", None),
                     "guardrails": getattr(cfg, "refine_guardrails", None),
+                    "prompt_hash": refine_prompt_fingerprint(),
+                    "pipeline_version": REFINE_PIPELINE_VERSION,
                 },
             )
             if debug_writer:

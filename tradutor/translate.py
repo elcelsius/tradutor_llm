@@ -22,6 +22,7 @@ from .cache_utils import (
     load_cache,
     save_cache,
     is_near_duplicate,
+    is_duplicate_reuse_safe,
     set_cache_base_dir,
 )
 from .llm_backend import LLMBackend
@@ -45,6 +46,17 @@ STUB_HEADER_RE = re.compile(
     r"^#?\s*(prologue|chapter\s+\d+(?::[^\n]+)?|epilogue|afterword)\s*$",
     re.IGNORECASE,
 )
+TRANSLATE_PIPELINE_VERSION = "1"
+
+
+def translation_prompt_fingerprint(*, allow_adaptation: bool) -> str:
+    template = build_translation_prompt(
+        "{chunk}",
+        context="{context}",
+        glossary_text="{glossary}",
+        allow_adaptation=allow_adaptation,
+    )
+    return hashlib.sha256(template.encode("utf-8")).hexdigest()
 
 
 def _extract_last_sentence(text: str) -> str:
@@ -457,6 +469,7 @@ def translate_document(
 
     glossary_hash = chunk_hash(glossary_text) if glossary_text else None
     chunk_hashes = [chunk_hash(c) for c in chunks]
+    prompt_hash = translation_prompt_fingerprint(allow_adaptation=allow_adapt_flag)
     current_cache_signature = {
         "backend": getattr(backend, "backend", None),
         "model": getattr(backend, "model", None),
@@ -467,6 +480,11 @@ def translate_document(
         "glossary_hash": glossary_hash,
         "doc_hash": doc_hash,
         "source": source_slug or "",
+        "allow_adaptation": allow_adapt_flag,
+        "split_by_sections": split_flag,
+        "dialogue_guardrails_mode": dialogue_guardrails_mode,
+        "prompt_hash": prompt_hash,
+        "pipeline_version": TRANSLATE_PIPELINE_VERSION,
     }
 
     def _is_cache_compatible(data: dict) -> bool:
@@ -614,6 +632,7 @@ def translate_document(
         normalizer_stats = {"dialogue_splits": 0, "triple_quotes_removed": 0}
         cache_payload: dict | None = None
         cache_raw_output: str | None = None
+        collapse_fallback = False
 
         if cache_exists("translate", h):
             data = load_cache("translate", h)
@@ -645,7 +664,7 @@ def translate_document(
             else:
                 reused_dup = False
                 for prev_chunk, prev_final in seen_chunks:
-                    if is_near_duplicate(prev_chunk, chunk):
+                    if is_near_duplicate(prev_chunk, chunk) and is_duplicate_reuse_safe(prev_chunk, chunk):
                         logger.info("Chunk %d marcado como duplicado de um anterior; reuso habilitado.", idx)
                         parsed_clean = prev_final
                         translated_chunks.append(prev_final)
@@ -716,6 +735,10 @@ def translate_document(
                                 contamination_detected=bool(report.contamination_detected),
                                 sanitization_ratio=sanitized_ratio,
                             )
+                            narrative_ratio = len(parsed_clean.strip()) / max(len(chunk.strip()), 1)
+                            if not clean_retry and iq == 0 and narrative_ratio < 0.7:
+                                clean_retry = True
+                                clean_reason = "narrative_ratio_low"
                             raw_retry, _ = needs_retry(chunk, raw_candidate, input_quotes=iq, output_quotes=_count_quotes(raw_candidate), input_quote_lines=iql, output_quote_lines=count_quote_lines(raw_candidate), contamination_detected=False, sanitization_ratio=1.0)
                             prefer_raw = report.contamination_detected and not raw_retry and (sanitized_ratio < 0.95 or "omissao_dialogo" in clean_reason)
                             retry = clean_retry or (report.contamination_detected and sanitized_ratio < 0.95) or (report.contamination_detected and "omissao_dialogo" in clean_reason)
@@ -842,7 +865,8 @@ def translate_document(
                                 prompt = base_prompt + "\n\nATENÇÃO: Sua saída anterior veio truncada ou repetitiva. Refaça e inclua TODO o conteúdo. Não resuma."
 
                         parsed_clean = postprocess_translation(parsed_clean, chunk)
-                        parsed_clean, enforced = enforce_canonical_terms(parsed_clean, chunk_terms)
+                        terms_for_enforcement = chunk_terms if glossary_matched > 0 else []
+                        parsed_clean, enforced = enforce_canonical_terms(parsed_clean, terms_for_enforcement)
                         if enforced:
                             logger.info(
                                 "Glossario enforcement chunk %d/%d: %s",
@@ -886,6 +910,8 @@ def translate_document(
                                 len(chunks),
                             )
                             collapse_detected += 1
+                            parsed_clean = chunk
+                            collapse_fallback = True
                         translated_chunks.append(parsed_clean)
                         translated_ok.add(idx)
                         failed_chunks.discard(idx)
@@ -905,6 +931,11 @@ def translate_document(
                             "repeat_penalty": getattr(backend, "repeat_penalty", None),
                             "translate_chunk_chars": cfg.translate_chunk_chars,
                             "glossary_hash": glossary_hash,
+                            "allow_adaptation": allow_adapt_flag,
+                            "split_by_sections": split_flag,
+                            "dialogue_guardrails_mode": dialogue_guardrails_mode,
+                            "prompt_hash": prompt_hash,
+                            "pipeline_version": TRANSLATE_PIPELINE_VERSION,
                         }
                     except Exception as exc:
                         # debug de falha
@@ -1018,14 +1049,15 @@ def translate_document(
                                 "too_long": too_long,
                                 "suspicious_repetition": suspicious,
                                 "possible_omission": possible_omission,
-                                "dialogue_splits": normalizer_stats.get("dialogue_splits", 0),
-                                "triple_quotes_removed": normalizer_stats.get("triple_quotes_removed", 0),
-                                "suspect_output": suspect_output,
-                                "suspect_reason": suspect_reason,
-                                "rejected_output": rejected_output,
-                                "reject_reason": ";".join(reject_reasons),
-                            }
-                        )
+                "dialogue_splits": normalizer_stats.get("dialogue_splits", 0),
+                "triple_quotes_removed": normalizer_stats.get("triple_quotes_removed", 0),
+                "suspect_output": suspect_output,
+                "suspect_reason": suspect_reason,
+                "collapse_fallback": collapse_fallback,
+                "rejected_output": rejected_output,
+                "reject_reason": ";".join(reject_reasons),
+            }
+        )
 
         report_dict = {
             "contamination_detected": bool(sanitizer_report.contamination_detected) if sanitizer_report else False,

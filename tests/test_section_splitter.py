@@ -47,3 +47,11 @@ def test_split_ignores_empty_toc_entries() -> None:
     assert len(sections) == 1
     assert sections[0]["title"].lower().startswith("epilogue")
     assert "Closing text." in sections[0]["body"]
+
+
+def test_split_ignores_numeric_toc_entries() -> None:
+    text = "Chapter 1\n1\nChapter 2\n2\nChapter 3\nBody text."
+    sections = split_into_sections(text)
+    assert len(sections) == 1
+    assert sections[0]["title"].lower().startswith("chapter 3")
+    assert "Body text." in sections[0]["body"]

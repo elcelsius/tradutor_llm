@@ -67,3 +67,34 @@ def test_glossary_matches_aliases(tmp_path: Path) -> None:
     prompt = backend.prompts[0]
     assert "Magic Sword" in prompt and "Espada Mágica" in prompt
     assert "Shield" not in prompt
+
+
+def test_glossary_fallback_does_not_enforce_terms(tmp_path: Path) -> None:
+    class _Backend:
+        def __init__(self) -> None:
+            self.backend = "stub"
+            self.model = "stub"
+            self.num_predict = 128
+            self.temperature = 0.1
+            self.repeat_penalty = 1.0
+
+        def generate(self, prompt: str):
+            return type("Resp", (), {"text": "### TEXTO_TRADUZIDO_INICIO\nArt aparece aqui.\n### TEXTO_TRADUZIDO_FIM"})
+
+    cfg = AppConfig(output_dir=tmp_path, split_by_sections=False)
+    backend = _Backend()
+    logger = logging.getLogger("glossary-fallback")
+    manual_terms = [{"key": "Art", "pt": "Arte", "enforce": True}]
+    input_text = ("Nothing related to that term in this chunk. " * 5).strip()
+
+    result = translate_document(
+        pdf_text=input_text,
+        backend=backend,
+        cfg=cfg,
+        logger=logger,
+        source_slug="sample",
+        glossary_manual_terms=manual_terms,
+    )
+
+    assert "Arte" not in result
+    assert "Art" in result

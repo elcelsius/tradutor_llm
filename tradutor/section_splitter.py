@@ -10,6 +10,17 @@ SECTION_PATTERN = re.compile(
 )
 
 
+def _is_toc_stub_body(body: str) -> bool:
+    stripped = body.strip()
+    if not stripped:
+        return True
+    if len(stripped) <= 10 and re.fullmatch(r"[\d\s.]+", stripped):
+        return True
+    if len(stripped.split()) <= 2 and not re.search(r"[A-Za-zÀ-ÿ]", stripped):
+        return True
+    return False
+
+
 def split_into_sections(text: str) -> List[Dict]:
     """
     Divide texto bruto em seções por marcadores de capítulo.
@@ -36,8 +47,8 @@ def split_into_sections(text: str) -> List[Dict]:
         end_line = matches[i + 1][0] if i + 1 < len(matches) else len(lines)
         body_lines = lines[start_line + 1 : end_line]
         body = "\n".join(body_lines).strip()
-        if not body and i + 1 < len(matches):
-            # Possível entrada de sumário; ignora se o corpo é vazio e há próximo marcador.
+        if _is_toc_stub_body(body):
+            # Possível entrada de sumário; ignora se o corpo é vazio/curto ou numérico.
             continue
         header = f"# {title}"
         full_body = f"{header}\n\n{body}".strip()

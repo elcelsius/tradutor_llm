@@ -174,6 +174,16 @@ def _split_fragments(para: str) -> list[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
+def _is_short_fragment(fragment: str) -> bool:
+    stripped = fragment.strip()
+    if not stripped:
+        return False
+    if len(stripped) > 25:
+        return False
+    words = stripped.replace("—", "").split()
+    return len(words) <= 2
+
+
 def dedupe_adjacent_fragments(text: str) -> tuple[str, dict]:
     """
     Remove blocos de frases/falas repetidos dentro do mesmo paragrafo.
@@ -205,6 +215,8 @@ def dedupe_adjacent_fragments(text: str) -> tuple[str, dict]:
                     prev_block = _normalize_for_dupe(" ".join(filtered[-k:]))
                     next_block = _normalize_for_dupe(" ".join(frags[idx:idx + k]))
                     if _is_fuzzy_duplicate(prev_block, next_block, threshold=0.9):
+                        if k < 3 and all(_is_short_fragment(f) for f in frags[idx:idx + k]):
+                            continue
                         removed += k
                         idx += k
                         removed_block = True

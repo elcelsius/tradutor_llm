@@ -4,7 +4,11 @@ from pathlib import Path
 
 from tradutor.cache_utils import chunk_hash, set_cache_base_dir
 from tradutor.config import AppConfig
-from tradutor.translate import translate_document
+from tradutor.translate import (
+    TRANSLATE_PIPELINE_VERSION,
+    translation_prompt_fingerprint,
+    translate_document,
+)
 
 
 class _StubResponse:
@@ -65,3 +69,57 @@ def test_translate_cache_mismatch_is_ignored(tmp_path: Path) -> None:
     assert "CACHED_SHOULD_BE_IGNORED" not in result
     assert backend.calls >= 0
     assert cache_path.exists()
+
+
+def test_translate_cache_ignores_allow_adaptation_change(tmp_path: Path) -> None:
+    cfg = AppConfig(output_dir=tmp_path, split_by_sections=False)
+    backend = _StubBackend()
+    logger = logging.getLogger("translate-cache-flag")
+
+    text = "Hello world."
+    h = chunk_hash(text)
+    set_cache_base_dir(tmp_path)
+    cache_path = tmp_path / "cache_traducao" / f"{h}.json"
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_payload = {
+        "hash": h,
+        "raw_output": "RAW",
+        "final_output": "CACHED_SHOULD_BE_IGNORED",
+        "timestamp": "now",
+        "metadata": {
+            "backend": backend.backend,
+            "model": backend.model,
+            "num_predict": backend.num_predict,
+            "temperature": backend.temperature,
+            "repeat_penalty": backend.repeat_penalty,
+            "translate_chunk_chars": cfg.translate_chunk_chars,
+            "glossary_hash": None,
+            "doc_hash": chunk_hash(text),
+            "source": "sample",
+            "allow_adaptation": False,
+            "split_by_sections": False,
+            "dialogue_guardrails_mode": getattr(cfg, "translate_dialogue_guardrails", "strict"),
+            "prompt_hash": translation_prompt_fingerprint(allow_adaptation=False),
+            "pipeline_version": TRANSLATE_PIPELINE_VERSION,
+        },
+    }
+    cache_path.write_text(json.dumps(cache_payload, ensure_ascii=False), encoding="utf-8")
+
+    result = translate_document(
+        pdf_text=text,
+        backend=backend,
+        cfg=cfg,
+        logger=logger,
+        source_slug="sample",
+        progress_path=None,
+        resume_manifest=None,
+        glossary_text=None,
+        debug_translation=False,
+        parallel_workers=1,
+        debug_chunks=False,
+        already_preprocessed=True,
+        allow_adaptation=True,
+    )
+
+    assert "CACHED_SHOULD_BE_IGNORED" not in result
+    assert backend.calls >= 1
