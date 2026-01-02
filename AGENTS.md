@@ -1,24 +1,24 @@
-# AGENTS.md ÔÇö Contexto r├ípido para o Codex
+# AGENTS.md — Contexto rápido para o Codex
 
-## Objetivo do projeto (5ÔÇô10 linhas)
-- Pipeline completo para traduzir Light Novels de **EN ÔåÆ PT-BR** usando LLMs (Ollama ou Gemini).
-- Fluxo cobre extra├º├úo de PDF/MD, limpeza, ÔÇ£desquebrarÔÇØ linhas, tradu├º├úo em chunks, refine/revis├úo e gera├º├úo de PDF.
-- Configura├º├úo central em `config.yaml`, com overrides por flags de CLI.
-- Sa├¡das e auditoria gravadas em `saida/` (markdown final, m├®tricas, manifests e PDFs).
-- Gloss├írios manuais/din├ómicos s├úo suportados e injetados por chunk.
+## Objetivo do projeto (5–10 linhas)
+- Pipeline completo para traduzir Light Novels de **EN → PT-BR** usando LLMs (Ollama ou Gemini).
+- Fluxo cobre extração de PDF/MD, limpeza, “desquebrar” linhas, tradução em chunks, refine/revisão e geração de PDF.
+- Configuração central em `config.yaml`, com overrides por flags de CLI.
+- Saídas e auditoria gravadas em `saida/` (markdown final, métricas, manifests e PDFs).
+- Glossários manuais/dinâmicos são suportados e injetados por chunk.
 - Projeto prioriza uso em Windows, mas funciona em qualquer ambiente Python 3.10+.
-- N├úo commitamos dados reais (gloss├írios, PDFs, chaves); use arquivos de exemplo.
+- Não commitamos dados reais (glossários, PDFs, chaves); use arquivos de exemplo.
 
-## Mapa de pastas (o que ├® o qu├¬)
-- `tradutor/` ÔÇö c├│digo principal do pipeline (CLI, tradu├º├úo, refine, PDF, utils).
-- `data/` ÔÇö PDFs de entrada (n├úo versionar conte├║do real).
-- `saida/` ÔÇö sa├¡das, caches e artefatos de debug (gerado em runtime).
-- `glossario/` ÔÇö gloss├írios manuais (mant├®m s├│ exemplos no Git).
-- `benchmark/` ÔÇö dados e scripts de benchmark.
-- `tests/` ÔÇö testes unit├írios/smoke.
-- `config.yaml` ÔÇö config principal (modelos, caminhos, flags padr├úo).
-- `config.example.yaml` ÔÇö exemplo comentado.
-- `desquebrar.py`, `tradutor.py`, `refinador.py` ÔÇö wrappers legados para CLI.
+## Mapa de pastas (o que é o quê)
+- `tradutor/` — código principal do pipeline (CLI, tradução, refine, PDF, utils).
+- `data/` — PDFs de entrada (não versionar conteúdo real).
+- `saida/` — saídas, caches e artefatos de debug (gerado em runtime).
+- `glossario/` — glossários manuais (mantém só exemplos no Git).
+- `benchmark/` — dados e scripts de benchmark.
+- `tests/` — testes unitários/smoke.
+- `config.yaml` — config principal (modelos, caminhos, flags padrão).
+- `config.example.yaml` — exemplo comentado.
+- `desquebrar.py`, `tradutor.py`, `refinador.py` — wrappers legados para CLI.
 
 ## Principais entrypoints/CLIs (com exemplos)
 - CLI principal (traduz/refina/pdf):
@@ -39,9 +39,9 @@
   ```bash
   pytest -q
   ```
-- Lint/format: **n├úo foi encontrado** no repo (procurei por `pyproject.toml`, `setup.cfg`, `tox.ini` e scripts no README; n├úo h├í). Se adicionar, documente aqui.
+- Lint/format: **não foi encontrado** no repo (procurei por `pyproject.toml`, `setup.cfg`, `tox.ini` e scripts no README; não há). Se adicionar, documente aqui.
 
-## Pipeline principal end-to-end (com flags ├║teis)
+## Pipeline principal end-to-end (com flags úteis)
 ```bash
 python -m tradutor.main traduz \
   --input "data/meu_livro.pdf" \
@@ -54,26 +54,26 @@ python -m tradutor.main traduz \
 - Modelos/ctx/num_predict podem ser configurados no `config.yaml` ou sobrescritos por flags.
 
 ## Caches, progresso, estado (e como limpar)
-- Caches por chunk (em `saida/` por padr├úo):
+- Caches por chunk (em `saida/` por padrão):
   - `saida/cache_traducao`, `saida/cache_refine`, `saida/cache_desquebrar` (ver `tradutor/cache_utils.py`).
 - Progress/state:
-  - `*_progress.json` (tradu├º├úo/refine), `state_refine.json` (refine).
+  - `*_progress.json` (tradução/refine), `state_refine.json` (refine).
   - Debug: `*_pt_chunks_debug.jsonl`, `*_chunks_debug.jsonl`.
 - Limpeza segura:
-  - Prefer├¡vel: `--clear-cache all` na CLI.
+  - Preferível: `--clear-cache all` na CLI.
   - Manual: apagar `saida/cache_*` e `saida/*_progress.json` quando iniciar um run limpo.
-- Para evitar ÔÇ£cross-run contaminationÔÇØ:
+- Para evitar “cross-run contamination”:
   - Use `--clear-cache` ao mudar modelos/prompts.
-  - Garanta que `output_dir` e `data_dir` (em `config.yaml`) sejam espec├¡ficos por projeto/volume.
+  - Garanta que `output_dir` e `data_dir` (em `config.yaml`) sejam específicos por projeto/volume.
 
-## Conven├º├Áes do projeto
-- Estilo: n├úo h├í guia formal; siga PEP 8 e o estilo existente (fun├º├Áes pequenas, logs com `logging`).
-- Logs: use `logging.getLogger(__name__)` (padr├úo no c├│digo).
-- Nomes de arquivo: sa├¡das seguem `<slug>_pt.md`, `<slug>_pt_refinado.md`, `*_metrics.json` etc. (ver `tradutor/translate.py`, `tradutor/refine.py`).
-- Padr├úo de commit/branch: **n├úo encontrado** no repo (busquei em README/arquivos de config). Se definir, documente aqui.
+## Convenções do projeto
+- Estilo: não há guia formal; siga PEP 8 e o estilo existente (funções pequenas, logs com `logging`).
+- Logs: use `logging.getLogger(__name__)` (padrão no código).
+- Nomes de arquivo: saídas seguem `<slug>_pt.md`, `<slug>_pt_refinado.md`, `*_metrics.json` etc. (ver `tradutor/translate.py`, `tradutor/refine.py`).
+- Padrão de commit/branch: **não encontrado** no repo (busquei em README/arquivos de config). Se definir, documente aqui.
 
-## Regras de seguran├ºa
-- **N├âO** inclua segredos (tokens, chaves, `.env`) em commits.
-- Se encontrar `.env`, **n├úo** copie valores; apenas documente as vari├íveis esperadas.
-- Vari├íveis esperadas observadas:
-  - `GEMINI_API_KEY` (quando backend Gemini ├® usado).
+## Regras de segurança
+- **NÃO** inclua segredos (tokens, chaves, `.env`) em commits.
+- Se encontrar `.env`, **não** copie valores; apenas documente as variáveis esperadas.
+- Variáveis esperadas observadas:
+  - `GEMINI_API_KEY` (quando backend Gemini é usado).

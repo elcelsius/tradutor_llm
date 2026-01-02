@@ -55,13 +55,34 @@ def dedupe_adjacent_lines(text: str) -> tuple[str, dict]:
     Remove linhas/paragrafos consecutivos identicos ou quase identicos.
     Retorna texto limpo e stats {"lines_removed": int, "blocks_removed": int}.
     """
+
+    def _is_protected_short(line: str) -> bool:
+        stripped = line.strip()
+        if len(stripped) > 25:
+            return False
+        alnum = sum(1 for ch in stripped if ch.isalnum())
+        alnum_ratio = (alnum / len(stripped)) if stripped else 1
+        single_word = len(stripped.split()) == 1
+        starts_dash = stripped.startswith(("—", "-"))
+        punct_heavy = alnum_ratio < 0.6
+        return single_word or starts_dash or punct_heavy
+
     lines = text.splitlines()
     deduped: list[str] = []
     prev_norm: str | None = None
+    prev_short = False
+    run_len = 0
     lines_removed = 0
     for ln in lines:
         norm = _normalize_for_dupe(ln)
+        is_short_protected = _is_protected_short(ln)
         if norm and _is_fuzzy_duplicate(prev_norm, norm, threshold=0.94):
+            run_len = run_len + 1 if prev_short == is_short_protected else 2
+            prev_short = is_short_protected
+            # Para linhas curtas/onomatopeias, so dedupe se for glitch evidente (>=4 consecutivas)
+            if is_short_protected and run_len < 4:
+                deduped.append(ln)
+                continue
             # se a nova linha for mais completa, substitui a anterior
             if deduped and len(_normalize_spaces(deduped[-1])) < len(_normalize_spaces(ln)):
                 deduped[-1] = ln
@@ -70,6 +91,8 @@ def dedupe_adjacent_lines(text: str) -> tuple[str, dict]:
             continue
         deduped.append(ln)
         prev_norm = norm if norm else None
+        prev_short = is_short_protected
+        run_len = 1
 
     paragraphs = "\n".join(deduped).split("\n\n")
     final_paragraphs: list[str] = []
@@ -160,12 +183,16 @@ def dedupe_adjacent_fragments(text: str) -> tuple[str, dict]:
     removed = 0
     cleaned_paras: list[str] = []
     for para in paragraphs:
-        if "\n“" in para:
+        if "\n" in para:
             cleaned_paras.append(para.strip())
             continue
         frags = _split_fragments(para)
         if not frags:
             cleaned_paras.append(para.strip())
+            continue
+        # Não deduplicar parágrafos compostos só por falas/onomatopeias curtas
+        if all(len(f.strip()) <= 25 and len(f.split()) <= 2 for f in frags):
+            cleaned_paras.append(" ".join(frags).strip())
             continue
         filtered: list[str] = []
         idx = 0

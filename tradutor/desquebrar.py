@@ -46,6 +46,9 @@ class DesquebrarStats:
     hyphen_linewrap_count: int = 0
     stutter_space_count: int = 0
     stray_quote_lines: int = 0
+    hardwrap_joins_count: int = 0
+    internal_hyphen_fixed_count: int = 0
+    scene_separators_fixed_count: int = 0
     blocks: list[dict] | None = None
 
 
@@ -207,6 +210,163 @@ def normalize_dialogue_breaks_source_safe(text: str) -> tuple[str, dict]:
 
 def build_desquebrar_prompt(chunk: str) -> str:
     return DESQUEBRAR_PROMPT.format(chunk=chunk)
+
+
+def normalize_scene_separators(text: str) -> tuple[str, int]:
+    """
+    Garante que "***" fique isolado por linhas em branco.
+    """
+    lines = text.split("\n")
+    output: list[str] = []
+    fixes = 0
+
+    def append_blank():
+        nonlocal fixes
+        if output and output[-1] != "":
+            output.append("")
+            fixes += 1
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.strip() == "***":
+            append_blank()
+            output.append("***")
+            if i + 1 < len(lines) and lines[i + 1].strip() != "":
+                output.append("")
+                fixes += 1
+            i += 1
+            continue
+        output.append(line)
+        i += 1
+
+    # compact blanks (no mais que 2 seguidos)
+    compact: list[str] = []
+    prev_blank = False
+    for ln in output:
+        if ln == "":
+            if not prev_blank:
+                compact.append("")
+            prev_blank = True
+        else:
+            compact.append(ln)
+            prev_blank = False
+    return "\n".join(compact).strip(), fixes
+
+
+def normalize_hardwrap_joins(text: str) -> tuple[str, int]:
+    """
+    Junta quebras de linha internas em frases quando seguro.
+    """
+    if not text:
+        return text, 0
+
+    paragraphs = text.replace("\r\n", "\n").replace("\r", "\n").split("\n\n")
+    joined_paras: list[str] = []
+    joins = 0
+
+    def is_block_start(line: str) -> bool:
+        stripped = line.lstrip()
+        return stripped.startswith(('"', "“", "”", "-", "—", "#", "***"))
+
+    END_TOKENS = (".", "?", "!", "…", ":", '"', "”", ")", "]")
+
+    for p_idx, para in enumerate(paragraphs):
+        next_para = paragraphs[p_idx + 1].strip() if p_idx + 1 < len(paragraphs) else ""
+        scene_after = next_para == "***"
+        lines = para.split("\n")
+        if len(lines) <= 1:
+            joined_paras.append(para.strip())
+            continue
+        i = 0
+        new_lines: list[str] = []
+        while i < len(lines):
+            line = lines[i]
+            stripped = line.strip()
+            if not stripped:
+                i += 1
+                continue
+            if i + 1 >= len(lines):
+                new_lines.append(stripped)
+                break
+            nxt = lines[i + 1]
+            nxt_stripped = nxt.strip()
+            if not nxt_stripped:
+                new_lines.append(stripped)
+                i += 2
+                continue
+
+            j = i + 2
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+            has_scene_ahead = j < len(lines) and lines[j].strip() == "***"
+
+            if (
+                not stripped.endswith(END_TOKENS)
+                and not is_block_start(stripped)
+                and not is_block_start(nxt_stripped)
+                and nxt_stripped[:1].islower()
+                and not has_scene_ahead
+                and not (scene_after and i == len(lines) - 2)
+            ):
+                new_lines.append(f"{stripped} {nxt_stripped}")
+                joins += 1
+                i += 2
+                continue
+
+            new_lines.append(stripped)
+            i += 1
+        joined_paras.append("\n".join(new_lines))
+
+    return "\n\n".join(p for p in joined_paras if p.strip()), joins
+
+
+def normalize_internal_hyphen_by_dominance(text: str) -> tuple[str, dict]:
+    """
+    Remove hifenização interna somente quando a forma sem hífen domina no texto.
+    """
+    pattern = re.compile(r"\b([A-Za-z]{2,})-([A-Za-z]{2,})\b")
+    matches = pattern.findall(text)
+    if not matches:
+        return text, {}
+
+    blocked_prefixes = {"demi", "half", "anti", "non", "pre", "post", "re"}
+    blocked_suffixes = {"san", "sama", "kun", "chan"}
+
+    counts: dict[str, dict[str, int]] = {}
+    for left, right in matches:
+        hyph = f"{left}-{right}"
+        plain = f"{left}{right}"
+        data = counts.setdefault(hyph, {"hyph": 0, "plain": text.count(plain)})
+        data["hyph"] += 1
+
+    replacements: dict[str, str] = {}
+    for left, right in matches:
+        hyph = f"{left}-{right}"
+        if hyph in replacements:
+            continue
+        plain = f"{left}{right}"
+        data = counts.get(hyph, {"hyph": 0, "plain": 0})
+        if data["plain"] < 3 or data["hyph"] > 2:
+            continue
+        if len(left) <= 1 or len(right) <= 1:
+            continue
+        if right.lower() in blocked_suffixes:
+            continue
+        if left.lower() in blocked_prefixes:
+            continue
+        replacements[hyph] = plain
+
+    if not replacements:
+        return text, {}
+
+    def _sub(match: re.Match[str]) -> str:
+        token = match.group(0)
+        return replacements.get(token, token)
+
+    new_text, subs = pattern.subn(_sub, text)
+    fixed_counts = {k: counts[k]["hyph"] for k in replacements}
+    return new_text, {"total": subs, "details": fixed_counts}
 
 
 def desquebrar_text(
@@ -396,30 +556,51 @@ def desquebrar_text(
             )
 
     combined = "\n\n".join(outputs).strip()
+    combined, scene_fixes = normalize_scene_separators(combined)
+    combined, hardwrap_joins = normalize_hardwrap_joins(combined)
+    combined, hyphen_stats = normalize_internal_hyphen_by_dominance(combined)
     combined, norm_stats = normalize_dialogue_breaks_source_safe(combined)
     combined = normalize_wrapped_lines(combined)
     stats.dialogue_splits = norm_stats.get("dialogue_splits", 0)
+    stats.scene_separators_fixed_count = scene_fixes
+    stats.hardwrap_joins_count = hardwrap_joins
+    stats.internal_hyphen_fixed_count = hyphen_stats.get("total", 0)
     logger.info(
-        "desquebrar metrics: hyphen_linewrap_count=%d stutter_space_count=%d stray_quote_lines=%d",
+        (
+            "desquebrar metrics: hyphen_linewrap=%d stutter_space=%d stray_quote_lines=%d "
+            "hardwrap_joins=%d internal_hyphen_fixes=%d scene_fixes=%d"
+        ),
         stats.hyphen_linewrap_count,
         stats.stutter_space_count,
         stats.stray_quote_lines,
+        stats.hardwrap_joins_count,
+        stats.internal_hyphen_fixed_count,
+        stats.scene_separators_fixed_count,
     )
     return combined, stats
+
+
 
 
 def normalize_wrapped_lines(text: str) -> str:
     """
     Junta quebras de linha erradas em narrativas curtas (sem mexer em falas/headers).
-    Crit├®rios de jun├º├úo:
-    - Linha n├úo termina com pontua├º├úo final (.?!ÔÇª:"ÔÇØ)
-    - Pr├│xima linha come├ºa min├║scula
-    - Nenhuma das duas come├ºa com aspas/travess├úo/heading
+    Criterios de juncao:
+    - Linha nao termina com pontuacao final (.?!...:" ")
+    - Proxima linha comeca minuscula
+    - Nenhuma das duas comeca com aspas/travessao/heading
     """
     if not text:
         return text
-    lines = text.split("\n")
+
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    lines = normalized.split("\n")
     new_lines: list[str] = []
+
+    def is_block_start(value: str) -> bool:
+        stripped = value.lstrip()
+        return stripped.startswith(("'", '"', '\u201c', '\u201d', '-', '\u2014', '#'))
+
     i = 0
     while i < len(lines):
         line = lines[i]
@@ -428,25 +609,37 @@ def normalize_wrapped_lines(text: str) -> str:
             new_lines.append(line)
             i += 1
             continue
-        if stripped.startswith(('"', "ÔÇ£", "ÔÇØ", "-", "ÔÇö", "#")):
+
+        if is_block_start(stripped):
             new_lines.append(line)
             i += 1
             continue
-        ends_ok = stripped.endswith((".", "?", "!", "ÔÇª", ":", "ÔÇØ", '"'))
+
+        ends_ok = stripped.endswith((".", "?", "!", "\u2026", ":", "\u201d", '"'))
         if i + 1 < len(lines):
             nxt = lines[i + 1]
             nxt_stripped = nxt.strip()
-            starts_lower = bool(nxt_stripped) and nxt_stripped[:1].islower()
-            nxt_block = nxt_stripped.startswith(('"', "ÔÇ£", "ÔÇØ", "-", "ÔÇö", "#"))
-            if (not ends_ok) and starts_lower and not nxt_block:
-                merged = f"{stripped} {nxt_stripped}"
-                new_lines.append(merged)
+            if not nxt_stripped:
+                new_lines.append(line)
+                i += 1
+                continue
+
+            j = i + 2
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+            has_scene_ahead = j < len(lines) and lines[j].strip() == "***"
+
+            nxt_block = is_block_start(nxt_stripped)
+            starts_lower = nxt_stripped[:1].islower()
+            if (not ends_ok) and starts_lower and not nxt_block and not has_scene_ahead:
+                new_lines.append(f"{stripped} {nxt_stripped}")
                 i += 2
                 continue
+
         new_lines.append(line)
         i += 1
-    return "\n".join(new_lines)
 
+    return "\n".join(new_lines)
 
 def desquebrar_stats_to_dict(stats: DesquebrarStats | None, cfg: AppConfig) -> dict:
     if stats is None:
@@ -459,6 +652,9 @@ def desquebrar_stats_to_dict(stats: DesquebrarStats | None, cfg: AppConfig) -> d
         "hyphen_linewrap_count": stats.hyphen_linewrap_count,
         "stutter_space_count": stats.stutter_space_count,
         "stray_quote_lines": stats.stray_quote_lines,
+        "hardwrap_joins_count": stats.hardwrap_joins_count,
+        "internal_hyphen_fixed_count": stats.internal_hyphen_fixed_count,
+        "scene_separators_fixed_count": stats.scene_separators_fixed_count,
         "blocks": stats.blocks or [],
         "effective_desquebrar_chunk_chars": cfg.desquebrar_chunk_chars,
         "backend": getattr(cfg, "desquebrar_backend", None),

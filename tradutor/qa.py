@@ -40,6 +40,40 @@ def count_quote_lines(text: str) -> int:
     return sum(1 for ln in text.splitlines() if ln.strip().startswith(('"', "“", "”")))
 
 
+def _count_curly_quotes(text: str) -> tuple[int, int]:
+    return text.count("“"), text.count("”")
+
+
+def _excess_repeated_short_lines(input_text: str, output_text: str) -> bool:
+    """
+    Detecta se a saida introduziu repetições extras de linhas curtas que não existiam no input.
+    Dispara apenas quando a saída contém 2+ ocorrências a mais que o input e pelo menos 3 no total.
+    """
+    def _short_lines(text: str) -> list[str]:
+        lines = []
+        for ln in text.splitlines():
+            stripped = ln.strip()
+            if not stripped:
+                continue
+            if len(stripped) <= 25:
+                lines.append(stripped.lower())
+        return lines
+
+    inp_lines = _short_lines(input_text)
+    out_lines = _short_lines(output_text)
+    if not out_lines:
+        return False
+    from collections import Counter
+
+    inp_counts = Counter(inp_lines)
+    out_counts = Counter(out_lines)
+    for ln, out_count in out_counts.items():
+        in_count = inp_counts.get(ln, 0)
+        if out_count >= max(3, in_count + 2):
+            return True
+    return False
+
+
 def needs_retry(
     input_text: str,
     output_text: str,
@@ -53,6 +87,11 @@ def needs_retry(
 ) -> tuple[bool, str]:
     iq = input_quotes if input_quotes is not None else count_quotes(input_text)
     oq = output_quotes if output_quotes is not None else count_quotes(output_text)
+    out_curly = _count_curly_quotes(output_text)
+    if out_curly[0] != out_curly[1]:
+        return True, "unbalanced_quotes"
+    if oq % 2 != 0 or (iq and oq > iq + 4):
+        return True, "unbalanced_quotes_straight"
     if iq >= 4 and oq < iq - 2:
         return True, "omissao_dialogo_quotes"
     iql = input_quote_lines if input_quote_lines is not None else count_quote_lines(input_text)
@@ -78,6 +117,8 @@ def needs_retry(
         ellipsis_ratio = output_ellipsis / max(len(output_text), 1)
         if len(output_text) < 500 or ellipsis_ratio > 0.01:
             return True, "ellipsis_suspect"
+    if _excess_repeated_short_lines(input_text, output_text):
+        return True, "extra_short_repetition"
     ratio = len(output_text.strip()) / max(len(input_text.strip()), 1)
     if ratio < 0.6:
         return True, "output truncado (ratio < 0.6)"
@@ -87,6 +128,8 @@ def needs_retry(
         return True, "repeticao suspeita"
     if _has_meta_noise(output_text):
         return True, "meta noise detectado"
+    if _excess_repeated_short_lines(input_text, output_text):
+        return True, "extra_short_repetition"
     if contamination_detected and sanitization_ratio < 0.95:
         return True, "sanitizacao_agressiva"
     return False, ""

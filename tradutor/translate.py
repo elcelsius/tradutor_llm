@@ -254,13 +254,13 @@ def _build_chunk_glossary(
     fallback_limit: int,
     logger: logging.Logger,
     chunk_index: int,
-) -> tuple[str | None, int, int]:
+) -> tuple[str | None, int, int, list[dict]]:
     """
     Seleciona termos do glossário que aparecem no chunk.
     Retorna (glossary_text, matched_count, total_injetados).
     """
     if not manual_terms:
-        return None, 0, 0
+        return None, 0, 0, []
     selected, matched = select_terms_for_chunk(
         manual_terms,
         chunk,
@@ -276,7 +276,35 @@ def _build_chunk_glossary(
             injected,
             matched,
         )
-    return glossary_text or None, matched, injected
+    return glossary_text or None, matched, injected, selected
+
+
+def enforce_canonical_terms(text: str, terms: list[dict]) -> tuple[str, dict]:
+    """
+    Substitui termos marcados com enforce=True pelos equivalentes em PT.
+    Apenas atua nos termos selecionados para o chunk.
+    """
+    if not text or not terms:
+        return text, {}
+    replacements: dict[str, int] = {}
+    for term in terms:
+        if not term or not term.get("enforce"):
+            continue
+        pt = str(term.get("pt", "")).strip()
+        if not pt:
+            continue
+        variants = [str(term.get("key", "")).strip()]
+        aliases = term.get("aliases") or []
+        if isinstance(aliases, list):
+            variants.extend(str(a).strip() for a in aliases if str(a).strip())
+        for variant in variants:
+            if not variant:
+                continue
+            pattern = re.compile(rf"\b{re.escape(variant)}\b", flags=re.IGNORECASE)
+            text, count = pattern.subn(pt, text)
+            if count:
+                replacements[variant] = replacements.get(variant, 0) + count
+    return text, replacements
 
 
 def translate_document(
@@ -560,7 +588,7 @@ def translate_document(
             chunk_outputs[idx] = ""
             _write_progress()
             continue
-        chunk_glossary_text, glossary_matched, glossary_injected = _build_chunk_glossary(
+        chunk_glossary_text, glossary_matched, glossary_injected, chunk_terms = _build_chunk_glossary(
             glossary_manual_terms,
             chunk,
             match_limit=glossary_match_limit,
@@ -734,7 +762,7 @@ def translate_document(
                                 )
                                 block_outputs: list[str] = []
                                 for b_idx, block in enumerate(blocks, start=1):
-                                    block_glossary, _, _ = _build_chunk_glossary(
+                                    block_glossary, _, _, _ = _build_chunk_glossary(
                                         glossary_manual_terms,
                                         block,
                                         match_limit=glossary_match_limit,
@@ -814,6 +842,14 @@ def translate_document(
                                 prompt = base_prompt + "\n\nATENÇÃO: Sua saída anterior veio truncada ou repetitiva. Refaça e inclua TODO o conteúdo. Não resuma."
 
                         parsed_clean = postprocess_translation(parsed_clean, chunk)
+                        parsed_clean, enforced = enforce_canonical_terms(parsed_clean, chunk_terms)
+                        if enforced:
+                            logger.info(
+                                "Glossario enforcement chunk %d/%d: %s",
+                                idx,
+                                len(chunks),
+                                ", \n".join(f"{k}->{enforced[k]}" for k in list(enforced.keys())[:5]),
+                            )
                         # correção de aspas curvas
                         opens_q, closes_q = count_curly_quotes(parsed_clean)
                         if opens_q != closes_q:
