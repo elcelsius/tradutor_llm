@@ -37,6 +37,28 @@ class _MissingMarkerBackend:
         return type("Resp", (), {"text": text})
 
 
+class _NarrativeRetryBackend:
+    def __init__(self) -> None:
+        self.backend = "stub"
+        self.model = "stub"
+        self.num_predict = 10
+        self.temperature = 0.1
+        self.repeat_penalty = 1.0
+        self.calls = 0
+
+    def generate(self, prompt: str):
+        self.calls += 1
+        if self.calls == 1:
+            text = (
+                "### TEXTO_TRADUZIDO_INICIO\n"
+                "Texto narrativo reduzido demais para manter a proporcao adequada no chunk.\n"
+                "### TEXTO_TRADUZIDO_FIM"
+            )
+        else:
+            text = "### TEXTO_TRADUZIDO_INICIO\nTexto narrativo completo e consistente.\n### TEXTO_TRADUZIDO_FIM"
+        return type("Resp", (), {"text": text})
+
+
 def test_translate_retries_on_truncated_output(tmp_path: Path) -> None:
     cfg = AppConfig(output_dir=tmp_path, max_retries=2, split_by_sections=False)
     backend = _RetryBackend()
@@ -59,6 +81,31 @@ def test_translate_retries_on_truncated_output(tmp_path: Path) -> None:
     )
 
     assert "Texto completo traduzido" in result
+    assert backend.calls >= 2
+
+
+def test_translate_retries_on_low_ratio_narrative(tmp_path: Path) -> None:
+    cfg = AppConfig(output_dir=tmp_path, max_retries=2, split_by_sections=False)
+    backend = _NarrativeRetryBackend()
+    logger = logging.getLogger("narrative-retry")
+    input_text = ("Narrativa sem dialogo com tamanho moderado para teste. " * 2).strip()
+
+    result = translate_document(
+        pdf_text=input_text,
+        backend=backend,
+        cfg=cfg,
+        logger=logger,
+        source_slug="sample",
+        progress_path=None,
+        resume_manifest=None,
+        glossary_text=None,
+        debug_translation=False,
+        parallel_workers=1,
+        debug_chunks=False,
+        already_preprocessed=True,
+    )
+
+    assert "Texto narrativo completo" in result
     assert backend.calls >= 2
 
 

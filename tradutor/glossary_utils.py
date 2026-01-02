@@ -254,6 +254,13 @@ def select_terms_for_chunk(
     if not manual_terms:
         return [], 0
     chunk_norm = re.sub(r"\s+", " ", chunk_text.lower())
+
+    def _matches_term(term_norm: str) -> bool:
+        if not term_norm:
+            return False
+        if re.search(r"[A-Za-zÀ-ÿ0-9]", term_norm):
+            return bool(re.search(rf"\b{re.escape(term_norm)}\b", chunk_norm))
+        return term_norm in chunk_norm
     matches: list[GlossaryEntry] = []
     seen: set[str] = set()
     for term in manual_terms:
@@ -264,7 +271,7 @@ def select_terms_for_chunk(
         raw_aliases = term.get("aliases_norm") or term.get("aliases") or []
         if isinstance(raw_aliases, list):
             aliases_norm = [normalize_key(str(a)) for a in raw_aliases if str(a).strip()]
-        matched = key_norm in chunk_norm or any(a in chunk_norm for a in aliases_norm)
+        matched = _matches_term(key_norm) or any(_matches_term(a) for a in aliases_norm)
         if matched:
             matches.append(term)
             seen.add(key_norm)

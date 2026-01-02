@@ -83,6 +83,28 @@ def is_near_duplicate(a: str, b: str, threshold: float = 0.95) -> bool:
     return ratio >= threshold
 
 
+_NUMBER_RE = re.compile(r"\d+")
+_NAME_RE = re.compile(r"\b[A-ZÀ-Ý][a-zà-ÿ]{2,}\b")
+
+
+def is_duplicate_reuse_safe(a: str, b: str, *, max_len_delta: float = 0.15) -> bool:
+    """
+    Bloqueia reuso quando existem diferenças materiais (números, nomes próprios, ou delta de tamanho).
+    """
+    if not a or not b:
+        return False
+    max_len = max(len(a), len(b))
+    if max_len and abs(len(a) - len(b)) > max_len * max_len_delta:
+        return False
+    if _NUMBER_RE.findall(a) != _NUMBER_RE.findall(b):
+        return False
+    names_a = {n.lower() for n in _NAME_RE.findall(a)}
+    names_b = {n.lower() for n in _NAME_RE.findall(b)}
+    if names_a and names_b and names_a != names_b:
+        return False
+    return True
+
+
 def detect_model_collapse(
     text: str,
     original_len: int | None = None,

@@ -22,3 +22,15 @@ def test_dedupe_keeps_double_ellipsis_dash():
     text = "— …\n— …"
     cleaned = _cleanup(text)
     assert cleaned.count("— …") == 2
+
+
+def test_dedupe_keeps_short_fragments_in_paragraph():
+    text = "Crack! Crack! Crack!"
+    cleaned = _cleanup(text)
+    assert cleaned.count("Crack!") == 3
+
+
+def test_dedupe_keeps_short_dialogue_fragments():
+    text = "— ? — ?"
+    cleaned = _cleanup(text)
+    assert cleaned.count("— ?") == 2
