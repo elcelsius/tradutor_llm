@@ -117,6 +117,12 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
         help="Remove automaticamente o front-matter antes do Prologue/Chapter 1 (padrao: config).",
     )
     t.add_argument(
+        "--preprocess-noise-glossary",
+        dest="preprocess_noise_glossary_path",
+        default=cfg.preprocess_noise_glossary_path,
+        help="Caminho opcional para glossary denylist de ruido (JSON).",
+    )
+    t.add_argument(
         "--clear-cache",
         choices=["all", "translate", "refine", "desquebrar"],
         help="Limpa caches antes de traduzir (respeita output_dir da config).",
@@ -532,6 +538,7 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                 logger,
                 skip_front_matter=getattr(args, "skip_front_matter", cfg.skip_front_matter),
                 return_stats=True,
+                noise_glossary_path=getattr(args, "preprocess_noise_glossary_path", cfg.preprocess_noise_glossary_path),
             )
             timings["preprocess"] = time.perf_counter() - start_stage
             if args.debug:

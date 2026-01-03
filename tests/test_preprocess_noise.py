@@ -1,4 +1,5 @@
 import types
+import json
 from pathlib import Path
 
 import pytest
@@ -280,6 +281,38 @@ def test_preprocess_removes_soft_hyphen_and_spaced_caps() -> None:
     assert stats["spaced_caps_remaining"] == 0
 
 
+def test_preprocess_removes_inline_watermarks_after_merge() -> None:
+    raw = "This line has OceanofPDF.com inside and Zerobooks nearby."
+    cleaned, stats = preprocess_text(raw, return_stats=True)
+    assert "OceanofPDF" not in cleaned
+    assert "Zerobooks" not in cleaned
+    # Linha inteira È descartada por ser promo, logo n„o sobra conte£do narrativo.
+    assert cleaned.strip() == "" or "This line has" not in cleaned
+    assert stats["inline_watermark_removed_chars"] >= 0
+
+
+def test_preprocess_respects_long_paragraph_with_discord_token() -> None:
+    long_para = " ".join(["discord"] + ["word"] * 100)  # > 200 chars
+    cleaned = preprocess_text(long_para)
+    assert "discord" in cleaned  # n„o remove par·grafo longo
+
+
+def test_preprocess_custom_noise_glossary_path(tmp_path: Path) -> None:
+    glossary = {
+        "line_contains": ["customspam"],
+        "line_compact_contains": [],
+        "line_regex": [],
+        "max_line_len": 120,
+    }
+    gpath = tmp_path / "noise_glossary.json"
+    gpath.write_text(json.dumps(glossary), encoding="utf-8")
+    raw = "\n".join(["Normal line stays.", "customspam appears here."])
+    cleaned, stats = preprocess_text(raw, noise_glossary_path=gpath, return_stats=True)
+    assert "customspam" not in cleaned
+    assert "Normal line stays." in cleaned
+    assert stats["promo_lines_removed_count"] >= 1
+
+
 def test_preprocess_merges_freeze_on_kirihara_and_sentence_case() -> None:
     raw = "\n".join(
         [
@@ -333,6 +366,21 @@ def test_preprocess_keeps_dialogue_on_new_paragraph() -> None:
     assert parts[1].startswith("“I…”")
     assert parts[2].startswith("“Please, Lady Ayaka.")
     assert "spoken to you?”" in parts[2]
+
+
+def test_preprocess_merges_quote_continuation_and_keeps_ellipsis_line() -> None:
+    raw = "\n".join(
+        [
+            "It's even possible that Mimori Touka believes that from",
+            "“the bottom of his heart.”",
+            "He paused.",
+            "...",
+            "Then spoke.",
+        ]
+    )
+    cleaned = preprocess_text(raw)
+    assert "believes that from “the bottom of his heart.”" in cleaned
+    assert "\n...\n" in cleaned
 
 
 def test_preprocess_fixes_under_merge_and_spam_block() -> None:

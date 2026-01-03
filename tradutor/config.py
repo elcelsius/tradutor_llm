@@ -104,6 +104,9 @@ class AppConfig:
     pdf_author: str = ""
     pdf_language: str = "pt-BR"
 
+    # Preprocess noise glossary
+    preprocess_noise_glossary_path: Path | None = None
+
     # Debug completo
     debug_max_chunks: int | None = None
     debug_max_chars_per_file: int | None = 200000

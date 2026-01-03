@@ -1,0 +1,24 @@
+{
+  "line_contains": [
+    "oceanofpdf.com",
+    "gomanga.com",
+    "jnovels",
+    "zerobooks",
+    "sign up for our newsletter",
+    "thank you for reading",
+    "join our discord"
+  ],
+  "line_compact_contains": [
+    "oceanofpdf",
+    "zerobooks",
+    "jnovels",
+    "gomanga",
+    "discordgg"
+  ],
+  "line_regex": [
+    "(?i)http[s]?://[^\\s]+",
+    "(?i)newsletter",
+    "(?i)download our app"
+  ],
+  "max_line_len": 160
+}

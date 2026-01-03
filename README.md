@@ -71,6 +71,7 @@ Resumos, métricas e progress são escritos em `saida/` (ver Outputs).
 - `--translate-allow-adaptation`: habilita bloco de adaptação no prompt.
 - `--split-by-sections` / `--skip-front-matter`: controle de headings/TOC.
 - `--cleanup-before-refine {off,auto,on}`: limpeza determinística antes do refine.
+- `--preprocess-noise-glossary <json>`: denylist opcional de linhas de lixo (watermarks/URLs); se ausente usa lista embutida.
 - `--debug`: ativa debug completo e grava artefatos/manifests por etapa em `saida/debug_runs/<slug>/<timestamp>/` (inputs, preprocess, desquebrar, chunking, translate, refine).
 - `--debug-chunks`: JSONL detalhado por chunk (tradução/refine).
 - `--fail-on-chunk-error`: aborta na primeira falha (senão marca placeholders).
@@ -79,6 +80,11 @@ Resumos, métricas e progress são escritos em `saida/` (ver Outputs).
 
 ### Subcomando `traduz-md` (MD → PT)
 Mesmas opções de tradução/refine relevantes; inclui `--normalize-paragraphs` para normalizar o Markdown antes de traduzir.
+
+### Preprocess (limpeza de ruído)
+- O preprocess remove front/back matter, TOC e promo/URLs conhecidas de forma conservadora.
+- Para ampliar a lista de ruído, passe um JSON via `--preprocess-noise-glossary` (ou `preprocess_noise_glossary_path` no `config.yaml`). Estrutura esperada: `{"line_contains": [...], "line_compact_contains": [...], "line_regex": [...], "max_line_len": 160}`.
+- Apenas linhas curtas que casarem com esses padrões são removidas; contadores e amostras ficam em `preprocess_report.json`.
 
 ### Subcomando `refina` (PT → PT refinado)
 - `--input <*_pt.md>` (senão refina todos em `saida/`).

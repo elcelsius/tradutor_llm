@@ -129,6 +129,36 @@ def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _default_noise_glossary() -> dict:
+    return {
+        "line_contains": PROMO_DOMAINS + PROMO_PHRASES,
+        "line_compact_contains": ["oceanofpdf", "zerobooks", "jnovels", "gomanga", "discordgg", "patreon"],
+        "line_regex": [],
+        "max_line_len": 160,
+    }
+
+
+def _load_noise_glossary(path: str | Path | None) -> dict:
+    if not path:
+        return _default_noise_glossary()
+    p = Path(path)
+    if not p.exists():
+        return _default_noise_glossary()
+    try:
+        import json
+
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return _default_noise_glossary()
+    merged = _default_noise_glossary()
+    for key in ("line_contains", "line_compact_contains", "line_regex"):
+        if isinstance(data.get(key), list):
+            merged[key] = data[key]
+    if isinstance(data.get("max_line_len"), int) and data["max_line_len"] > 0:
+        merged["max_line_len"] = data["max_line_len"]
+    return merged
+
+
 def extract_text_from_pdf(path: Path, logger: logging.Logger) -> str:
     """Extrai texto de um PDF usando PyMuPDF."""
     with fitz.open(path) as doc:
@@ -239,7 +269,7 @@ def _is_promo_line(line: str) -> bool:
     return has_domain or has_phrase
 
 
-def _remove_promo_lines(text: str) -> tuple[str, dict, list[str]]:
+def _remove_promo_lines(text: str, glossary: dict) -> tuple[str, dict, list[str]]:
     lines = text.splitlines()
     cleaned: list[str] = []
     stats = {
@@ -247,9 +277,21 @@ def _remove_promo_lines(text: str) -> tuple[str, dict, list[str]]:
         "promo_lines_removed_count": 0,
         "promo_blocks_removed_count": 0,
         "urls_removed_count": 0,
+        "promo_samples": [],
+        "promo_removed_hash": "",
     }
     removed_norms: list[str] = []
-    compact_tokens = [re.sub(r"[^a-z0-9]", "", dom) for dom in PROMO_DOMAINS]
+    max_len = glossary.get("max_line_len", 160) or 160
+    line_contains = [s.lower() for s in glossary.get("line_contains", []) if isinstance(s, str)]
+    line_compact = [re.sub(r"[^a-z0-9]", "", s.lower()) for s in glossary.get("line_compact_contains", []) if isinstance(s, str)]
+    domain_tokens = [s for s in line_contains if "." in s or "/" in s] + line_compact
+    phrase_tokens = [s for s in line_contains if s not in domain_tokens]
+    regexes = []
+    for pat in glossary.get("line_regex", []):
+        try:
+            regexes.append(re.compile(pat, flags=re.IGNORECASE))
+        except re.error:
+            continue
 
     def _update_stats(norm_line: str, *, has_url: bool, has_domain: bool) -> None:
         stats["promo_lines_removed_count"] += 1
@@ -258,6 +300,7 @@ def _remove_promo_lines(text: str) -> tuple[str, dict, list[str]]:
         if "oceanofpdf" in norm_line:
             stats["oceanofpdf_removed_count"] += 1
 
+    removed_lines: list[str] = []
     i = 0
     while i < len(lines):
         line = lines[i]
@@ -268,17 +311,18 @@ def _remove_promo_lines(text: str) -> tuple[str, dict, list[str]]:
             cleaned.append("")
             i += 1
             continue
-        has_domain = any(dom in norm_lower for dom in PROMO_DOMAINS) or any(tok in norm_compact for tok in compact_tokens)
+        has_domain = any(dom in norm_lower for dom in domain_tokens) or any(tok in norm_compact for tok in line_compact)
         has_url = bool(URL_RE.search(norm_lower))
-        has_phrase = any(phrase in norm_lower for phrase in PROMO_PHRASES)
+        has_phrase = any(phrase in norm_lower for phrase in phrase_tokens)
+        has_regex = any(r.search(line) for r in regexes)
         looks_dialogue = line.lstrip().startswith(('"', "“", "'", "’", "-", "–"))
         long_narrative = len(normalized) > 180 and not (has_url or has_domain)
-        promo_seed = has_domain or has_url or has_phrase or "oceanofpdf" in norm_compact
+        promo_seed = has_domain or has_url or has_phrase or has_regex
         if looks_dialogue and not has_domain and not has_url:
             cleaned.append(line)
             i += 1
             continue
-        if promo_seed and (has_domain or has_url or not long_narrative):
+        if promo_seed and (has_domain or has_url or (not long_narrative and len(normalized) <= max_len)):
             block_end = i + 1
             while block_end < len(lines):
                 next_norm = normalize_line_for_filters(lines[block_end])
@@ -287,13 +331,14 @@ def _remove_promo_lines(text: str) -> tuple[str, dict, list[str]]:
                     break
                 next_lower = next_norm.lower()
                 next_compact = re.sub(r"[^a-z0-9]", "", next_lower)
-                next_domain = any(dom in next_lower for dom in PROMO_DOMAINS) or any(tok in next_compact for tok in compact_tokens)
+                next_domain = any(dom in next_lower for dom in domain_tokens) or any(tok in next_compact for tok in line_compact)
                 next_url = bool(URL_RE.search(next_lower))
-                next_phrase = any(phrase in next_lower for phrase in PROMO_PHRASES)
+                next_phrase = any(phrase in next_lower for phrase in phrase_tokens)
+                next_regex = any(r.search(lines[block_end]) for r in regexes)
                 short_line = len(next_norm) <= 140
                 letter_ratio = sum(1 for ch in next_norm if ch.isalpha()) / max(len(next_norm), 1)
                 low_linguistic = letter_ratio < 0.65
-                if next_domain or next_url or next_phrase or (short_line and (low_linguistic or next_norm.endswith(":"))):
+                if next_domain or next_url or next_phrase or next_regex or (short_line and (low_linguistic or next_norm.endswith(":"))):
                     block_end += 1
                     continue
                 break
@@ -304,19 +349,21 @@ def _remove_promo_lines(text: str) -> tuple[str, dict, list[str]]:
                 removed_norm = normalize_line_for_filters(removed)
                 removed_lower = removed_norm.lower()
                 removed_compact = re.sub(r"[^a-z0-9]", "", removed_lower)
-                removed_has_domain = any(dom in removed_lower for dom in PROMO_DOMAINS) or any(
-                    tok in removed_compact for tok in compact_tokens
+                removed_has_domain = any(dom in removed_lower for dom in line_contains) or any(
+                    tok in removed_compact for tok in line_compact
                 )
                 removed_has_url = bool(URL_RE.search(removed_lower))
                 _update_stats(removed_compact, has_url=removed_has_url, has_domain=removed_has_domain)
                 if removed_norm:
                     removed_norms.append(removed_norm)
+                    removed_lines.append(removed_norm)
             i = block_end
             continue
 
-        if promo_seed and not long_narrative:
+        if promo_seed and (len(normalized) <= max_len or has_url or has_domain):
             _update_stats(norm_compact, has_url=has_url, has_domain=has_domain)
             removed_norms.append(normalized)
+            removed_lines.append(normalized)
             i += 1
             continue
         cleaned.append(line)
@@ -330,6 +377,10 @@ def _remove_promo_lines(text: str) -> tuple[str, dict, list[str]]:
     }
     stats["remaining_counts"] = remaining_counts
     stats["promo_lines_removed_total"] = len(removed_norms)
+    max_samples = 20
+    stats["promo_samples"] = removed_lines[:max_samples]
+    stats["promo_samples_truncated"] = len(removed_lines) > max_samples
+    stats["promo_removed_hash"] = _sha256_text("\n".join(removed_lines)) if removed_lines else ""
     return "\n".join(cleaned), stats, removed_norms
 
 
@@ -435,11 +486,16 @@ def _reflow_paragraphs(text: str) -> tuple[str, dict]:
             _flush()
             reflowed.append("")
             continue
-        if stripped.startswith(('"', "“")) and buffer:
-            # nova fala em linha separada: inicia novo par·grafo
+        if re.fullmatch(r"[.·…]{2,}", stripped):
             _flush()
-            buffer.append(stripped)
+            reflowed.append(stripped)
             continue
+        if stripped.startswith(('"', "“")) and buffer:
+            # nova fala: se anterior termina frase, quebra par·grafo; sen„o, continua frase
+            if buffer[-1].rstrip().endswith((".", "!", "?", "…", '"', "”", "’")):
+                _flush()
+                buffer.append(stripped)
+                continue
         if _is_heading_like(stripped) or re.fullmatch(r"\*{2,}", stripped):
             _flush()
             reflowed.append(line)
@@ -481,6 +537,27 @@ def _normalize_uppercase_sentences(text: str) -> tuple[str, dict]:
         else:
             normalized.append(line)
     return "\n".join(normalized), {"uppercase_sentence_normalized": fixes}
+
+
+def _strip_inline_watermarks(text: str) -> tuple[str, dict]:
+    """
+    Remove tokens de watermark/spam embutidos no meio de linhas (após merges).
+    """
+    patterns = [
+        r"oceanofpdf\.com",
+        r"zerobooks",
+        r"jnovels",
+        r"gomanga\.com",
+        r"mp4directs\.com",
+    ]
+    combined = re.compile("|".join(patterns), flags=re.IGNORECASE)
+    before = text
+    text = combined.sub("", text)
+    # normaliza espa‡os extras gerados pela remo‡Æo
+    text = re.sub(r"[ ]{2,}", " ", text)
+    text = re.sub(r"\n[ ]+", "\n", text)
+    removed = len(before) - len(text)
+    return text, {"inline_watermark_removed_chars": removed}
 
 
 def _fix_hyphen_linebreaks(text: str) -> tuple[str, dict]:
@@ -866,6 +943,7 @@ def preprocess_text(
     *,
     skip_front_matter: bool = False,
     return_stats: bool = False,
+    noise_glossary_path: str | Path | None = None,
 ) -> str | tuple[str, dict]:
     """
     Pré-processa o texto bruto extraído do PDF:
@@ -881,6 +959,7 @@ def preprocess_text(
     text = ZERO_WIDTH_RE.sub("", text.replace("\xa0", " "))
     text, sanitize_stats = sanitize_extracted_text(text, logger=logger)
     stats.update(sanitize_stats)
+    glossary = _load_noise_glossary(noise_glossary_path)
     if skip_front_matter:
         text = strip_front_matter(text)
         text = strip_toc(text, logger=logger)
@@ -890,7 +969,7 @@ def preprocess_text(
 
     removed_counter: Counter[str] = Counter()
 
-    text, promo_stats, promo_removed = _remove_promo_lines(text)
+    text, promo_stats, promo_removed = _remove_promo_lines(text, glossary)
     stats.update(promo_stats)
     removed_counter.update(promo_removed)
 
@@ -928,6 +1007,9 @@ def preprocess_text(
 
     text, upper_stats = _normalize_uppercase_sentences(text)
     stats.update(upper_stats)
+
+    text, inline_stats = _strip_inline_watermarks(text)
+    stats.update(inline_stats)
 
     # Restaura heading de pr¢logo se ele existia no raw mas nÆo sobrou ap¢s a limpeza.
     if (
