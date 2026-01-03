@@ -25,7 +25,7 @@ DEBUG_SUBDIRS = (
 
 def _to_jsonable(value: Any) -> Any:
     if isinstance(value, Path):
-        return str(value)
+        return value.as_posix()
     if isinstance(value, dict):
         return {k: _to_jsonable(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
@@ -101,7 +101,7 @@ class DebugRunWriter:
         return self.run_dir / stage
 
     def rel_path(self, path: Path) -> str:
-        return str(path.relative_to(self.run_dir))
+        return path.relative_to(self.run_dir).as_posix()
 
     def sha256_text(self, text: str) -> str:
         return hashlib.sha256(text.encode("utf-8")).hexdigest()

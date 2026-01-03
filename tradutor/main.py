@@ -467,6 +467,10 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
         timings: dict[str, float] = {}
         current_stage = "init"
         output_refined: Path | None = None
+        pre_text = ""
+        working_text = ""
+        translated_md = ""
+        md_path: Path | None = None
         if args.debug:
             debug_run = DebugRunWriter.create(
                 output_dir=cfg.output_dir,
@@ -547,9 +551,17 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                         "promo_lines_removed_count": pre_stats.get("promo_lines_removed_count"),
                         "urls_removed_count": pre_stats.get("urls_removed_count"),
                         "toc_blocks_removed_count": pre_stats.get("toc_blocks_removed_count"),
+                        "toc_blocks_removed_head": pre_stats.get("toc_blocks_removed_head"),
+                        "toc_blocks_removed_tail": pre_stats.get("toc_blocks_removed_tail"),
+                        "toc_lines_removed_count": pre_stats.get("toc_lines_removed_count"),
                         "remaining_counts": pre_stats.get("remaining_counts"),
                         "repeated_lines_removed_count": pre_stats.get("repeated_lines_removed_count"),
                         "top_repeated_lines": pre_stats.get("top_repeated_lines"),
+                        "dedupe_removed_count": pre_stats.get("dedupe_removed_count"),
+                        "removed_lines_total": pre_stats.get("removed_lines_total"),
+                        "removed_lines_top": pre_stats.get("removed_lines_top"),
+                        "ocr_spacing_fixes": pre_stats.get("ocr_spacing_fixes"),
+                        "ocr_spacing_samples": pre_stats.get("ocr_spacing_samples"),
                     }
                 )
 
@@ -697,7 +709,7 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
             write_text(md_path, translated_md)
             logger.info("Markdown salvo em %s", md_path)
             if debug_run:
-                debug_run.pt_output_rel = str(md_path.relative_to(cfg.output_dir))
+                debug_run.pt_output_rel = md_path.relative_to(cfg.output_dir).as_posix()
 
             logger.info("Conversão para PDF desativada temporariamente; saída principal é o arquivo .md.")
 
@@ -777,7 +789,7 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                 except Exception as exc:
                     logger.warning("Falha ao normalizar estrutura do refinado: %s", exc)
                 if debug_run:
-                    debug_run.pt_refined_rel = str(output_refined.relative_to(cfg.output_dir))
+                    debug_run.pt_refined_rel = output_refined.relative_to(cfg.output_dir).as_posix()
                 pdf_enabled = bool(getattr(args, "pdf_enabled", cfg.pdf_enabled))
                 if pdf_enabled:
                     try:
@@ -794,7 +806,7 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                     except Exception as exc:
                         logger.error("Falha ao gerar PDF automaticamente: %s", exc)
             if debug_run:
-                run_dir_rel = str(debug_run.run_dir.relative_to(cfg.output_dir))
+                run_dir_rel = debug_run.run_dir.relative_to(cfg.output_dir).as_posix()
                 summary = {
                     "run_id": debug_run.run_id,
                     "source_slug": pdf.stem,
@@ -836,6 +848,59 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     }
                 )
+                try:
+                    if timings and "total" not in timings:
+                        timings["total"] = sum(timings.values())
+                    debug_run.write_timing(timings)
+                except Exception:
+                    pass
+                try:
+                    run_dir_rel = debug_run.run_dir.relative_to(cfg.output_dir).as_posix()
+                    pre_rel = debug_run.preprocessed_rel or f"10_preprocess/{pdf.stem}_preprocessed.md"
+                    desq_rel = debug_run.desquebrado_rel or f"20_desquebrar/{pdf.stem}_raw_desquebrado.md"
+                    pt_rel = debug_run.pt_output_rel or (md_path.relative_to(cfg.output_dir).as_posix() if md_path else f"{pdf.stem}_pt.md")
+                    pt_ref_rel = debug_run.pt_refined_rel
+                    pre_hash = debug_run.sha256_text(pre_text or "")
+                    desq_hash = debug_run.sha256_text(working_text or pre_text or "")
+                    pt_hash = debug_run.sha256_text(translated_md or "")
+                    pt_ref_hash = None
+                    if output_refined and output_refined.exists():
+                        try:
+                            pt_ref_hash = debug_run.sha256_text(read_text(output_refined))
+                            pt_ref_rel = output_refined.relative_to(cfg.output_dir).as_posix()
+                        except Exception:
+                            pt_ref_hash = debug_run.sha256_text("")
+                    summary = {
+                        "run_id": debug_run.run_id,
+                        "source_slug": pdf.stem,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "input_kind": debug_run.input_kind,
+                        "paths": {
+                            "run_dir": run_dir_rel,
+                            "preprocessed": pre_rel,
+                            "desquebrado": desq_rel,
+                            "chunks": "30_split_chunk/chunks.jsonl",
+                            "sections": "30_split_chunk/sections.json",
+                            "translate_manifest": "40_translate/translate_manifest.json",
+                            "refine_manifest": "60_refine/refine_manifest.json",
+                            "timings": "99_reports/timings.json",
+                            "errors": "99_reports/errors.jsonl",
+                        },
+                        "final_outputs": {
+                            "pt": pt_rel,
+                            "pt_refinado": pt_ref_rel,
+                        },
+                        "hashes": {
+                            "preprocessed": pre_hash,
+                            "desquebrado": desq_hash,
+                            "pt": pt_hash,
+                            "pt_refinado": pt_ref_hash,
+                        },
+                        "notes": [f"run_aborted_at_stage:{current_stage}"],
+                    }
+                    debug_run.write_run_summary(summary)
+                except Exception:
+                    pass
             raise
 
 
@@ -855,6 +920,9 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
     timings: dict[str, float] = {}
     current_stage = "init"
     output_refined: Path | None = None
+    pre_text = ""
+    translated_md = ""
+    md_path: Path | None = None
     if args.debug:
         debug_run = DebugRunWriter.create(
             output_dir=cfg.output_dir,
@@ -891,6 +959,7 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
         start_stage = time.perf_counter()
         raw_text = read_text(text_path)
         timings["load_input"] = time.perf_counter() - start_stage
+        pre_text = raw_text
         if not raw_text.strip():
             raise SystemExit(f"Arquivo {text_path} vazio.")
 
@@ -1006,12 +1075,12 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
         write_text(md_path, translated_md)
         logger.info("Markdown salvo em %s", md_path)
         if debug_run:
-            debug_run.pt_output_rel = str(md_path.relative_to(cfg.output_dir))
+            debug_run.pt_output_rel = md_path.relative_to(cfg.output_dir).as_posix()
 
         if args.no_refine:
             logger.info("Refinamento desabilitado (--no-refine); apenas *_pt.md ser  gerado.")
             if debug_run:
-                run_dir_rel = str(debug_run.run_dir.relative_to(cfg.output_dir))
+                run_dir_rel = debug_run.run_dir.relative_to(cfg.output_dir).as_posix()
                 summary = {
                     "run_id": debug_run.run_id,
                     "source_slug": text_path.stem,
@@ -1127,8 +1196,8 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
             except Exception as exc:
                 logger.error("Falha ao gerar PDF automaticamente: %s", exc)
         if debug_run:
-            debug_run.pt_refined_rel = str(output_refined.relative_to(cfg.output_dir))
-            run_dir_rel = str(debug_run.run_dir.relative_to(cfg.output_dir))
+            debug_run.pt_refined_rel = output_refined.relative_to(cfg.output_dir).as_posix()
+            run_dir_rel = debug_run.run_dir.relative_to(cfg.output_dir).as_posix()
             summary = {
                 "run_id": debug_run.run_id,
                 "source_slug": text_path.stem,
@@ -1170,6 +1239,59 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 }
             )
+            try:
+                if timings and "total" not in timings:
+                    timings["total"] = sum(timings.values())
+                debug_run.write_timing(timings)
+            except Exception:
+                pass
+            try:
+                run_dir_rel = debug_run.run_dir.relative_to(cfg.output_dir).as_posix()
+                pre_rel = debug_run.preprocessed_rel or f"10_preprocess/{text_path.stem}_preprocessed.md"
+                desq_rel = debug_run.desquebrado_rel or f"20_desquebrar/{text_path.stem}_raw_desquebrado.md"
+                pt_rel = debug_run.pt_output_rel or (md_path.relative_to(cfg.output_dir).as_posix() if md_path else f"{text_path.stem}_pt.md")
+                pt_ref_rel = debug_run.pt_refined_rel
+                pre_hash = debug_run.sha256_text(pre_text or "")
+                desq_hash = debug_run.sha256_text(pre_text or "")
+                pt_hash = debug_run.sha256_text(translated_md or "")
+                pt_ref_hash = None
+                if output_refined and output_refined.exists():
+                    try:
+                        pt_ref_hash = debug_run.sha256_text(read_text(output_refined))
+                        pt_ref_rel = output_refined.relative_to(cfg.output_dir).as_posix()
+                    except Exception:
+                        pt_ref_hash = debug_run.sha256_text("")
+                summary = {
+                    "run_id": debug_run.run_id,
+                    "source_slug": text_path.stem,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "input_kind": debug_run.input_kind,
+                    "paths": {
+                        "run_dir": run_dir_rel,
+                        "preprocessed": pre_rel,
+                        "desquebrado": desq_rel,
+                        "chunks": "30_split_chunk/chunks.jsonl",
+                        "sections": "30_split_chunk/sections.json",
+                        "translate_manifest": "40_translate/translate_manifest.json",
+                        "refine_manifest": "60_refine/refine_manifest.json",
+                        "timings": "99_reports/timings.json",
+                        "errors": "99_reports/errors.jsonl",
+                    },
+                    "final_outputs": {
+                        "pt": pt_rel,
+                        "pt_refinado": pt_ref_rel,
+                    },
+                    "hashes": {
+                        "preprocessed": pre_hash,
+                        "desquebrado": desq_hash,
+                        "pt": pt_hash,
+                        "pt_refinado": pt_ref_hash,
+                    },
+                    "notes": [f"run_aborted_at_stage:{current_stage}"],
+                }
+                debug_run.write_run_summary(summary)
+            except Exception:
+                pass
         raise
 
 

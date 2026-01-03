@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
+from collections import Counter
 from typing import Final, List, Optional, Tuple
 
 try:
@@ -60,7 +61,13 @@ NOISE_PARAGRAPH_PATTERNS: Final[list[str]] = [
     r"follow us",
     r"support us",
     r"read (more|the latest) on",
+    r"get the latest news",
+    r"visit us online",
+    r"visit us",
 ]
+
+ZERO_WIDTH_RE = re.compile(r"[\u200b\u200c\u200d\ufeff]")
+URL_RE = re.compile(r"(https?://|www\.)|(\w+\.(?:com|net|org|io|gg|co|me|xyz)(?:[/?#]|$))", re.IGNORECASE)
 
 TOC_MARKER_RE = re.compile(
     r"^(prologue|epilogue|afterword|chapter\s+\d+(?::[^\n]+)?)\s*$",
@@ -84,6 +91,10 @@ PROMO_PHRASES: Final[list[str]] = [
     "support us",
     "read more on",
     "follow us",
+    "thank you for reading",
+    "thank you for downloading",
+    "visit us online",
+    "get the latest news",
 ]
 
 TOC_MARKER_LINES: Final[list[str]] = [
@@ -98,7 +109,19 @@ TOC_MARKER_LINES: Final[list[str]] = [
     "title page",
     "página de título",
     "copyrights and credits",
+    "newsletter",
 ]
+
+
+def normalize_line_for_filters(line: str) -> str:
+    """Normaliza uma linha para fins de filtro (não altera texto final)."""
+    if not line:
+        return ""
+    normalized = line.replace("\xa0", " ")
+    normalized = ZERO_WIDTH_RE.sub("", normalized)
+    normalized = normalized.strip()
+    normalized = re.sub(r"[ \t]+", " ", normalized)
+    return normalized
 
 
 def extract_text_from_pdf(path: Path, logger: logging.Logger) -> str:
@@ -203,7 +226,7 @@ def remove_noise_blocks(text: str) -> str:
 
 
 def _is_promo_line(line: str) -> bool:
-    norm = line.strip().lower()
+    norm = normalize_line_for_filters(line).lower()
     if not norm:
         return False
     has_domain = any(dom in norm for dom in PROMO_DOMAINS)
@@ -211,7 +234,7 @@ def _is_promo_line(line: str) -> bool:
     return has_domain or has_phrase
 
 
-def _remove_promo_lines(text: str) -> tuple[str, dict]:
+def _remove_promo_lines(text: str) -> tuple[str, dict, list[str]]:
     lines = text.splitlines()
     cleaned: list[str] = []
     stats = {
@@ -219,47 +242,99 @@ def _remove_promo_lines(text: str) -> tuple[str, dict]:
         "promo_lines_removed_count": 0,
         "urls_removed_count": 0,
     }
+    removed_norms: list[str] = []
+    compact_tokens = [re.sub(r"[^a-z0-9]", "", dom) for dom in PROMO_DOMAINS]
     for line in lines:
-        stripped = line.strip()
-        norm = stripped.lower()
-        if not stripped:
+        normalized = normalize_line_for_filters(line)
+        norm_lower = normalized.lower()
+        norm_compact = re.sub(r"[^a-z0-9]", "", norm_lower)
+        if not normalized:
             cleaned.append("")
             continue
-        is_short = len(stripped) <= 140
-        has_domain = any(dom in norm for dom in PROMO_DOMAINS)
-        has_url = bool(re.search(r"https?://|www\.", norm))
-        looks_dialogue = stripped.startswith(("\"", "“", "’", "‘", "—", "-")) or "—" in stripped
+        is_short = len(normalized) <= 160
+        has_domain = any(dom in norm_lower for dom in PROMO_DOMAINS) or any(tok in norm_compact for tok in compact_tokens)
+        has_url = bool(URL_RE.search(norm_lower))
+        has_phrase = any(phrase in norm_lower for phrase in PROMO_PHRASES)
+        looks_dialogue = line.lstrip().startswith(("\"", "“", "’", "‘", "—", "-"))
         if looks_dialogue and not has_domain and not has_url:
             cleaned.append(line)
             continue
-        if "oceanofpdf" in norm and (is_short or has_domain or has_url):
+        long_narrative = len(normalized) > 180 and not (has_url or has_domain)
+        if "oceanofpdf" in norm_compact and (is_short or has_domain or has_url or has_phrase or long_narrative):
             stats["oceanofpdf_removed_count"] += 1
             stats["promo_lines_removed_count"] += 1
             if has_url:
                 stats["urls_removed_count"] += 1
+            removed_norms.append(normalized)
             continue
-        if is_short and _is_promo_line(stripped) and (has_domain or has_url or len(stripped.split()) <= 8):
+        if (has_domain or has_url or has_phrase) and not long_narrative:
             stats["promo_lines_removed_count"] += 1
             if has_domain or has_url:
                 stats["urls_removed_count"] += 1
-            continue
-        if has_domain and has_url and is_short:
-            stats["promo_lines_removed_count"] += 1
-            stats["urls_removed_count"] += 1
+            if "oceanofpdf" in norm_compact:
+                stats["oceanofpdf_removed_count"] += 1
+            removed_norms.append(normalized)
             continue
         cleaned.append(line)
     remaining_counts = {
-        "oceanofpdf": sum(1 for ln in cleaned if "oceanofpdf" in ln.lower()),
-        "gomanga": sum(1 for ln in cleaned if "gomanga.com" in ln.lower()),
-        "jnovels": sum(1 for ln in cleaned if "jnovels" in ln.lower()),
-        "zerobooks": sum(1 for ln in cleaned if "zerobooks" in ln.lower()),
+        "oceanofpdf": sum(1 for ln in cleaned if "oceanofpdf" in normalize_line_for_filters(ln).lower()),
+        "gomanga": sum(1 for ln in cleaned if "gomanga.com" in normalize_line_for_filters(ln).lower()),
+        "jnovels": sum(1 for ln in cleaned if "jnovels" in normalize_line_for_filters(ln).lower()),
+        "zerobooks": sum(1 for ln in cleaned if "zerobooks" in normalize_line_for_filters(ln).lower()),
     }
     stats["remaining_counts"] = remaining_counts
-    return "\n".join(cleaned), stats
+    stats["promo_lines_removed_total"] = len(removed_norms)
+    return "\n".join(cleaned), stats, removed_norms
+
+
+def _dedupe_consecutive_lines(text: str) -> tuple[str, dict, list[str]]:
+    lines = text.splitlines()
+    cleaned: list[str] = []
+    removed_norms: list[str] = []
+    prev_norm: str | None = None
+    removed_count = 0
+    for line in lines:
+        norm = normalize_line_for_filters(line)
+        if norm and prev_norm and norm == prev_norm:
+            removed_count += 1
+            removed_norms.append(norm)
+            continue
+        cleaned.append(line)
+        if norm:
+            prev_norm = norm
+        else:
+            prev_norm = None
+    return "\n".join(cleaned), {"dedupe_removed_count": removed_count}, removed_norms
+
+
+def _fix_under_merge(text: str) -> tuple[str, dict]:
+    lines = text.splitlines()
+    fixed: list[str] = []
+    merges = 0
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if i + 1 < len(lines):
+            curr = lines[i].rstrip()
+            nxt = lines[i + 1].lstrip()
+            if not curr or not nxt:
+                fixed.append(lines[i])
+                i += 1
+                continue
+            ends_sentence = bool(re.search(r"[.!?…]['\"]?$", curr))
+            starts_dialogue = nxt.startswith(('"', "“", "‘", "—", "-"))
+            if not ends_sentence and not starts_dialogue and curr[-1].isalpha() and nxt[:1].islower():
+                fixed.append(f"{curr} {nxt}")
+                merges += 1
+                i += 2
+                continue
+        fixed.append(lines[i])
+        i += 1
+    return "\n".join(fixed), {"under_merge_fixes": merges}
 
 
 def _is_toc_entry(line: str) -> bool:
-    stripped = line.strip()
+    stripped = normalize_line_for_filters(line)
     if not stripped:
         return True
     norm = stripped.lower()
@@ -276,62 +351,90 @@ def _is_toc_entry(line: str) -> bool:
     return False
 
 
-def _remove_toc_blocks(text: str, *, head_window: int = 200, tail_window: int = 400) -> tuple[str, int]:
+def _remove_toc_blocks(
+    text: str,
+    *,
+    head_window: int = 200,
+    tail_window: int = 400,
+    head_min_entries: int = 4,
+    tail_min_entries: int = 12,
+    min_density: float = 0.35,
+    gap_limit: int = 8,
+) -> tuple[str, dict]:
     lines = text.splitlines()
-    removed_blocks = 0
+    removed_lines: list[str] = []
+    head_removed = 0
+    tail_removed = 0
 
-    def _toc_block_score(start_idx: int, end_idx: int) -> float:
-        window = lines[start_idx:end_idx]
-        if not window:
-            return 0.0
-        toc_like = 0
-        for ln in window:
-            if _is_toc_entry(ln):
-                toc_like += 1
-        return toc_like / len(window)
+    def _is_marker(norm: str) -> bool:
+        return norm in TOC_MARKER_LINES or any(marker in norm for marker in TOC_MARKER_LINES)
 
-    def _strip_in_range(start: int, end: int) -> None:
-        nonlocal removed_blocks, lines
+    def _strip_in_range(start: int, end: int, *, is_tail: bool = False) -> None:
+        nonlocal head_removed, tail_removed, lines
         idx = start
         while idx < end and idx < len(lines):
-            current = lines[idx].strip().lower()
-            if current in TOC_MARKER_LINES or any(marker in current for marker in TOC_MARKER_LINES):
+            current_norm = normalize_line_for_filters(lines[idx]).lower()
+            if _is_marker(current_norm):
                 j = idx + 1
-                # limite da janela para avaliar densidade
-                limit = min(len(lines), j + 80)
-                while j < limit and _is_toc_entry(lines[j]):
+                limit = min(len(lines), idx + 200)
+                toc_like = 1  # current line
+                total = 1
+                gap = 0
+                last_idx = idx
+                while j < limit:
+                    total += 1
+                    candidate_norm = normalize_line_for_filters(lines[j]).lower()
+                    if _is_toc_entry(candidate_norm) or re.search(r"\s\d{1,4}$", candidate_norm):
+                        toc_like += 1
+                        gap = 0
+                        last_idx = j
+                    else:
+                        gap += 1
+                        if gap >= gap_limit:
+                            break
                     j += 1
-                score = _toc_block_score(idx, j)
-                if score >= 0.6 and (j - idx) >= 4:
-                    del lines[idx:j]
-                    removed_blocks += 1
-                    end -= (j - idx)
+                density = toc_like / total if total else 0
+                min_entries = tail_min_entries if is_tail else head_min_entries
+                if toc_like >= min_entries and density >= min_density:
+                    removed_lines.extend(normalize_line_for_filters(ln) for ln in lines[idx : last_idx + 1])
+                    del lines[idx : last_idx + 1]
+                    if is_tail:
+                        tail_removed += 1
+                    else:
+                        head_removed += 1
+                    end = min(end, len(lines))
                     continue
             idx += 1
 
     _strip_in_range(0, min(len(lines), head_window))
     tail_start = max(0, len(lines) - tail_window)
-    _strip_in_range(tail_start, len(lines))
-    return "\n".join(lines), removed_blocks
+    _strip_in_range(tail_start, len(lines), is_tail=True)
+    stats = {
+        "toc_blocks_removed_head": head_removed,
+        "toc_blocks_removed_tail": tail_removed,
+        "toc_blocks_removed_count": head_removed + tail_removed,
+        "toc_lines_removed_count": len(removed_lines),
+        "toc_removed_lines": removed_lines,
+    }
+    return "\n".join(lines), stats
 
 
 def _normalize_line_for_repeat(line: str) -> str:
-    norm = line.strip().lower()
+    norm = normalize_line_for_filters(line).lower()
     norm = re.sub(r"\s+", " ", norm)
     norm = re.sub(r"[.,;:!?\-–—]+", "", norm)
     return norm
 
 
-def _remove_repeated_lines(text: str, *, min_freq: int = 6, max_len: int = 80) -> tuple[str, dict]:
+def _remove_repeated_lines(text: str, *, min_freq: int = 6, max_len: int = 80) -> tuple[str, dict, list[str]]:
     lines = text.splitlines()
-    freq: dict[str, int] = {}
+    freq: Counter[str] = Counter()
     normalized: dict[int, str] = {}
     for idx, ln in enumerate(lines):
         norm = _normalize_line_for_repeat(ln)
         normalized[idx] = norm
-        if not norm:
-            continue
-        freq[norm] = freq.get(norm, 0) + 1
+        if norm:
+            freq[norm] += 1
 
     to_remove: set[int] = set()
     for idx, norm in normalized.items():
@@ -342,21 +445,30 @@ def _remove_repeated_lines(text: str, *, min_freq: int = 6, max_len: int = 80) -
             to_remove.add(idx)
 
     cleaned = [ln for idx, ln in enumerate(lines) if idx not in to_remove]
-    top_repeated = sorted(freq.items(), key=lambda kv: kv[1], reverse=True)[:5]
+    removed_norms = [normalized[idx] for idx in sorted(to_remove) if normalized.get(idx)]
+    top_repeated = freq.most_common(10)
     stats = {
         "repeated_lines_removed_count": len(to_remove),
         "top_repeated_lines": top_repeated,
     }
-    return "\n".join(cleaned), stats
+    return "\n".join(cleaned), stats, removed_norms
 
 
-def _fix_ocr_spacing(text: str) -> str:
+def _fix_ocr_spacing(text: str) -> tuple[str, dict]:
+    def _split_token(token: str) -> tuple[str, str]:
+        match = re.match(r"([A-Z’']+)([—\-.,;:!?]*)$", token)
+        if match:
+            return match.group(1), match.group(2)
+        return token, ""
+
     def _is_upperish(token: str) -> bool:
-        return bool(re.fullmatch(r"[A-Z](?:[’']?[A-Z]+)?", token))
+        core, _ = _split_token(token)
+        return bool(re.fullmatch(r"[A-Z](?:[’']?[A-Z]+)?", core))
 
-    def _fix_line(line: str) -> str:
+    def _fix_line(line: str) -> tuple[str, list[tuple[str, str]]]:
         tokens = line.split()
         new_tokens: list[str] = []
+        samples: list[tuple[str, str]] = []
         i = 0
         while i < len(tokens):
             if _is_upperish(tokens[i]):
@@ -370,24 +482,39 @@ def _fix_ocr_spacing(text: str) -> str:
                         long_count += 1
                     seq.append(tok)
                     i += 1
-                combined = "".join(seq)
-                if len(seq) >= 2 and long_count <= 1 and re.search(r"[AEIOU]", combined):
+                cores = []
+                trail = ""
+                for part in seq:
+                    core, punct = _split_token(part)
+                    cores.append(core)
+                    trail = punct or trail
+                combined_core = "".join(cores)
+                combined = combined_core + trail
+                if len(seq) >= 2 and long_count <= 1 and re.search(r"[AEIOU]", combined_core):
                     new_tokens.append(combined)
+                    samples.append((" ".join(seq), combined))
                 else:
                     new_tokens.extend(seq)
             else:
                 new_tokens.append(tokens[i])
                 i += 1
-        return " ".join(new_tokens)
+        return " ".join(new_tokens), samples
 
     fixed_lines: list[str] = []
+    samples: list[tuple[str, str]] = []
+    total_fixes = 0
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped or not re.search(r"[A-Z]\s+[A-Z]", stripped):
             fixed_lines.append(line)
             continue
-        fixed_lines.append(_fix_line(line))
-    return "\n".join(fixed_lines)
+        fixed, local_samples = _fix_line(line)
+        total_fixes += len(local_samples)
+        if local_samples and len(samples) < 10:
+            remaining = 10 - len(samples)
+            samples.extend(local_samples[:remaining])
+        fixed_lines.append(fixed)
+    return "\n".join(fixed_lines), {"ocr_spacing_fixes": total_fixes, "ocr_spacing_samples": samples}
 
 
 def strip_front_matter(text: str) -> str:
@@ -484,6 +611,7 @@ def preprocess_text(
 
     stats: dict[str, int | dict] = {"chars_in": len(raw_text)}
     text = raw_text.replace("\r\n", "\n").replace("\r", "\n")
+    text = ZERO_WIDTH_RE.sub("", text.replace("\xa0", " "))
     text, sanitize_stats = sanitize_extracted_text(text, logger=logger)
     stats.update(sanitize_stats)
     if skip_front_matter:
@@ -493,20 +621,38 @@ def preprocess_text(
     for pattern in FOOTER_PATTERNS:
         text = re.sub(pattern, " ", text, flags=re.IGNORECASE)
 
-    text, promo_stats = _remove_promo_lines(text)
+    removed_counter: Counter[str] = Counter()
+
+    text, promo_stats, promo_removed = _remove_promo_lines(text)
     stats.update(promo_stats)
-    text, toc_blocks_removed = _remove_toc_blocks(text)
-    stats["toc_blocks_removed_count"] = toc_blocks_removed
+    removed_counter.update(promo_removed)
+
+    text, toc_stats = _remove_toc_blocks(text)
+    stats.update(toc_stats)
+    removed_counter.update(toc_stats.get("toc_removed_lines", []))
 
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r" +([,.;:!?])", r"\1", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
 
     text = text.strip()
+    text, ocr_stats = _fix_ocr_spacing(text)
+    stats.update(ocr_stats)
+
+    text, under_merge_stats = _fix_under_merge(text)
+    stats.update(under_merge_stats)
+
     text = remove_noise_blocks(text)
-    text, repeat_stats = _remove_repeated_lines(text)
+    text, repeat_stats, repeat_removed = _remove_repeated_lines(text)
     stats.update(repeat_stats)
-    text = _fix_ocr_spacing(text)
+    removed_counter.update(repeat_removed)
+
+    text, dedupe_stats, dedupe_removed = _dedupe_consecutive_lines(text)
+    stats.update(dedupe_stats)
+    removed_counter.update(dedupe_removed)
+
+    stats["removed_lines_total"] = sum(removed_counter.values())
+    stats["removed_lines_top"] = removed_counter.most_common(10)
     stats["chars_out"] = len(text)
 
     if logger is not None:

@@ -4,6 +4,8 @@ import re
 import types
 from pathlib import Path
 
+import pytest
+
 from tradutor.config import AppConfig
 from tradutor.debug_run import DebugRunWriter
 from tradutor.llm_backend import LLMResponse
@@ -251,3 +253,60 @@ def test_debug_mode_end_to_end_artifacts(monkeypatch, tmp_path: Path) -> None:
     assert (run_dir / "99_reports" / "errors.jsonl").exists()
     assert run_summary["final_outputs"]["pt"] == "sample_pt.md"
     assert run_summary["final_outputs"]["pt_refinado"] == "sample_pt_refinado.md"
+
+
+def test_debug_run_writes_summary_on_failure(monkeypatch, tmp_path: Path) -> None:
+    import tradutor.main as main  # noqa: WPS433
+
+    md_path = tmp_path / "sample.md"
+    md_path.write_text("Short text content.", encoding="utf-8")
+
+    cfg = AppConfig(output_dir=tmp_path)
+    logger = setup_logging(logging.DEBUG)
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(main, "translate_document", _boom)
+    monkeypatch.setattr(main, "LLMBackend", FakeLLMBackend)
+
+    args = types.SimpleNamespace(
+        command="traduz-md",
+        input=str(md_path),
+        backend="fake",
+        model="fake-model",
+        num_predict=64,
+        request_timeout=30,
+        preprocess_advanced=False,
+        normalize_paragraphs=False,
+        clear_cache=None,
+        translate_allow_adaptation=False,
+        use_glossary=False,
+        manual_glossary=None,
+        parallel=1,
+        debug=True,
+        debug_chunks=False,
+        split_by_sections=False,
+        fail_on_chunk_error=False,
+        resume=False,
+        no_refine=False,
+        cleanup_before_refine="off",
+        pdf_enabled=False,
+    )
+
+    with pytest.raises(RuntimeError):
+        main.run_translate_md(args, cfg, logger)
+
+    run_root = cfg.output_dir / "debug_runs" / "sample"
+    runs = list(run_root.iterdir())
+    assert runs, "debug run directory should exist on failure"
+    run_dir = runs[0]
+    assert (run_dir / "99_reports" / "errors.jsonl").exists()
+    assert (run_dir / "99_reports" / "timings.json").exists()
+    summary_path = run_dir / "99_reports" / "run_summary.json"
+    assert summary_path.exists()
+    summary = json.loads(read_text(summary_path))
+    assert any("run_aborted_at_stage:translate" == note for note in summary.get("notes", []))
+    for rel_path in summary["paths"].values():
+        assert not Path(rel_path).is_absolute()
+        assert not re.match(r"^[A-Za-z]:", rel_path)
