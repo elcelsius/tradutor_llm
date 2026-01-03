@@ -51,6 +51,7 @@ from .anti_hallucination import anti_hallucination_filter
 from .cleanup import cleanup_before_refine, detect_obvious_dupes, detect_glued_dialogues
 from .quote_fix import fix_unbalanced_quotes, count_curly_quotes, fix_blank_lines_inside_quotes
 from .text_postprocess import apply_structural_normalizers, apply_custom_normalizers, fix_dialogue_artifacts
+from .debug_run import DebugRunWriter
 
 REFINE_PIPELINE_VERSION = "1"
 
@@ -71,6 +72,16 @@ def _cache_signature_from(cfg: AppConfig, backend: LLMBackend) -> dict:
         "prompt_hash": refine_prompt_fingerprint(),
         "pipeline_version": REFINE_PIPELINE_VERSION,
     }
+
+
+def _glossary_hash(glossary_state: GlossaryState | None) -> str | None:
+    if not glossary_state:
+        return None
+    try:
+        payload = json.dumps(glossary_state.combined_index, ensure_ascii=False, sort_keys=True)
+    except Exception:
+        return None
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _is_cache_compatible(data: dict, signature: dict) -> bool:
@@ -452,6 +463,8 @@ def refine_section(
     metrics: dict | None = None,
     seen_chunks: list | None = None,
     debug_writer: Callable[[dict], None] | None = None,
+    debug_run: DebugRunWriter | None = None,
+    manifest_chunks: list[dict] | None = None,
 ) -> str:
     if metrics is None:
         metrics = {}
@@ -474,6 +487,43 @@ def refine_section(
         h = chunk_hash(chunk)
         block_metrics = metrics.setdefault("block_metrics", [])
         fallback_reasons: list[str] = []
+        retry_reasons: list[str] = []
+        llm_attempts = 0
+        from_cache = False
+        from_duplicate = False
+        error_message: str | None = None
+
+        def _maybe_write_debug_files(original_text: str, llm_raw_text: str | None, final_text: str) -> None:
+            if not debug_run or not debug_run.should_write_chunk(block_idx):
+                return
+            debug_stage_dir = debug_run.stage_dir("60_refine") / "debug_refine"
+            debug_stage_dir.mkdir(parents=True, exist_ok=True)
+            debug_run.write_text(
+                debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_original_pt.txt"),
+                original_text,
+            )
+            debug_run.write_text(
+                debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_context.txt"),
+                "",
+            )
+            if llm_raw_text is not None:
+                raw_hash = debug_run.sha256_text(llm_raw_text)
+                if not debug_run.store_llm_raw:
+                    llm_payload = f"[[OMITTED]]\n[[SHA256:{raw_hash}]]\n"
+                elif debug_run.max_chars_per_file and len(llm_raw_text) > debug_run.max_chars_per_file:
+                    truncated = llm_raw_text[: debug_run.max_chars_per_file]
+                    llm_payload = f"{truncated}\n\n[[TRUNCATED]]\n[[SHA256:{raw_hash}]]\n"
+                else:
+                    llm_payload = llm_raw_text
+                debug_run.write_text(
+                    debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_llm_raw.txt"),
+                    llm_payload,
+                    allow_truncate=False,
+                )
+            debug_run.write_text(
+                debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_final_pt.txt"),
+                final_text,
+            )
 
         def _apply_normalizers(text: str) -> tuple[str, dict]:
             normalized, norm_stats = apply_structural_normalizers(text)
@@ -517,6 +567,7 @@ def refine_section(
                 normalized_dup, norm_stats = _apply_normalizers(prev_final)
                 refined_parts.append(normalized_dup)
                 metrics["duplicates"] = metrics.get("duplicates", 0) + 1
+                from_duplicate = True
                 if stats:
                     stats.success_blocks += 1
                 if progress:
@@ -538,6 +589,46 @@ def refine_section(
                             "normalizer_stats": norm_stats,
                         }
                     )
+                _maybe_write_debug_files(chunk, None, normalized_dup)
+                if debug_run and manifest_chunks is not None:
+                    debug_stage_dir = debug_run.stage_dir("60_refine") / "debug_refine"
+                    outputs_payload = {
+                        "debug_original": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_original_pt.txt"),
+                        "debug_context": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_context.txt"),
+                        "debug_llm_raw": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_llm_raw.txt"),
+                        "debug_final": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_final_pt.txt"),
+                        "output_hash": debug_run.sha256_text(normalized_dup),
+                    }
+                    manifest_chunks.append(
+                        {
+                            "chunk_index": block_idx,
+                            "section_index": index,
+                            "section_title": title or "",
+                            "input_hash": debug_run.sha256_text(chunk),
+                            "chars_in": len(chunk),
+                            "context_hash": None,
+                            "from_cache": False,
+                            "from_duplicate": True,
+                            "llm_attempts": 0,
+                            "retry_reasons": [],
+                            "suspect_output": False,
+                            "suspect_reason": "",
+                            "contamination_detected": False,
+                            "sanitization_ratio": None,
+                            "normalizers": {
+                                "triple_quotes_removed": norm_stats.get("triple_quotes_removed", 0),
+                                "dialogue_splits": norm_stats.get("dialogue_splits", 0),
+                            },
+                            "lengths": {
+                                "chars_out": len(normalized_dup),
+                                "ratio_out_in": round(len(normalized_dup.strip()) / max(len(chunk.strip()), 1), 3)
+                                if chunk.strip()
+                                else 0.0,
+                            },
+                            "outputs": outputs_payload,
+                            "errors": None,
+                        }
+                    )
                 continue
         if cache_exists("refine", h):
             data = load_cache("refine", h)
@@ -550,6 +641,7 @@ def refine_section(
                     normalized_cached, norm_stats = _apply_normalizers(cached)
                     refined_parts.append(normalized_cached)
                     metrics["cache_hits"] = metrics.get("cache_hits", 0) + 1
+                    from_cache = True
                     if stats:
                         stats.success_blocks += 1
                     if progress:
@@ -569,6 +661,46 @@ def refine_section(
                                 "llm_raw_output": None,
                                 "sanitizer_report": None,
                                 "normalizer_stats": norm_stats,
+                            }
+                        )
+                    _maybe_write_debug_files(chunk, None, normalized_cached)
+                    if debug_run and manifest_chunks is not None:
+                        debug_stage_dir = debug_run.stage_dir("60_refine") / "debug_refine"
+                        outputs_payload = {
+                            "debug_original": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_original_pt.txt"),
+                            "debug_context": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_context.txt"),
+                            "debug_llm_raw": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_llm_raw.txt"),
+                            "debug_final": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_final_pt.txt"),
+                            "output_hash": debug_run.sha256_text(normalized_cached),
+                        }
+                        manifest_chunks.append(
+                            {
+                                "chunk_index": block_idx,
+                                "section_index": index,
+                                "section_title": title or "",
+                                "input_hash": debug_run.sha256_text(chunk),
+                                "chars_in": len(chunk),
+                                "context_hash": None,
+                                "from_cache": True,
+                                "from_duplicate": False,
+                                "llm_attempts": 0,
+                                "retry_reasons": [],
+                                "suspect_output": False,
+                                "suspect_reason": "",
+                                "contamination_detected": False,
+                                "sanitization_ratio": None,
+                                "normalizers": {
+                                    "triple_quotes_removed": norm_stats.get("triple_quotes_removed", 0),
+                                    "dialogue_splits": norm_stats.get("dialogue_splits", 0),
+                                },
+                                "lengths": {
+                                    "chars_out": len(normalized_cached),
+                                    "ratio_out_in": round(len(normalized_cached.strip()) / max(len(chunk.strip()), 1), 3)
+                                    if chunk.strip()
+                                    else 0.0,
+                                },
+                                "outputs": outputs_payload,
+                                "errors": None,
                             }
                         )
                     continue
@@ -595,6 +727,46 @@ def refine_section(
                         "normalizer_stats": norm_stats,
                     }
                 )
+            _maybe_write_debug_files(chunk, None, normalized_cached)
+            if debug_run and manifest_chunks is not None:
+                debug_stage_dir = debug_run.stage_dir("60_refine") / "debug_refine"
+                outputs_payload = {
+                    "debug_original": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_original_pt.txt"),
+                    "debug_context": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_context.txt"),
+                    "debug_llm_raw": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_llm_raw.txt"),
+                    "debug_final": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_final_pt.txt"),
+                    "output_hash": debug_run.sha256_text(normalized_cached),
+                }
+                manifest_chunks.append(
+                    {
+                        "chunk_index": block_idx,
+                        "section_index": index,
+                        "section_title": title or "",
+                        "input_hash": debug_run.sha256_text(chunk),
+                        "chars_in": len(chunk),
+                        "context_hash": None,
+                        "from_cache": False,
+                        "from_duplicate": False,
+                        "llm_attempts": 0,
+                        "retry_reasons": [],
+                        "suspect_output": False,
+                        "suspect_reason": "",
+                        "contamination_detected": False,
+                        "sanitization_ratio": None,
+                        "normalizers": {
+                            "triple_quotes_removed": norm_stats.get("triple_quotes_removed", 0),
+                            "dialogue_splits": norm_stats.get("dialogue_splits", 0),
+                        },
+                        "lengths": {
+                            "chars_out": len(normalized_cached),
+                            "ratio_out_in": round(len(normalized_cached.strip()) / max(len(chunk.strip()), 1), 3)
+                            if chunk.strip()
+                            else 0.0,
+                        },
+                        "outputs": outputs_payload,
+                        "errors": None,
+                    }
+                )
             continue
         if glossary_state:
             glossary_block = format_glossary_for_prompt(
@@ -618,6 +790,7 @@ def refine_section(
                     label=f"ref-{index}/{total}-{c_idx}/{len(chunks)}",
                     max_retries=1,
                 )
+                llm_attempts += 1
                 refined_candidate = response_text
                 if glossary_state:
                     refined_candidate, suggestion_block = split_refined_and_suggestions(llm_raw)
@@ -722,6 +895,8 @@ def refine_section(
                     )
                 attempt += 1
                 if retry and attempt < cfg.max_retries:
+                    if retry_reason:
+                        retry_reasons.append(retry_reason)
                     logger.warning(
                         "QA retry refine chunk %d/%d-%d/%d: %s (tentativa %d/%d)",
                         index,
@@ -841,6 +1016,52 @@ def refine_section(
                         "normalizer_stats": norm_stats,
                     }
                 )
+            if debug_run and manifest_chunks is not None:
+                suspect_output = bool(used_fallback or collapse_flag)
+                suspect_reason = ""
+                if used_fallback and fallback_reasons:
+                    suspect_reason = ";".join(fallback_reasons)
+                elif collapse_flag:
+                    suspect_reason = "collapse_detector"
+                debug_stage_dir = debug_run.stage_dir("60_refine") / "debug_refine"
+                _maybe_write_debug_files(chunk, llm_raw, refined_text)
+                outputs_payload = {
+                    "debug_original": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_original_pt.txt"),
+                    "debug_context": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_context.txt"),
+                    "debug_llm_raw": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_llm_raw.txt"),
+                    "debug_final": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_final_pt.txt"),
+                    "output_hash": debug_run.sha256_text(refined_text),
+                }
+                manifest_chunks.append(
+                    {
+                        "chunk_index": block_idx,
+                        "section_index": index,
+                        "section_title": title or "",
+                        "input_hash": debug_run.sha256_text(chunk),
+                        "chars_in": len(chunk),
+                        "context_hash": None,
+                        "from_cache": from_cache,
+                        "from_duplicate": from_duplicate,
+                        "llm_attempts": llm_attempts,
+                        "retry_reasons": retry_reasons,
+                        "suspect_output": suspect_output,
+                        "suspect_reason": suspect_reason,
+                        "contamination_detected": False,
+                        "sanitization_ratio": None,
+                        "normalizers": {
+                            "triple_quotes_removed": norm_stats.get("triple_quotes_removed", 0),
+                            "dialogue_splits": norm_stats.get("dialogue_splits", 0),
+                        },
+                        "lengths": {
+                            "chars_out": len(refined_text),
+                            "ratio_out_in": round(len(refined_text.strip()) / max(len(chunk.strip()), 1), 3)
+                            if chunk.strip()
+                            else 0.0,
+                        },
+                        "outputs": outputs_payload,
+                        "errors": None,
+                    }
+                )
         except RuntimeError as exc:
             logger.warning(
                 "Chunk ref-%d/%d-%d/%d falhou; usando texto original. Erro: %s",
@@ -850,6 +1071,7 @@ def refine_section(
                 len(chunks),
                 exc,
             )
+            error_message = str(exc)
             fallback_text, norm_stats = _apply_normalizers(chunk)
             refined_parts.append(fallback_text)
             if stats:
@@ -881,6 +1103,46 @@ def refine_section(
                         "normalizer_stats": norm_stats,
                     }
                 )
+            _maybe_write_debug_files(chunk, llm_raw, fallback_text)
+            if debug_run and manifest_chunks is not None:
+                debug_stage_dir = debug_run.stage_dir("60_refine") / "debug_refine"
+                outputs_payload = {
+                    "debug_original": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_original_pt.txt"),
+                    "debug_context": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_context.txt"),
+                    "debug_llm_raw": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_llm_raw.txt"),
+                    "debug_final": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_final_pt.txt"),
+                    "output_hash": debug_run.sha256_text(fallback_text),
+                }
+                manifest_chunks.append(
+                    {
+                        "chunk_index": block_idx,
+                        "section_index": index,
+                        "section_title": title or "",
+                        "input_hash": debug_run.sha256_text(chunk),
+                        "chars_in": len(chunk),
+                        "context_hash": None,
+                        "from_cache": from_cache,
+                        "from_duplicate": from_duplicate,
+                        "llm_attempts": llm_attempts,
+                        "retry_reasons": retry_reasons,
+                        "suspect_output": True,
+                        "suspect_reason": "exception",
+                        "contamination_detected": False,
+                        "sanitization_ratio": None,
+                        "normalizers": {
+                            "triple_quotes_removed": norm_stats.get("triple_quotes_removed", 0),
+                            "dialogue_splits": norm_stats.get("dialogue_splits", 0),
+                        },
+                        "lengths": {
+                            "chars_out": len(fallback_text),
+                            "ratio_out_in": round(len(fallback_text.strip()) / max(len(chunk.strip()), 1), 3)
+                            if chunk.strip()
+                            else 0.0,
+                        },
+                        "outputs": outputs_payload,
+                        "errors": {"message": error_message},
+                    }
+                )
         finally:
             _write_progress(progress, logger)
 
@@ -906,6 +1168,7 @@ def refine_markdown_file(
     preprocess_advanced: bool = False,
     debug_chunks: bool = False,
     cleanup_mode: str = "off",
+    debug_run: DebugRunWriter | None = None,
 ) -> None:
     set_cache_base_dir(cfg.output_dir)
     raw_md = read_text(input_path)
@@ -934,7 +1197,19 @@ def refine_markdown_file(
         cleanup_applied = True
         pre_refine_path = output_path.with_name(f"{output_path.stem}_pre_refine_cleanup.md")
         pre_refine_path.write_text(md_text, encoding="utf-8")
+        if debug_run:
+            debug_run.pre_refine_rel = f"50_cleanup_pre_refine/{debug_run.slug}_pre_refine_cleanup.md"
+            debug_run.write_text(debug_run.pre_refine_rel, md_text)
     cleanup_preview_hash_after = chunk_hash(md_text)
+    if debug_run:
+        cleanup_report = {
+            "cleanup_mode": cleanup_mode,
+            "cleanup_applied": cleanup_applied,
+            "stats": cleanup_stats,
+            "hash_before": cleanup_preview_hash_before,
+            "hash_after": cleanup_preview_hash_after,
+        }
+        debug_run.write_cleanup_report(cleanup_report)
 
     doc_hash = chunk_hash(md_text)
     sections = split_markdown_sections(md_text)
@@ -957,6 +1232,7 @@ def refine_markdown_file(
     metrics["cleanup_preview_hash_after"] = cleanup_preview_hash_after
     seen_chunks: list[tuple[str, str]] = []
     cache_signature = _cache_signature_from(cfg, backend)
+    refine_manifest_chunks: list[dict] = []
 
     # Pré-computa total de blocos para progress
     total_blocks = 0
@@ -1018,13 +1294,15 @@ def refine_markdown_file(
                     index=idx,
                     total=len(sections),
                     glossary_state=glossary_state,
-                glossary_prompt_limit=glossary_prompt_limit,
-                debug_refine=debug_refine,
-                metrics=metrics,
-                seen_chunks=seen_chunks,
-                debug_writer=_write_chunk_debug if debug_chunks else None,
+                    glossary_prompt_limit=glossary_prompt_limit,
+                    debug_refine=debug_refine,
+                    metrics=metrics,
+                    seen_chunks=seen_chunks,
+                    debug_writer=_write_chunk_debug if debug_chunks else None,
+                    debug_run=debug_run,
+                    manifest_chunks=refine_manifest_chunks if debug_run else None,
+                )
             )
-        )
 
     final_md = "\n\n".join(refined_sections).strip()
     if not final_md:
@@ -1094,10 +1372,42 @@ def refine_markdown_file(
         debug_file.close()
         if debug_file_path:
             logger.info("Arquivo de debug de refine: %s", debug_file_path)
-    if debug_file:
-        debug_file.close()
-        if debug_file_path:
-            logger.info("Arquivo de debug de refine: %s", debug_file_path)
+    if debug_run:
+        pre_refine_rel = debug_run.pre_refine_rel if cleanup_applied else None
+        refine_manifest = {
+            "run_id": debug_run.run_id,
+            "stage": "refine",
+            "source_slug": debug_run.slug,
+            "input_paths": {
+                "pt_before_refine": debug_run.pt_output_rel,
+                "pre_refine_cleanup": pre_refine_rel,
+            },
+            "refine": {
+                "cleanup_before_refine": cleanup_mode,
+                "cleanup_applied": cleanup_applied,
+                "split_markdown_sections": True,
+                "refine_chunk_chars": cfg.refine_chunk_chars,
+                "total_sections": len(sections),
+                "total_chunks": stats.total_blocks,
+            },
+            "cache_signature": {
+                "backend": getattr(backend, "backend", None),
+                "model": getattr(backend, "model", None),
+                "num_predict": getattr(backend, "num_predict", None),
+                "temperature": getattr(backend, "temperature", None),
+                "repeat_penalty": getattr(backend, "repeat_penalty", None),
+                "refine_chunk_chars": cfg.refine_chunk_chars,
+                "glossary_hash": _glossary_hash(glossary_state),
+            },
+            "chunks": refine_manifest_chunks,
+            "totals": {
+                "cache_hits": metrics.get("cache_hits", 0),
+                "duplicate_reuse": metrics.get("duplicates", 0),
+                "contamination_count": 0,
+                "error_count": stats.error_blocks,
+            },
+        }
+        debug_run.write_manifest("refine", refine_manifest)
     logger.info(
         "Refine concluído: %s (blocos: total=%d sucesso=%d placeholders=%d)",
         output_path.name,

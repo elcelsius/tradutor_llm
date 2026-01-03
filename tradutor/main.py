@@ -7,20 +7,23 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-from datetime import datetime
+import time
+import traceback
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
 from .config import AppConfig, ensure_paths, load_config
+from .debug_run import DebugRunWriter
 from .glossary_utils import build_glossary_state, format_manual_pairs_for_translation
 from .llm_backend import LLMBackend
 from .pdf_export import markdown_to_pdf
 from .pdf_reader import extract_pdf_text
 from .advanced_preprocess import clean_text as advanced_clean
 from .preprocess import preprocess_text, strip_front_matter
-from .refine import refine_markdown_file
+from .refine import refine_markdown_file, refine_prompt_fingerprint
 from .postprocess import final_pt_postprocess
-from .translate import translate_document
+from .translate import translate_document, translation_prompt_fingerprint
 from .desquebrar import desquebrar_text, desquebrar_stats_to_dict, normalize_md_paragraphs
 from .desquebrar_safe import desquebrar_safe
 from .utils import setup_logging, write_text, read_text
@@ -460,197 +463,372 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
             logger.warning("Uso de glossário solicitado, mas nenhum glossário manual carregado.")
 
     for pdf in pdfs:
-        logger.info("Traduzindo PDF: %s", pdf.name)
-        raw_text = extract_pdf_text(pdf, logger)
-        if not raw_text.strip():
-            raise SystemExit(f"PDF {pdf.name} não possui texto extraído (pode ser imagem/scan).")
-        if getattr(args, "preprocess_advanced", False):
-            raw_text = advanced_clean(raw_text)
+        debug_run = None
+        timings: dict[str, float] = {}
+        current_stage = "init"
+        output_refined: Path | None = None
         if args.debug:
-            logger.debug("Debug ativado: salvando também raw_extracted e preprocessed.")
-            raw_out = cfg.output_dir / f"{pdf.stem}_raw_extracted.md"
-            write_text(raw_out, raw_text)
-            logger.info("Texto bruto salvo em %s", raw_out)
+            debug_run = DebugRunWriter.create(
+                output_dir=cfg.output_dir,
+                slug=pdf.stem,
+                input_kind="pdf",
+                max_chunks=cfg.debug_max_chunks,
+                max_chars_per_file=cfg.debug_max_chars_per_file,
+                store_llm_raw=cfg.debug_store_llm_raw,
+            )
+            translate_prompt_hash = translation_prompt_fingerprint(
+                allow_adaptation=getattr(args, "translate_allow_adaptation", cfg.translate_allow_adaptation)
+            )
+            debug_run.write_run_metadata(
+                args=vars(args),
+                cfg=cfg,
+                translate_prompt_hash=translate_prompt_hash,
+                refine_prompt_hash=refine_prompt_fingerprint(),
+            )
+            backend_payload = {
+                "translate": {
+                    "backend": args.backend,
+                    "model": args.model,
+                    "temperature": cfg.translate_temperature,
+                    "num_predict": args.num_predict,
+                    "repeat_penalty": cfg.translate_repeat_penalty,
+                },
+                "refine": None,
+                "desquebrar": {
+                    "backend": args.desquebrar_backend,
+                    "model": args.desquebrar_model,
+                    "temperature": args.desquebrar_temperature,
+                    "num_predict": args.desquebrar_num_predict,
+                    "repeat_penalty": args.desquebrar_repeat_penalty,
+                },
+            }
+            debug_run.write_backend(backend_payload)
+        try:
+            logger.info("Traduzindo PDF: %s", pdf.name)
+            current_stage = "extract_pdf"
+            start_stage = time.perf_counter()
+            raw_text = extract_pdf_text(pdf, logger)
+            timings["extract_pdf"] = time.perf_counter() - start_stage
+            if not raw_text.strip():
+                raise SystemExit(f"PDF {pdf.name} não possui texto extraído (pode ser imagem/scan).")
+            if getattr(args, "preprocess_advanced", False):
+                raw_text = advanced_clean(raw_text)
+            if args.debug:
+                logger.debug("Debug ativado: salvando também raw_extracted e preprocessed.")
+                raw_out = cfg.output_dir / f"{pdf.stem}_raw_extracted.md"
+                write_text(raw_out, raw_text)
+                logger.info("Texto bruto salvo em %s", raw_out)
+            if debug_run:
+                debug_run.write_text(f"10_preprocess/{pdf.stem}_raw_extracted.md", raw_text)
 
-        pre_text = preprocess_text(
-            raw_text,
-            logger,
-            skip_front_matter=getattr(args, "skip_front_matter", cfg.skip_front_matter),
-        )
-        if args.debug:
-            pre_out = cfg.output_dir / f"{pdf.stem}_preprocessed.md"
-            write_text(pre_out, pre_text)
-            logger.info("Texto preprocessado salvo em %s", pre_out)
+            current_stage = "preprocess"
+            start_stage = time.perf_counter()
+            pre_text = preprocess_text(
+                raw_text,
+                logger,
+                skip_front_matter=getattr(args, "skip_front_matter", cfg.skip_front_matter),
+            )
+            timings["preprocess"] = time.perf_counter() - start_stage
+            if args.debug:
+                pre_out = cfg.output_dir / f"{pdf.stem}_preprocessed.md"
+                write_text(pre_out, pre_text)
+                logger.info("Texto preprocessado salvo em %s", pre_out)
+            if debug_run:
+                debug_run.preprocessed_rel = f"10_preprocess/{pdf.stem}_preprocessed.md"
+                debug_run.write_text(debug_run.preprocessed_rel, pre_text)
+                debug_run.write_preprocess_report(
+                    {
+                        "chars_in": len(raw_text),
+                        "chars_out": len(pre_text),
+                        "removed_chars": max(len(raw_text) - len(pre_text), 0),
+                        "skip_front_matter": getattr(args, "skip_front_matter", cfg.skip_front_matter),
+                    }
+                )
 
-        working_text = pre_text
-        desquebrar_stats = None
-        if use_desquebrar:
-            if desquebrar_mode == "safe":
-                logger.info("Modo safe: aplicando desquebrar_safe (sem LLM), preservando layout.")
-                working_text = desquebrar_safe(working_text)
-                if args.debug:
-                    desq_out = cfg.output_dir / f"{pdf.stem}_raw_desquebrado.md"
-                    write_text(desq_out, working_text)
-                    logger.info("Texto desquebrado (safe) salvo em %s", desq_out)
-            else:
-                logger.info(
-                    "Aplicando desquebrar antes da tradução (backend=%s model=%s temp=%.2f chunk=%d num_predict=%d repeat_penalty=%s)",
-                    args.desquebrar_backend,
-                    args.desquebrar_model,
-                    args.desquebrar_temperature,
-                    args.desquebrar_chunk_chars,
-                    args.desquebrar_num_predict,
-                    args.desquebrar_repeat_penalty,
-                )
-                desquebrar_backend = LLMBackend(
-                    backend=args.desquebrar_backend,
-                    model=args.desquebrar_model,
-                    temperature=args.desquebrar_temperature,
-                    logger=logger,
-                    request_timeout=args.request_timeout,
-                    num_predict=args.desquebrar_num_predict,
-                    repeat_penalty=args.desquebrar_repeat_penalty,
-                    num_ctx=getattr(cfg, "desquebrar_num_ctx", None),
-                    keep_alive=getattr(cfg, "ollama_keep_alive", "30m"),
-                )
-                working_text, desquebrar_stats = desquebrar_text(
-                    working_text,
-                    cfg,
-                    logger,
-                    backend=desquebrar_backend,
-                    chunk_chars=args.desquebrar_chunk_chars,
-                )
-                if desquebrar_stats:
-                    logger.info(
-                        "Desquebrar concluído: chunks=%d cache_hits=%d fallbacks=%d",
-                        desquebrar_stats.total_chunks,
-                        desquebrar_stats.cache_hits,
-                        desquebrar_stats.fallbacks,
-                    )
-                if args.debug:
-                    desq_out = cfg.output_dir / f"{pdf.stem}_raw_desquebrado.md"
-                    write_text(desq_out, working_text)
-                    logger.info("Texto desquebrado salvo em %s", desq_out)
-                try:
-                    metrics_path = cfg.output_dir / f"{pdf.stem}_desquebrar_metrics.json"
-                    metrics_payload = desquebrar_stats_to_dict(desquebrar_stats, cfg)
-                    metrics_payload["timestamp"] = datetime.now().isoformat()
-                    metrics_path.write_text(json.dumps(metrics_payload, ensure_ascii=False, indent=2), encoding="utf-8")
-                except Exception as exc:
-                    logger.warning("Falha ao gravar métricas do desquebrar: %s", exc)
-        else:
-            logger.info("Desquebrar desativado; seguindo direto para tradução.")
-
-        progress_path = cfg.output_dir / f"{pdf.stem}_pt_progress.json"
-        resume_manifest = None
-        if args.resume:
-            try:
-                loaded = json.loads(progress_path.read_text(encoding="utf-8"))
-                if isinstance(loaded, dict):
-                    resume_manifest = loaded
+            working_text = pre_text
+            desquebrar_stats = None
+            if use_desquebrar:
+                if desquebrar_mode == "safe":
+                    current_stage = "desquebrar_safe"
+                    logger.info("Modo safe: aplicando desquebrar_safe (sem LLM), preservando layout.")
+                    working_text = desquebrar_safe(working_text)
+                    if args.debug:
+                        desq_out = cfg.output_dir / f"{pdf.stem}_raw_desquebrado.md"
+                        write_text(desq_out, working_text)
+                        logger.info("Texto desquebrado (safe) salvo em %s", desq_out)
+                    if debug_run:
+                        debug_run.desquebrado_rel = f"20_desquebrar/{pdf.stem}_raw_desquebrado.md"
+                        debug_run.write_text(debug_run.desquebrado_rel, working_text)
+                        debug_run.write_desquebrar_report(
+                            {
+                                "mode": "safe",
+                                "chars_in": len(pre_text),
+                                "chars_out": len(working_text),
+                            }
+                        )
                 else:
+                    current_stage = "desquebrar_llm"
+                    logger.info(
+                        "Aplicando desquebrar antes da tradução (backend=%s model=%s temp=%.2f chunk=%d num_predict=%d repeat_penalty=%s)",
+                        args.desquebrar_backend,
+                        args.desquebrar_model,
+                        args.desquebrar_temperature,
+                        args.desquebrar_chunk_chars,
+                        args.desquebrar_num_predict,
+                        args.desquebrar_repeat_penalty,
+                    )
+                    desquebrar_backend = LLMBackend(
+                        backend=args.desquebrar_backend,
+                        model=args.desquebrar_model,
+                        temperature=args.desquebrar_temperature,
+                        logger=logger,
+                        request_timeout=args.request_timeout,
+                        num_predict=args.desquebrar_num_predict,
+                        repeat_penalty=args.desquebrar_repeat_penalty,
+                        num_ctx=getattr(cfg, "desquebrar_num_ctx", None),
+                        keep_alive=getattr(cfg, "ollama_keep_alive", "30m"),
+                    )
+                    start_stage = time.perf_counter()
+                    working_text, desquebrar_stats = desquebrar_text(
+                        working_text,
+                        cfg,
+                        logger,
+                        backend=desquebrar_backend,
+                        chunk_chars=args.desquebrar_chunk_chars,
+                    )
+                    timings["desquebrar"] = time.perf_counter() - start_stage
+                    if desquebrar_stats:
+                        logger.info(
+                            "Desquebrar concluído: chunks=%d cache_hits=%d fallbacks=%d",
+                            desquebrar_stats.total_chunks,
+                            desquebrar_stats.cache_hits,
+                            desquebrar_stats.fallbacks,
+                        )
+                    if args.debug:
+                        desq_out = cfg.output_dir / f"{pdf.stem}_raw_desquebrado.md"
+                        write_text(desq_out, working_text)
+                        logger.info("Texto desquebrado salvo em %s", desq_out)
+                    if debug_run:
+                        debug_run.desquebrado_rel = f"20_desquebrar/{pdf.stem}_raw_desquebrado.md"
+                        debug_run.write_text(debug_run.desquebrado_rel, working_text)
+                        debug_run.write_desquebrar_report(
+                            {
+                                "mode": "llm",
+                                "stats": desquebrar_stats_to_dict(desquebrar_stats, cfg) if desquebrar_stats else {},
+                            }
+                        )
+                    try:
+                        metrics_path = cfg.output_dir / f"{pdf.stem}_desquebrar_metrics.json"
+                        metrics_payload = desquebrar_stats_to_dict(desquebrar_stats, cfg)
+                        metrics_payload["timestamp"] = datetime.now().isoformat()
+                        metrics_path.write_text(json.dumps(metrics_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+                    except Exception as exc:
+                        logger.warning("Falha ao gravar métricas do desquebrar: %s", exc)
+            else:
+                current_stage = "desquebrar_off"
+                logger.info("Desquebrar desativado; seguindo direto para tradução.")
+                if debug_run:
+                    debug_run.desquebrado_rel = f"20_desquebrar/{pdf.stem}_raw_desquebrado.md"
+                    debug_run.write_text(debug_run.desquebrado_rel, working_text)
+                    debug_run.write_desquebrar_report(
+                        {
+                            "mode": "off",
+                            "chars_in": len(pre_text),
+                            "chars_out": len(working_text),
+                        }
+                    )
+
+            progress_path = cfg.output_dir / f"{pdf.stem}_pt_progress.json"
+            resume_manifest = None
+            if args.resume:
+                try:
+                    loaded = json.loads(progress_path.read_text(encoding="utf-8"))
+                    if isinstance(loaded, dict):
+                        resume_manifest = loaded
+                    else:
+                        logger.warning(
+                            "Manifesto de progresso %s tem formato inesperado; traduzindo do zero.",
+                            progress_path,
+                        )
+                except FileNotFoundError:
                     logger.warning(
-                        "Manifesto de progresso %s tem formato inesperado; traduzindo do zero.",
+                        "Manifesto de progresso não encontrado em %s; tradução completa será executada.",
                         progress_path,
                     )
-            except FileNotFoundError:
-                logger.warning(
-                    "Manifesto de progresso não encontrado em %s; tradução completa será executada.",
-                    progress_path,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Falha ao ler manifesto de progresso %s (%s); tradução completa será executada.",
-                    progress_path,
-                    exc,
-                )
+                except Exception as exc:
+                    logger.warning(
+                        "Falha ao ler manifesto de progresso %s (%s); tradução completa será executada.",
+                        progress_path,
+                        exc,
+                    )
 
-        translated_md = translate_document(
-            pdf_text=working_text,
-            backend=backend,
-            cfg=cfg,
-            logger=logger,
-            source_slug=pdf.stem,
-            progress_path=progress_path,
-            resume_manifest=resume_manifest,
-            glossary_text=glossary_text,
-            glossary_manual_terms=glossary_state.manual_terms if glossary_state else None,
-            debug_translation=getattr(args, "debug", False),
-            parallel_workers=max(1, getattr(args, "parallel", 1)),
-            debug_chunks=getattr(args, "debug_chunks", False),
-            already_preprocessed=True,
-            split_by_sections=getattr(args, "split_by_sections", cfg.split_by_sections),
-            allow_adaptation=getattr(args, "translate_allow_adaptation", cfg.translate_allow_adaptation),
-            fail_on_chunk_error=fail_on_chunk_error,
-        )
-
-        md_path = cfg.output_dir / f"{pdf.stem}_pt.md"
-        write_text(md_path, translated_md)
-        logger.info("Markdown salvo em %s", md_path)
-
-        logger.info("Conversão para PDF desativada temporariamente; saída principal é o arquivo .md.")
-
-        if args.no_refine:
-            logger.info("Refinamento desabilitado (--no-refine); apenas *_pt.md será gerado.")
-        else:
-            logger.info("Executando refine opcional para %s", md_path.name)
-            cleanup_mode = args.cleanup_before_refine or getattr(cfg, "cleanup_before_refine", "off")
-            if cleanup_mode not in ("off", "auto", "on"):
-                cleanup_mode = "off"
-            refine_backend = LLMBackend(
-                backend=cfg.refine_backend,
-                model=cfg.refine_model,
-                temperature=cfg.refine_temperature,
-                logger=logger,
-                request_timeout=args.request_timeout,
-                repeat_penalty=cfg.refine_repeat_penalty,
-                num_predict=cfg.refine_num_predict,
-                num_ctx=getattr(cfg, "refine_num_ctx", None),
-                keep_alive=getattr(cfg, "ollama_keep_alive", "30m"),
-            )
-            logger.info(
-                "LLM de refine (opcional): backend=%s model=%s temp=%.2f chunk=%d timeout=%ds num_predict=%d",
-                cfg.refine_backend,
-                cfg.refine_model,
-                cfg.refine_temperature,
-                cfg.refine_chunk_chars,
-                args.request_timeout,
-                cfg.refine_num_predict,
-            )
-            output_refined = cfg.output_dir / f"{pdf.stem}_pt_refinado.md"
-            refine_markdown_file(
-                input_path=md_path,
-                output_path=output_refined,
-                backend=refine_backend,
+            current_stage = "translate"
+            start_stage = time.perf_counter()
+            translated_md = translate_document(
+                pdf_text=working_text,
+                backend=backend,
                 cfg=cfg,
                 logger=logger,
-                progress_path=cfg.output_dir / f"{pdf.stem}_pt_refinado_progress.json",
-                resume_manifest=None,
+                source_slug=pdf.stem,
+                progress_path=progress_path,
+                resume_manifest=resume_manifest,
+                glossary_text=glossary_text,
+                glossary_manual_terms=glossary_state.manual_terms if glossary_state else None,
+                debug_translation=getattr(args, "debug", False),
+                parallel_workers=max(1, getattr(args, "parallel", 1)),
                 debug_chunks=getattr(args, "debug_chunks", False),
-                cleanup_mode=cleanup_mode,
+                already_preprocessed=True,
+                split_by_sections=getattr(args, "split_by_sections", cfg.split_by_sections),
+                allow_adaptation=getattr(args, "translate_allow_adaptation", cfg.translate_allow_adaptation),
+                fail_on_chunk_error=fail_on_chunk_error,
+                debug_run=debug_run,
             )
-            logger.info("Conversão para PDF desativada temporariamente; saída principal é o arquivo .md refinado.")
-            try:
-                refined_text = read_text(output_refined)
-                refined_text = normalize_structure(refined_text)
-                write_text(output_refined, refined_text)
-            except Exception as exc:
-                logger.warning("Falha ao normalizar estrutura do refinado: %s", exc)
-            pdf_enabled = bool(getattr(args, "pdf_enabled", cfg.pdf_enabled))
-            if pdf_enabled:
+            timings["translate"] = time.perf_counter() - start_stage
+
+            md_path = cfg.output_dir / f"{pdf.stem}_pt.md"
+            write_text(md_path, translated_md)
+            logger.info("Markdown salvo em %s", md_path)
+            if debug_run:
+                debug_run.pt_output_rel = str(md_path.relative_to(cfg.output_dir))
+
+            logger.info("Conversão para PDF desativada temporariamente; saída principal é o arquivo .md.")
+
+            if args.no_refine:
+                logger.info("Refinamento desabilitado (--no-refine); apenas *_pt.md será gerado.")
+            else:
+                current_stage = "refine"
+                logger.info("Executando refine opcional para %s", md_path.name)
+                cleanup_mode = args.cleanup_before_refine or getattr(cfg, "cleanup_before_refine", "off")
+                if cleanup_mode not in ("off", "auto", "on"):
+                    cleanup_mode = "off"
+                refine_backend = LLMBackend(
+                    backend=cfg.refine_backend,
+                    model=cfg.refine_model,
+                    temperature=cfg.refine_temperature,
+                    logger=logger,
+                    request_timeout=args.request_timeout,
+                    repeat_penalty=cfg.refine_repeat_penalty,
+                    num_predict=cfg.refine_num_predict,
+                    num_ctx=getattr(cfg, "refine_num_ctx", None),
+                    keep_alive=getattr(cfg, "ollama_keep_alive", "30m"),
+                )
+                logger.info(
+                    "LLM de refine (opcional): backend=%s model=%s temp=%.2f chunk=%d timeout=%ds num_predict=%d",
+                    cfg.refine_backend,
+                    cfg.refine_model,
+                    cfg.refine_temperature,
+                    cfg.refine_chunk_chars,
+                    args.request_timeout,
+                    cfg.refine_num_predict,
+                )
+                if debug_run:
+                    backend_payload = {
+                        "translate": {
+                            "backend": args.backend,
+                            "model": args.model,
+                            "temperature": cfg.translate_temperature,
+                            "num_predict": args.num_predict,
+                            "repeat_penalty": cfg.translate_repeat_penalty,
+                        },
+                        "refine": {
+                            "backend": cfg.refine_backend,
+                            "model": cfg.refine_model,
+                            "temperature": cfg.refine_temperature,
+                            "num_predict": cfg.refine_num_predict,
+                            "repeat_penalty": cfg.refine_repeat_penalty,
+                        },
+                        "desquebrar": {
+                            "backend": args.desquebrar_backend,
+                            "model": args.desquebrar_model,
+                            "temperature": args.desquebrar_temperature,
+                            "num_predict": args.desquebrar_num_predict,
+                            "repeat_penalty": args.desquebrar_repeat_penalty,
+                        },
+                    }
+                    debug_run.write_backend(backend_payload)
+                output_refined = cfg.output_dir / f"{pdf.stem}_pt_refinado.md"
+                start_stage = time.perf_counter()
+                refine_markdown_file(
+                    input_path=md_path,
+                    output_path=output_refined,
+                    backend=refine_backend,
+                    cfg=cfg,
+                    logger=logger,
+                    progress_path=cfg.output_dir / f"{pdf.stem}_pt_refinado_progress.json",
+                    resume_manifest=None,
+                    debug_chunks=getattr(args, "debug_chunks", False),
+                    cleanup_mode=cleanup_mode,
+                    debug_run=debug_run,
+                )
+                timings["refine"] = time.perf_counter() - start_stage
+                logger.info("Conversão para PDF desativada temporariamente; saída principal é o arquivo .md refinado.")
                 try:
-                    pdf_dir = cfg.output_dir / "pdf"
-                    pdf_output = pdf_dir / f"{output_refined.stem}.pdf"
-                    convert_markdown_to_pdf(
-                        md_path=output_refined,
-                        output_path=pdf_output,
-                        cfg=cfg,
-                        logger=logger,
-                        title=output_refined.stem,
-                    )
-                    logger.info("PDF gerado em %s", pdf_output)
+                    refined_text = read_text(output_refined)
+                    refined_text = normalize_structure(refined_text)
+                    write_text(output_refined, refined_text)
                 except Exception as exc:
-                    logger.error("Falha ao gerar PDF automaticamente: %s", exc)
+                    logger.warning("Falha ao normalizar estrutura do refinado: %s", exc)
+                if debug_run:
+                    debug_run.pt_refined_rel = str(output_refined.relative_to(cfg.output_dir))
+                pdf_enabled = bool(getattr(args, "pdf_enabled", cfg.pdf_enabled))
+                if pdf_enabled:
+                    try:
+                        pdf_dir = cfg.output_dir / "pdf"
+                        pdf_output = pdf_dir / f"{output_refined.stem}.pdf"
+                        convert_markdown_to_pdf(
+                            md_path=output_refined,
+                            output_path=pdf_output,
+                            cfg=cfg,
+                            logger=logger,
+                            title=output_refined.stem,
+                        )
+                        logger.info("PDF gerado em %s", pdf_output)
+                    except Exception as exc:
+                        logger.error("Falha ao gerar PDF automaticamente: %s", exc)
+            if debug_run:
+                run_dir_rel = str(debug_run.run_dir.relative_to(cfg.output_dir))
+                summary = {
+                    "run_id": debug_run.run_id,
+                    "source_slug": pdf.stem,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "input_kind": debug_run.input_kind,
+                    "paths": {
+                        "run_dir": run_dir_rel,
+                        "preprocessed": debug_run.preprocessed_rel,
+                        "desquebrado": debug_run.desquebrado_rel,
+                        "chunks": "30_split_chunk/chunks.jsonl",
+                        "sections": "30_split_chunk/sections.json",
+                        "translate_manifest": "40_translate/translate_manifest.json",
+                        "refine_manifest": "60_refine/refine_manifest.json",
+                        "timings": "99_reports/timings.json",
+                        "errors": "99_reports/errors.jsonl",
+                    },
+                    "final_outputs": {
+                        "pt": debug_run.pt_output_rel,
+                        "pt_refinado": debug_run.pt_refined_rel,
+                    },
+                    "hashes": {
+                        "preprocessed": debug_run.sha256_text(pre_text),
+                        "desquebrado": debug_run.sha256_text(working_text),
+                        "pt": debug_run.sha256_text(translated_md),
+                        "pt_refinado": debug_run.sha256_text(read_text(output_refined)) if output_refined else None,
+                    },
+                    "notes": [],
+                }
+                debug_run.write_run_summary(summary)
+                timings["total"] = sum(timings.values())
+                debug_run.write_timing(timings)
+        except Exception as exc:
+            if debug_run:
+                debug_run.write_error(
+                    {
+                        "stage": current_stage,
+                        "message": str(exc),
+                        "stack": traceback.format_exc(),
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+            raise
 
 
 def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
@@ -665,14 +843,74 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
     if not text_path.exists():
         raise SystemExit(f"Arquivo nÆo encontrado: {text_path}")
 
-    raw_text = read_text(text_path)
-    if not raw_text.strip():
-        raise SystemExit(f"Arquivo {text_path} vazio.")
+    debug_run = None
+    timings: dict[str, float] = {}
+    current_stage = "init"
+    output_refined: Path | None = None
+    if args.debug:
+        debug_run = DebugRunWriter.create(
+            output_dir=cfg.output_dir,
+            slug=text_path.stem,
+            input_kind="md",
+            max_chunks=cfg.debug_max_chunks,
+            max_chars_per_file=cfg.debug_max_chars_per_file,
+            store_llm_raw=cfg.debug_store_llm_raw,
+        )
+        translate_prompt_hash = translation_prompt_fingerprint(
+            allow_adaptation=getattr(args, "translate_allow_adaptation", cfg.translate_allow_adaptation)
+        )
+        debug_run.write_run_metadata(
+            args=vars(args),
+            cfg=cfg,
+            translate_prompt_hash=translate_prompt_hash,
+            refine_prompt_hash=refine_prompt_fingerprint(),
+        )
+        backend_payload = {
+            "translate": {
+                "backend": args.backend,
+                "model": args.model,
+                "temperature": cfg.translate_temperature,
+                "num_predict": args.num_predict,
+                "repeat_penalty": cfg.translate_repeat_penalty,
+            },
+            "refine": None,
+            "desquebrar": None,
+        }
+        debug_run.write_backend(backend_payload)
 
-    if getattr(args, "preprocess_advanced", False):
-        raw_text = advanced_clean(raw_text)
-    if getattr(args, "normalize_paragraphs", False):
-        raw_text = normalize_md_paragraphs(raw_text)
+    try:
+        current_stage = "load_input"
+        start_stage = time.perf_counter()
+        raw_text = read_text(text_path)
+        timings["load_input"] = time.perf_counter() - start_stage
+        if not raw_text.strip():
+            raise SystemExit(f"Arquivo {text_path} vazio.")
+
+        current_stage = "preprocess"
+        if getattr(args, "preprocess_advanced", False):
+            raw_text = advanced_clean(raw_text)
+        if getattr(args, "normalize_paragraphs", False):
+            raw_text = normalize_md_paragraphs(raw_text)
+        if debug_run:
+            debug_run.preprocessed_rel = f"10_preprocess/{text_path.stem}_preprocessed.md"
+            debug_run.write_text(debug_run.preprocessed_rel, raw_text)
+            debug_run.write_preprocess_report(
+                {
+                    "chars_in": len(raw_text),
+                    "chars_out": len(raw_text),
+                    "removed_chars": 0,
+                    "skip_front_matter": False,
+                }
+            )
+            debug_run.desquebrado_rel = f"20_desquebrar/{text_path.stem}_raw_desquebrado.md"
+            debug_run.write_text(debug_run.desquebrado_rel, raw_text)
+            debug_run.write_desquebrar_report(
+                {
+                    "mode": "input",
+                    "chars_in": len(raw_text),
+                    "chars_out": len(raw_text),
+                }
+            )
 
     backend = LLMBackend(
         backend=args.backend,
@@ -733,91 +971,198 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
                 exc,
             )
 
-    translated_md = translate_document(
-        pdf_text=raw_text,
-        backend=backend,
-        cfg=cfg,
-        logger=logger,
-        source_slug=text_path.stem,
-        progress_path=progress_path,
-        resume_manifest=resume_manifest,
-        glossary_text=glossary_text,
-        glossary_manual_terms=glossary_state.manual_terms if glossary_state else None,
-        debug_translation=getattr(args, "debug", False),
-        parallel_workers=max(1, getattr(args, "parallel", 1)),
-        debug_chunks=getattr(args, "debug_chunks", False),
-        already_preprocessed=True,
-        split_by_sections=getattr(args, "split_by_sections", cfg.split_by_sections),
-        allow_adaptation=getattr(args, "translate_allow_adaptation", cfg.translate_allow_adaptation),
-        fail_on_chunk_error=fail_on_chunk_error,
-    )
+        current_stage = "translate"
+        start_stage = time.perf_counter()
+        translated_md = translate_document(
+            pdf_text=raw_text,
+            backend=backend,
+            cfg=cfg,
+            logger=logger,
+            source_slug=text_path.stem,
+            progress_path=progress_path,
+            resume_manifest=resume_manifest,
+            glossary_text=glossary_text,
+            glossary_manual_terms=glossary_state.manual_terms if glossary_state else None,
+            debug_translation=getattr(args, "debug", False),
+            parallel_workers=max(1, getattr(args, "parallel", 1)),
+            debug_chunks=getattr(args, "debug_chunks", False),
+            already_preprocessed=True,
+            split_by_sections=getattr(args, "split_by_sections", cfg.split_by_sections),
+            allow_adaptation=getattr(args, "translate_allow_adaptation", cfg.translate_allow_adaptation),
+            fail_on_chunk_error=fail_on_chunk_error,
+            debug_run=debug_run,
+        )
+        timings["translate"] = time.perf_counter() - start_stage
 
-    md_path = cfg.output_dir / f"{text_path.stem}_pt.md"
-    write_text(md_path, translated_md)
-    logger.info("Markdown salvo em %s", md_path)
+        md_path = cfg.output_dir / f"{text_path.stem}_pt.md"
+        write_text(md_path, translated_md)
+        logger.info("Markdown salvo em %s", md_path)
+        if debug_run:
+            debug_run.pt_output_rel = str(md_path.relative_to(cfg.output_dir))
 
-    if args.no_refine:
-        logger.info("Refinamento desabilitado (--no-refine); apenas *_pt.md ser  gerado.")
-        return
+        if args.no_refine:
+            logger.info("Refinamento desabilitado (--no-refine); apenas *_pt.md ser  gerado.")
+            if debug_run:
+                run_dir_rel = str(debug_run.run_dir.relative_to(cfg.output_dir))
+                summary = {
+                    "run_id": debug_run.run_id,
+                    "source_slug": text_path.stem,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "input_kind": debug_run.input_kind,
+                    "paths": {
+                        "run_dir": run_dir_rel,
+                        "preprocessed": debug_run.preprocessed_rel,
+                        "desquebrado": debug_run.desquebrado_rel,
+                        "chunks": "30_split_chunk/chunks.jsonl",
+                        "sections": "30_split_chunk/sections.json",
+                        "translate_manifest": "40_translate/translate_manifest.json",
+                        "refine_manifest": "60_refine/refine_manifest.json",
+                        "timings": "99_reports/timings.json",
+                        "errors": "99_reports/errors.jsonl",
+                    },
+                    "final_outputs": {
+                        "pt": debug_run.pt_output_rel,
+                        "pt_refinado": None,
+                    },
+                    "hashes": {
+                        "preprocessed": debug_run.sha256_text(raw_text),
+                        "desquebrado": debug_run.sha256_text(raw_text),
+                        "pt": debug_run.sha256_text(translated_md),
+                        "pt_refinado": None,
+                    },
+                    "notes": [],
+                }
+                debug_run.write_run_summary(summary)
+                timings["total"] = sum(timings.values())
+                debug_run.write_timing(timings)
+            return
 
-    logger.info("Executando refine opcional para %s", md_path.name)
-    cleanup_mode = args.cleanup_before_refine or getattr(cfg, "cleanup_before_refine", "off")
-    if cleanup_mode not in ("off", "auto", "on"):
-        cleanup_mode = "off"
-    refine_backend = LLMBackend(
-        backend=cfg.refine_backend,
-        model=cfg.refine_model,
-        temperature=cfg.refine_temperature,
-        logger=logger,
-        request_timeout=args.request_timeout,
-        repeat_penalty=cfg.refine_repeat_penalty,
-        num_predict=cfg.refine_num_predict,
-        num_ctx=getattr(cfg, "refine_num_ctx", None),
-        keep_alive=getattr(cfg, "ollama_keep_alive", "30m"),
-    )
-    logger.info(
-        "LLM de refine (opcional): backend=%s model=%s temp=%.2f chunk=%d timeout=%ds num_predict=%d",
-        cfg.refine_backend,
-        cfg.refine_model,
-        cfg.refine_temperature,
-        cfg.refine_chunk_chars,
-        args.request_timeout,
-        cfg.refine_num_predict,
-    )
-    output_refined = cfg.output_dir / f"{text_path.stem}_pt_refinado.md"
-    refine_markdown_file(
-        input_path=md_path,
-        output_path=output_refined,
-        backend=refine_backend,
-        cfg=cfg,
-        logger=logger,
-        progress_path=cfg.output_dir / f"{text_path.stem}_pt_refinado_progress.json",
-        resume_manifest=None,
-        debug_chunks=getattr(args, "debug_chunks", False),
-        cleanup_mode=cleanup_mode,
-    )
-    logger.info("ConversÆo para PDF desativada temporariamente; sa¡da principal ‚ o arquivo .md refinado.")
-    try:
-        refined_text = read_text(output_refined)
-        refined_text = normalize_structure(refined_text)
-        write_text(output_refined, refined_text)
-    except Exception as exc:
-        logger.warning("Falha ao normalizar estrutura do refinado: %s", exc)
-    pdf_enabled = bool(getattr(args, "pdf_enabled", cfg.pdf_enabled))
-    if pdf_enabled:
+        current_stage = "refine"
+        logger.info("Executando refine opcional para %s", md_path.name)
+        cleanup_mode = args.cleanup_before_refine or getattr(cfg, "cleanup_before_refine", "off")
+        if cleanup_mode not in ("off", "auto", "on"):
+            cleanup_mode = "off"
+        refine_backend = LLMBackend(
+            backend=cfg.refine_backend,
+            model=cfg.refine_model,
+            temperature=cfg.refine_temperature,
+            logger=logger,
+            request_timeout=args.request_timeout,
+            repeat_penalty=cfg.refine_repeat_penalty,
+            num_predict=cfg.refine_num_predict,
+            num_ctx=getattr(cfg, "refine_num_ctx", None),
+            keep_alive=getattr(cfg, "ollama_keep_alive", "30m"),
+        )
+        logger.info(
+            "LLM de refine (opcional): backend=%s model=%s temp=%.2f chunk=%d timeout=%ds num_predict=%d",
+            cfg.refine_backend,
+            cfg.refine_model,
+            cfg.refine_temperature,
+            cfg.refine_chunk_chars,
+            args.request_timeout,
+            cfg.refine_num_predict,
+        )
+        if debug_run:
+            backend_payload = {
+                "translate": {
+                    "backend": args.backend,
+                    "model": args.model,
+                    "temperature": cfg.translate_temperature,
+                    "num_predict": args.num_predict,
+                    "repeat_penalty": cfg.translate_repeat_penalty,
+                },
+                "refine": {
+                    "backend": cfg.refine_backend,
+                    "model": cfg.refine_model,
+                    "temperature": cfg.refine_temperature,
+                    "num_predict": cfg.refine_num_predict,
+                    "repeat_penalty": cfg.refine_repeat_penalty,
+                },
+                "desquebrar": None,
+            }
+            debug_run.write_backend(backend_payload)
+        output_refined = cfg.output_dir / f"{text_path.stem}_pt_refinado.md"
+        start_stage = time.perf_counter()
+        refine_markdown_file(
+            input_path=md_path,
+            output_path=output_refined,
+            backend=refine_backend,
+            cfg=cfg,
+            logger=logger,
+            progress_path=cfg.output_dir / f"{text_path.stem}_pt_refinado_progress.json",
+            resume_manifest=None,
+            debug_chunks=getattr(args, "debug_chunks", False),
+            cleanup_mode=cleanup_mode,
+            debug_run=debug_run,
+        )
+        timings["refine"] = time.perf_counter() - start_stage
+        logger.info("ConversÆo para PDF desativada temporariamente; sa¡da principal ‚ o arquivo .md refinado.")
         try:
-            pdf_dir = cfg.output_dir / "pdf"
-            pdf_output = pdf_dir / f"{output_refined.stem}.pdf"
-            convert_markdown_to_pdf(
-                md_path=output_refined,
-                output_path=pdf_output,
-                cfg=cfg,
-                logger=logger,
-                title=output_refined.stem,
-            )
-            logger.info("PDF gerado em %s", pdf_output)
+            refined_text = read_text(output_refined)
+            refined_text = normalize_structure(refined_text)
+            write_text(output_refined, refined_text)
         except Exception as exc:
-            logger.error("Falha ao gerar PDF automaticamente: %s", exc)
+            logger.warning("Falha ao normalizar estrutura do refinado: %s", exc)
+        pdf_enabled = bool(getattr(args, "pdf_enabled", cfg.pdf_enabled))
+        if pdf_enabled:
+            try:
+                pdf_dir = cfg.output_dir / "pdf"
+                pdf_output = pdf_dir / f"{output_refined.stem}.pdf"
+                convert_markdown_to_pdf(
+                    md_path=output_refined,
+                    output_path=pdf_output,
+                    cfg=cfg,
+                    logger=logger,
+                    title=output_refined.stem,
+                )
+                logger.info("PDF gerado em %s", pdf_output)
+            except Exception as exc:
+                logger.error("Falha ao gerar PDF automaticamente: %s", exc)
+        if debug_run:
+            debug_run.pt_refined_rel = str(output_refined.relative_to(cfg.output_dir))
+            run_dir_rel = str(debug_run.run_dir.relative_to(cfg.output_dir))
+            summary = {
+                "run_id": debug_run.run_id,
+                "source_slug": text_path.stem,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "input_kind": debug_run.input_kind,
+                "paths": {
+                    "run_dir": run_dir_rel,
+                    "preprocessed": debug_run.preprocessed_rel,
+                    "desquebrado": debug_run.desquebrado_rel,
+                    "chunks": "30_split_chunk/chunks.jsonl",
+                    "sections": "30_split_chunk/sections.json",
+                    "translate_manifest": "40_translate/translate_manifest.json",
+                    "refine_manifest": "60_refine/refine_manifest.json",
+                    "timings": "99_reports/timings.json",
+                    "errors": "99_reports/errors.jsonl",
+                },
+                "final_outputs": {
+                    "pt": debug_run.pt_output_rel,
+                    "pt_refinado": debug_run.pt_refined_rel,
+                },
+                "hashes": {
+                    "preprocessed": debug_run.sha256_text(raw_text),
+                    "desquebrado": debug_run.sha256_text(raw_text),
+                    "pt": debug_run.sha256_text(translated_md),
+                    "pt_refinado": debug_run.sha256_text(read_text(output_refined)),
+                },
+                "notes": [],
+            }
+            debug_run.write_run_summary(summary)
+            timings["total"] = sum(timings.values())
+            debug_run.write_timing(timings)
+    except Exception as exc:
+        if debug_run:
+            debug_run.write_error(
+                {
+                    "stage": current_stage,
+                    "message": str(exc),
+                    "stack": traceback.format_exc(),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+        raise
 
 
 def run_refine(args, cfg: AppConfig, logger: logging.Logger) -> None:

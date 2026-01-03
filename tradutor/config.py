@@ -104,6 +104,11 @@ class AppConfig:
     pdf_author: str = ""
     pdf_language: str = "pt-BR"
 
+    # Debug completo
+    debug_max_chunks: int | None = None
+    debug_max_chars_per_file: int | None = 200000
+    debug_store_llm_raw: bool = True
+
 
 def ensure_paths(cfg: AppConfig) -> None:
     """Garante que os diretórios principais existam."""

@@ -54,6 +54,11 @@ initial_backoff: 1.5                  # backoff inicial (s)
 backoff_factor: 1.8                   # multiplicador de backoff
 request_timeout: 180                  # timeout por chamada (s)
 
+# Debug completo (usado com --debug)
+debug_max_chunks: null               # limite de chunks para arquivos de debug (null = todos)
+debug_max_chars_per_file: 200000     # truncamento por arquivo de debug
+debug_store_llm_raw: true            # guarda saída bruta do LLM nos arquivos de debug
+
 data_dir: data
 output_dir: saida
 font_dir: .cache/fonts
