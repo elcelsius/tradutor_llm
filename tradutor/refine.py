@@ -591,45 +591,45 @@ def refine_section(
                         }
                     )
                 _maybe_write_debug_files(chunk, None, normalized_dup)
-            if record_chunk:
-                debug_stage_dir = debug_run.stage_dir("60_refine") / "debug_refine"
-                outputs_payload = {
-                    "debug_original": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_original_pt.txt"),
-                    "debug_context": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_context.txt"),
-                    "debug_llm_raw": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_llm_raw.txt"),
-                    "debug_final": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_final_pt.txt"),
-                    "output_hash": debug_run.sha256_text(normalized_dup),
-                }
-                manifest_chunks.append(
-                    {
-                        "chunk_index": block_idx,
-                        "section_index": index,
-                        "section_title": title or "",
-                        "input_hash": debug_run.sha256_text(chunk),
-                        "chars_in": len(chunk),
-                        "context_hash": None,
-                        "from_cache": False,
-                        "from_duplicate": True,
-                        "llm_attempts": 0,
-                        "retry_reasons": [],
-                        "suspect_output": False,
-                        "suspect_reason": "",
-                        "contamination_detected": False,
-                        "sanitization_ratio": None,
-                        "normalizers": {
-                            "triple_quotes_removed": norm_stats.get("triple_quotes_removed", 0),
-                            "dialogue_splits": norm_stats.get("dialogue_splits", 0),
-                        },
-                        "lengths": {
-                            "chars_out": len(normalized_dup),
-                            "ratio_out_in": round(len(normalized_dup.strip()) / max(len(chunk.strip()), 1), 3)
-                            if chunk.strip()
-                            else 0.0,
-                        },
-                        "outputs": outputs_payload,
-                        "errors": None,
+                if record_chunk:
+                    debug_stage_dir = debug_run.stage_dir("60_refine") / "debug_refine"
+                    outputs_payload = {
+                        "debug_original": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_original_pt.txt"),
+                        "debug_context": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_context.txt"),
+                        "debug_llm_raw": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_llm_raw.txt"),
+                        "debug_final": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_final_pt.txt"),
+                        "output_hash": debug_run.sha256_text(normalized_dup),
                     }
-                )
+                    manifest_chunks.append(
+                        {
+                            "chunk_index": block_idx,
+                            "section_index": index,
+                            "section_title": title or "",
+                            "input_hash": debug_run.sha256_text(chunk),
+                            "chars_in": len(chunk),
+                            "context_hash": None,
+                            "from_cache": False,
+                            "from_duplicate": True,
+                            "llm_attempts": 0,
+                            "retry_reasons": [],
+                            "suspect_output": False,
+                            "suspect_reason": "",
+                            "contamination_detected": False,
+                            "sanitization_ratio": None,
+                            "normalizers": {
+                                "triple_quotes_removed": norm_stats.get("triple_quotes_removed", 0),
+                                "dialogue_splits": norm_stats.get("dialogue_splits", 0),
+                            },
+                            "lengths": {
+                                "chars_out": len(normalized_dup),
+                                "ratio_out_in": round(len(normalized_dup.strip()) / max(len(chunk.strip()), 1), 3)
+                                if chunk.strip()
+                                else 0.0,
+                            },
+                            "outputs": outputs_payload,
+                            "errors": None,
+                        }
+                    )
                 continue
         if cache_exists("refine", h):
             data = load_cache("refine", h)
