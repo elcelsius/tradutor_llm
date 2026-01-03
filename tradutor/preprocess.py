@@ -279,6 +279,8 @@ def _remove_promo_lines(text: str, glossary: dict) -> tuple[str, dict, list[str]
         "urls_removed_count": 0,
         "promo_samples": [],
         "promo_removed_hash": "",
+        "promo_removed_reason_counts": {},
+        "promo_removed_samples": {},
     }
     removed_norms: list[str] = []
     max_len = glossary.get("max_line_len", 160) or 160
@@ -292,6 +294,23 @@ def _remove_promo_lines(text: str, glossary: dict) -> tuple[str, dict, list[str]
             regexes.append(re.compile(pat, flags=re.IGNORECASE))
         except re.error:
             continue
+
+    def _is_dialogue_like(norm_line: str, raw_line: str) -> bool:
+        stripped = raw_line.lstrip()
+        if stripped.startswith(('"', "“", "'", "’", "—", "-")):
+            return True
+        compact = re.sub(r"[\\s]", "", norm_line)
+        if re.fullmatch(r"[.·…]{2,}", norm_line):
+            return True
+        if len(compact) <= 12 and re.fullmatch(r"[A-Za-z]{1,6}[!?…—.]+", compact):
+            return True
+        return False
+
+    def _record_reason(reason: str, sample: str) -> None:
+        stats["promo_removed_reason_counts"][reason] = stats["promo_removed_reason_counts"].get(reason, 0) + 1
+        samples = stats["promo_removed_samples"].setdefault(reason, [])
+        if len(samples) < 10:
+            samples.append(sample)
 
     def _update_stats(norm_line: str, *, has_url: bool, has_domain: bool) -> None:
         stats["promo_lines_removed_count"] += 1
@@ -338,7 +357,12 @@ def _remove_promo_lines(text: str, glossary: dict) -> tuple[str, dict, list[str]
                 short_line = len(next_norm) <= 140
                 letter_ratio = sum(1 for ch in next_norm if ch.isalpha()) / max(len(next_norm), 1)
                 low_linguistic = letter_ratio < 0.65
-                if next_domain or next_url or next_phrase or next_regex or (short_line and (low_linguistic or next_norm.endswith(":"))):
+                if next_domain or next_url or next_phrase or next_regex:
+                    block_end += 1
+                    continue
+                if _is_dialogue_like(next_norm, lines[block_end]):
+                    break
+                if short_line and (low_linguistic or next_norm.endswith(":")):
                     block_end += 1
                     continue
                 break
@@ -354,6 +378,7 @@ def _remove_promo_lines(text: str, glossary: dict) -> tuple[str, dict, list[str]
                 )
                 removed_has_url = bool(URL_RE.search(removed_lower))
                 _update_stats(removed_compact, has_url=removed_has_url, has_domain=removed_has_domain)
+                _record_reason("block", removed_norm)
                 if removed_norm:
                     removed_norms.append(removed_norm)
                     removed_lines.append(removed_norm)
@@ -364,6 +389,7 @@ def _remove_promo_lines(text: str, glossary: dict) -> tuple[str, dict, list[str]
             _update_stats(norm_compact, has_url=has_url, has_domain=has_domain)
             removed_norms.append(normalized)
             removed_lines.append(normalized)
+            _record_reason("single", normalized)
             i += 1
             continue
         cleaned.append(line)

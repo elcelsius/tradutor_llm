@@ -368,6 +368,22 @@ def test_preprocess_keeps_dialogue_on_new_paragraph() -> None:
     assert "spoken to you?”" in parts[2]
 
 
+def test_preprocess_preserves_short_dialogue_lines() -> None:
+    raw = "\n".join(
+        [
+            "“Eh?!”",
+            "“Yeah?”",
+            "“…?”",
+            "“Squee—!”",
+            "“Squee.”",
+            "“...”",
+        ]
+    )
+    cleaned = preprocess_text(raw)
+    for line in ["“Eh?!”", "“Yeah?”", "“…?”", "“Squee—!”", "“Squee.”", "“...”"]:
+        assert line in cleaned
+
+
 def test_preprocess_merges_quote_continuation_and_keeps_ellipsis_line() -> None:
     raw = "\n".join(
         [
@@ -399,6 +415,22 @@ def test_preprocess_fixes_under_merge_and_spam_block() -> None:
     assert "Get the latest news" not in cleaned
     assert "visit us online" not in cleaned
     assert "Story continues normally." in cleaned
+
+
+def test_preprocess_still_removes_short_noise_lines() -> None:
+    raw = "\n".join(
+        [
+            "OceanofPDF.com",
+            "discord.gg/xxxxx",
+            "Sign up for our newsletter",
+            "Normal story stays.",
+        ]
+    )
+    cleaned = preprocess_text(raw)
+    assert "OceanofPDF" not in cleaned
+    assert "discord.gg" not in cleaned
+    assert "Sign up for our newsletter" not in cleaned
+    assert "Normal story stays." in cleaned
 
 
 def test_preprocess_preserves_scene_separators() -> None:
