@@ -4,6 +4,7 @@ Pré-processamento de PDFs: extração de texto, limpeza e chunking seguro.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from pathlib import Path
@@ -99,7 +100,7 @@ PROMO_PHRASES: Final[list[str]] = [
 
 TOC_MARKER_LINES: Final[list[str]] = [
     "table of contents",
-    "contents",
+    # "contents" tratado como marker apenas quando a linha é exatamente o termo, ver _is_marker
     "sumário",
     "índice",
     "indice",
@@ -122,6 +123,10 @@ def normalize_line_for_filters(line: str) -> str:
     normalized = normalized.strip()
     normalized = re.sub(r"[ \t]+", " ", normalized)
     return normalized
+
+
+def _sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def extract_text_from_pdf(path: Path, logger: logging.Logger) -> str:
@@ -375,6 +380,7 @@ def _fix_under_merge(text: str) -> tuple[str, dict]:
                 fixed.append(lines[i])
                 i += 1
                 continue
+            curr_is_heading = _is_heading_like(curr)
             ends_sentence = bool(re.search(r"[.!?…]['\"]?$", curr))
             starts_dialogue = nxt.startswith(('"', "“", "‘", "—", "-"))
             promo_guard = any(dom in nxt.lower() for dom in PROMO_DOMAINS) or URL_RE.search(nxt)
@@ -392,6 +398,7 @@ def _fix_under_merge(text: str) -> tuple[str, dict]:
                 and curr[-1].isalpha()
                 and (nxt[:1].islower() or (nxt[:1].isupper() and not starts_dialogue and not next_is_heading))
                 and not promo_guard
+                and not curr_is_heading
             ):
                 fixed.append(f"{curr} {nxt}")
                 merges += 1
@@ -428,6 +435,11 @@ def _reflow_paragraphs(text: str) -> tuple[str, dict]:
             _flush()
             reflowed.append("")
             continue
+        if stripped.startswith(('"', "“")) and buffer:
+            # nova fala em linha separada: inicia novo par·grafo
+            _flush()
+            buffer.append(stripped)
+            continue
         if _is_heading_like(stripped) or re.fullmatch(r"\*{2,}", stripped):
             _flush()
             reflowed.append(line)
@@ -438,6 +450,37 @@ def _reflow_paragraphs(text: str) -> tuple[str, dict]:
             buffer.append(line.strip())
     _flush()
     return "\n".join(reflowed), {"reflow_merges": merges}
+
+
+def _normalize_uppercase_sentences(text: str) -> tuple[str, dict]:
+    """
+    Converte linhas inteiras em CAPS (n„o headings) para sentence case seguro.
+    Evita mexer em headings e separadores para n„o quebrar narrativa.
+    """
+    normalized: list[str] = []
+    fixes = 0
+    for line in text.splitlines():
+        stripped = line.strip()
+        if (
+            stripped
+            and stripped.isupper()
+            and len(stripped) > 8
+            and " " in stripped
+            and not _is_heading_like(stripped)
+            and not re.fullmatch(r"\*{2,}", stripped)
+        ):
+            match = re.match(r"^([\"“‘(\\[]*)(.+)$", stripped)
+            if match:
+                prefix, body = match.groups()
+                body_lower = body.lower()
+                sentence = prefix + body_lower[:1].upper() + body_lower[1:]
+                normalized.append(sentence)
+                fixes += 1
+            else:
+                normalized.append(line)
+        else:
+            normalized.append(line)
+    return "\n".join(normalized), {"uppercase_sentence_normalized": fixes}
 
 
 def _fix_hyphen_linebreaks(text: str) -> tuple[str, dict]:
@@ -500,6 +543,8 @@ def _remove_toc_blocks(
     tail_removed = 0
 
     def _is_marker(norm: str) -> bool:
+        if norm == "contents":
+            return True
         return norm in TOC_MARKER_LINES
 
     def _looks_narrative(norm_line: str) -> bool:
@@ -564,12 +609,17 @@ def _remove_toc_blocks(
     _strip_in_range(0, min(len(lines), head_window))
     tail_start = max(0, len(lines) - tail_window)
     _strip_in_range(tail_start, len(lines), is_tail=True)
+    removed_hash = _sha256_text("\n".join(removed_lines)) if removed_lines else ""
+    max_samples = 20
+    removed_sample = removed_lines[:max_samples]
     stats = {
         "toc_blocks_removed_head": head_removed,
         "toc_blocks_removed_tail": tail_removed,
         "toc_blocks_removed_count": head_removed + tail_removed,
         "toc_lines_removed_count": len(removed_lines),
-        "toc_removed_lines": removed_lines,
+        "toc_removed_lines": removed_sample,
+        "toc_removed_truncated": len(removed_lines) > max_samples,
+        "toc_removed_hash": removed_hash,
     }
     return "\n".join(lines), stats
 
@@ -875,6 +925,9 @@ def preprocess_text(
 
     text, reflow_stats = _reflow_paragraphs(text)
     stats.update(reflow_stats)
+
+    text, upper_stats = _normalize_uppercase_sentences(text)
+    stats.update(upper_stats)
 
     # Restaura heading de pr¢logo se ele existia no raw mas nÆo sobrou ap¢s a limpeza.
     if (

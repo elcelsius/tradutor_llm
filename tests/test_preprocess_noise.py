@@ -236,6 +236,32 @@ def test_preprocess_reflows_paragraphs_and_preserves_story_start() -> None:
     import re
     assert len(cleaned.splitlines()) < len(raw.splitlines())
 
+def test_preprocess_does_not_remove_contents_word() -> None:
+    raw = "\n".join(
+        [
+            "The contents of the report were alarming.",
+            "But the hero kept going.",
+        ]
+    )
+    cleaned, stats = preprocess_text(raw, return_stats=True, skip_front_matter=False)
+    assert "contents of the report" in cleaned
+    assert stats["toc_blocks_removed_count"] == 0
+
+
+def test_preprocess_idempotent() -> None:
+    raw = "\n".join(
+        [
+            "Prologue",
+            "OceanofPDF.com",
+            "A normal line.",
+            "Freeze on",
+            "Kirihara.",
+        ]
+    )
+    once = preprocess_text(raw)
+    twice = preprocess_text(once)
+    assert once == twice
+
 
 def test_preprocess_removes_soft_hyphen_and_spaced_caps() -> None:
     raw = "\n".join(
@@ -252,6 +278,21 @@ def test_preprocess_removes_soft_hyphen_and_spaced_caps() -> None:
     assert "WEIRD" in cleaned
     assert stats["soft_hyphen_removed"] >= 1
     assert stats["spaced_caps_remaining"] == 0
+
+
+def test_preprocess_merges_freeze_on_kirihara_and_sentence_case() -> None:
+    raw = "\n".join(
+        [
+            "Prologue",
+            "Freeze on",
+            "Kirihara.",
+            "A FTER SOGOU appeared.",
+        ]
+    )
+    cleaned = preprocess_text(raw)
+    assert "Freeze on Kirihara." in cleaned
+    assert cleaned.splitlines()[0] == "Prologue"
+    assert "after sogou appeared." in cleaned.lower()
 
 
 def test_preprocess_removes_watermark_globally_and_merges_dash_continuation() -> None:
@@ -274,6 +315,24 @@ def test_preprocess_removes_watermark_globally_and_merges_dash_continuation() ->
     assert "He lost consciousness —falling asleep on the spot." in cleaned or "He lost consciousness—falling asleep on the spot." in cleaned
     assert stats["watermarks_remaining"] == 0
     assert len(cleaned.splitlines()) < len(raw.splitlines())
+
+
+def test_preprocess_keeps_dialogue_on_new_paragraph() -> None:
+    raw = "\n".join(
+        [
+            "Eventually—Sogou opened her mouth to speak, eyes still downturned.",
+            "“I…”",
+            "“Please, Lady Ayaka. Will you trust the words that Sir Too-ka has",
+            "spoken to you?”",
+            "She was suddenly interrupted by Seras Ashrain.",
+        ]
+    )
+    cleaned = preprocess_text(raw)
+    parts = cleaned.splitlines()
+    assert parts[0].startswith("Eventually—Sogou opened her mouth")
+    assert parts[1].startswith("“I…”")
+    assert parts[2].startswith("“Please, Lady Ayaka.")
+    assert "spoken to you?”" in parts[2]
 
 
 def test_preprocess_fixes_under_merge_and_spam_block() -> None:
