@@ -314,6 +314,19 @@ def _fix_under_merge(text: str) -> tuple[str, dict]:
     i = 0
     while i < len(lines):
         line = lines[i]
+        # remove isolated blank lines splitting mid-sentence when neighbors allow merge
+        if not line.strip() and fixed:
+            prev = fixed[-1] if fixed else ""
+            if i + 1 < len(lines):
+                nxt = lines[i + 1].lstrip()
+                if prev and nxt and not re.search(r"[.!?…]['\"]?$", prev) and prev[-1].isalpha() and nxt[:1].islower():
+                    fixed[-1] = f"{prev} {nxt}"
+                    merges += 1
+                    i += 2
+                    continue
+            fixed.append(line)
+            i += 1
+            continue
         if i + 1 < len(lines):
             curr = lines[i].rstrip()
             nxt = lines[i + 1].lstrip()
@@ -323,7 +336,14 @@ def _fix_under_merge(text: str) -> tuple[str, dict]:
                 continue
             ends_sentence = bool(re.search(r"[.!?…]['\"]?$", curr))
             starts_dialogue = nxt.startswith(('"', "“", "‘", "—", "-"))
-            if not ends_sentence and not starts_dialogue and curr[-1].isalpha() and nxt[:1].islower():
+            promo_guard = any(dom in nxt.lower() for dom in PROMO_DOMAINS) or URL_RE.search(nxt)
+            if (
+                not ends_sentence
+                and not starts_dialogue
+                and curr[-1].isalpha()
+                and nxt[:1].islower()
+                and not promo_guard
+            ):
                 fixed.append(f"{curr} {nxt}")
                 merges += 1
                 i += 2
@@ -331,6 +351,19 @@ def _fix_under_merge(text: str) -> tuple[str, dict]:
         fixed.append(lines[i])
         i += 1
     return "\n".join(fixed), {"under_merge_fixes": merges}
+
+
+def _fix_hyphen_linebreaks(text: str) -> tuple[str, dict]:
+    pattern = re.compile(r"([A-Za-z]{2,20})-\s*\n\s*([a-z]{1,20})")
+    count = 0
+
+    def _repl(match: re.Match[str]) -> str:
+        nonlocal count
+        count += 1
+        return f"{match.group(1)}-{match.group(2)}"
+
+    fixed = pattern.sub(_repl, text)
+    return fixed, {"hyphen_linebreak_fixes": count}
 
 
 def _is_toc_entry(line: str) -> bool:
@@ -476,7 +509,7 @@ def _fix_ocr_spacing(text: str) -> tuple[str, dict]:
                 long_count = 0
                 while i < len(tokens) and _is_upperish(tokens[i]):
                     tok = tokens[i]
-                    if len(tok) > 1 and long_count >= 1:
+                    if len(tok) > 1 and long_count >= 1 and len(seq) >= 2 and len(tok) > 6:
                         break
                     if len(tok) > 1:
                         long_count += 1
@@ -490,11 +523,31 @@ def _fix_ocr_spacing(text: str) -> tuple[str, dict]:
                     trail = punct or trail
                 combined_core = "".join(cores)
                 combined = combined_core + trail
-                if len(seq) >= 2 and long_count <= 1 and re.search(r"[AEIOU]", combined_core):
+                allow_merge = len(seq) >= 2 and long_count <= 1 and re.search(r"[AEIOU]", combined_core)
+                if len(seq) == 2 and cores[0] == "I" and len(cores[1]) > 3:
+                    allow_merge = False
+                if len(combined_core) > 9:
+                    allow_merge = False
+                if len(seq) >= 3 and len(cores[-1]) >= 8:
+                    allow_merge = False
+                if len(seq) >= 3 and len(cores[-1]) >= 4:
+                    allow_merge = False
+
+                if allow_merge:
                     new_tokens.append(combined)
                     samples.append((" ".join(seq), combined))
                 else:
-                    new_tokens.extend(seq)
+                    # try partial merge for short prefixes (e.g., W E CONTINUED -> WE CONTINUED)
+                    if len(seq) >= 3 and all(len(c) == 1 for c in cores[:-1]):
+                        merged_prefix = "".join(cores[:-1])
+                        new_tokens.append(merged_prefix)
+                        new_tokens.append(seq[-1])
+                    elif len(seq) >= 2 and len(cores[0]) == 1 and len(cores[1]) <= 4:
+                        merged_prefix = "".join(cores[:2])
+                        new_tokens.append(merged_prefix)
+                        new_tokens.extend(seq[2:])
+                    else:
+                        new_tokens.extend(seq)
             else:
                 new_tokens.append(tokens[i])
                 i += 1
@@ -630,6 +683,9 @@ def preprocess_text(
     text, toc_stats = _remove_toc_blocks(text)
     stats.update(toc_stats)
     removed_counter.update(toc_stats.get("toc_removed_lines", []))
+
+    text, hyphen_stats = _fix_hyphen_linebreaks(text)
+    stats.update(hyphen_stats)
 
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r" +([,.;:!?])", r"\1", text)
