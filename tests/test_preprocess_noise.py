@@ -384,6 +384,19 @@ def test_preprocess_preserves_short_dialogue_lines() -> None:
         assert line in cleaned
 
 
+def test_preprocess_preserves_isolated_ellipsis_line() -> None:
+    raw = "\n".join(
+        [
+            "“I don't think it's feasible.”",
+            "“…”",
+            "“Given the situation, we wait.”",
+        ]
+    )
+    cleaned = preprocess_text(raw)
+    assert "Given the situation" in cleaned
+    assert "“…”" in cleaned
+
+
 def test_preprocess_merges_quote_continuation_and_keeps_ellipsis_line() -> None:
     raw = "\n".join(
         [

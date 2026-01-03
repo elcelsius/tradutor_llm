@@ -337,6 +337,10 @@ def _remove_promo_lines(text: str, glossary: dict) -> tuple[str, dict, list[str]
         looks_dialogue = line.lstrip().startswith(('"', "“", "'", "’", "-", "–"))
         long_narrative = len(normalized) > 180 and not (has_url or has_domain)
         promo_seed = has_domain or has_url or has_phrase or has_regex
+        if _is_dialogue_like(norm_lower, line) and not (has_domain or has_url or has_regex):
+            cleaned.append(line)
+            i += 1
+            continue
         if looks_dialogue and not has_domain and not has_url:
             cleaned.append(line)
             i += 1
