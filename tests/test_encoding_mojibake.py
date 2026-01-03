@@ -6,22 +6,24 @@ import pytest
 
 
 MOJIBAKE_TOKENS = [
-    "\u00d4\u00c7\u00a3",  # mojibake for opening curly quote
-    "\u00d4\u00c7\u00d8",  # mojibake for closing curly quote
-    "\u00d4\u00c7\u00aa",  # mojibake for ellipsis
-    "\u251c\u00c7",  # mojibake fragment
-    "\u251c\u2510",  # mojibake fragment
-    "\u00c3\u00a2\u20ac",  # mojibake fragment
-    "\u00c3\u00a2\u20ac\u201c",  # mojibake fragment
+    "\u00d4\u00c7\u00a3",
+    "\u00d4\u00c7\u00d8",
+    "\u00d4\u00c7\u00aa",
+    "\u00c3\u00a2\u20ac",
+    "\u251c\u00c7",
+    "\u251c\u2510",
 ]
 
 
 def _iter_source_files() -> list[Path]:
     root = Path(__file__).resolve().parents[1]
-    sources: list[Path] = []
+    sources: set[Path] = set()
+    patterns = ("*.py", "*.md", "*.json")
     for rel in ("tradutor", "tests"):
-        sources.extend((root / rel).rglob("*.py"))
-    return sources
+        base = root / rel
+        for pattern in patterns:
+            sources.update(base.rglob(pattern))
+    return sorted(sources)
 
 
 @pytest.mark.parametrize("path", _iter_source_files())
