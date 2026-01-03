@@ -912,64 +912,64 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
                 }
             )
 
-    backend = LLMBackend(
-        backend=args.backend,
-        model=args.model,
-        temperature=cfg.translate_temperature,
-        logger=logger,
-        request_timeout=args.request_timeout,
-        repeat_penalty=cfg.translate_repeat_penalty,
-        num_predict=args.num_predict,
-        num_ctx=cfg.translate_num_ctx,
-        keep_alive=getattr(cfg, "ollama_keep_alive", "30m"),
-    )
-    logger.info(
-        "LLM de tradu‡Æo: backend=%s model=%s temp=%.2f chunk=%d timeout=%ds num_predict=%d",
-        args.backend,
-        args.model,
-        cfg.translate_temperature,
-        cfg.translate_chunk_chars,
-        args.request_timeout,
-        args.num_predict,
-    )
+        backend = LLMBackend(
+            backend=args.backend,
+            model=args.model,
+            temperature=cfg.translate_temperature,
+            logger=logger,
+            request_timeout=args.request_timeout,
+            repeat_penalty=cfg.translate_repeat_penalty,
+            num_predict=args.num_predict,
+            num_ctx=cfg.translate_num_ctx,
+            keep_alive=getattr(cfg, "ollama_keep_alive", "30m"),
+        )
+        logger.info(
+            "LLM de tradu‡Æo: backend=%s model=%s temp=%.2f chunk=%d timeout=%ds num_predict=%d",
+            args.backend,
+            args.model,
+            cfg.translate_temperature,
+            cfg.translate_chunk_chars,
+            args.request_timeout,
+            args.num_predict,
+        )
 
-    glossary_text = None
-    glossary_state = None
-    fail_on_chunk_error = getattr(args, "fail_on_chunk_error", None)
-    if fail_on_chunk_error is None:
-        fail_on_chunk_error = getattr(cfg, "fail_on_chunk_error", False)
-    if getattr(args, "use_glossary", False):
-        manual_path = Path(args.manual_glossary) if args.manual_glossary else Path("glossario/glossario_manual.json")
-        glossary_state = build_glossary_state(manual_path=manual_path, dynamic_path=None, logger=logger, manual_dir=None)
-        if glossary_state:
-            glossary_text = format_manual_pairs_for_translation(glossary_state.manual_terms, limit=30)
-            logger.info("Gloss rio manual carregado para tradu‡Æo: %d termos (usando at‚ 30 no prompt).", len(glossary_state.manual_terms))
-        else:
-            logger.warning("Uso de gloss rio solicitado, mas nenhum gloss rio manual carregado.")
-
-    progress_path = cfg.output_dir / f"{text_path.stem}_pt_progress.json"
-    resume_manifest = None
-    if getattr(args, "resume", False):
-        try:
-            loaded = json.loads(progress_path.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                resume_manifest = loaded
+        glossary_text = None
+        glossary_state = None
+        fail_on_chunk_error = getattr(args, "fail_on_chunk_error", None)
+        if fail_on_chunk_error is None:
+            fail_on_chunk_error = getattr(cfg, "fail_on_chunk_error", False)
+        if getattr(args, "use_glossary", False):
+            manual_path = Path(args.manual_glossary) if args.manual_glossary else Path("glossario/glossario_manual.json")
+            glossary_state = build_glossary_state(manual_path=manual_path, dynamic_path=None, logger=logger, manual_dir=None)
+            if glossary_state:
+                glossary_text = format_manual_pairs_for_translation(glossary_state.manual_terms, limit=30)
+                logger.info("Gloss rio manual carregado para tradu‡Æo: %d termos (usando at‚ 30 no prompt).", len(glossary_state.manual_terms))
             else:
+                logger.warning("Uso de gloss rio solicitado, mas nenhum gloss rio manual carregado.")
+
+        progress_path = cfg.output_dir / f"{text_path.stem}_pt_progress.json"
+        resume_manifest = None
+        if getattr(args, "resume", False):
+            try:
+                loaded = json.loads(progress_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    resume_manifest = loaded
+                else:
+                    logger.warning(
+                        "Manifesto de progresso %s tem formato inesperado; traduzindo do zero.",
+                        progress_path,
+                    )
+            except FileNotFoundError:
                 logger.warning(
-                    "Manifesto de progresso %s tem formato inesperado; traduzindo do zero.",
+                    "Manifesto de progresso nÆo encontrado em %s; tradu‡Æo completa ser  executada.",
                     progress_path,
                 )
-        except FileNotFoundError:
-            logger.warning(
-                "Manifesto de progresso nÆo encontrado em %s; tradu‡Æo completa ser  executada.",
-                progress_path,
-            )
-        except Exception as exc:
-            logger.warning(
-                "Falha ao ler manifesto de progresso %s (%s); tradu‡Æo completa ser  executada.",
-                progress_path,
-                exc,
-            )
+            except Exception as exc:
+                logger.warning(
+                    "Falha ao ler manifesto de progresso %s (%s); tradu‡Æo completa ser  executada.",
+                    progress_path,
+                    exc,
+                )
 
         current_stage = "translate"
         start_stage = time.perf_counter()

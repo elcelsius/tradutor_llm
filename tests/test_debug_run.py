@@ -1,5 +1,7 @@
 import json
 import logging
+import re
+import types
 from pathlib import Path
 
 from tradutor.config import AppConfig
@@ -24,6 +26,22 @@ class FakeRefineBackend:
             text="### TEXTO_REFINADO_INICIO\nTexto refinado.\n### TEXTO_REFINADO_FIM",
             latency=0.01,
         )
+
+
+class FakeLLMBackend:
+    def __init__(self, backend: str = "fake", model: str = "fake", temperature=None, num_predict=None, repeat_penalty=None, **kwargs):
+        self.backend = backend
+        self.model = model
+        self.temperature = temperature
+        self.num_predict = num_predict
+        self.repeat_penalty = repeat_penalty
+
+    def generate(self, prompt: str) -> LLMResponse:
+        if "TEXTO_REFINADO" in prompt:
+            text = "### TEXTO_REFINADO_INICIO\nREFINED BLOCK\n### TEXTO_REFINADO_FIM"
+        else:
+            text = "### TEXTO_TRADUZIDO_INICIO\nTRADUZIDO BLOCO\n### TEXTO_TRADUZIDO_FIM"
+        return LLMResponse(text=text, latency=0.0)
 
 
 def test_debug_run_translate_refine_outputs(tmp_path: Path) -> None:
@@ -101,3 +119,135 @@ def test_debug_run_translate_refine_outputs(tmp_path: Path) -> None:
     for key, value in refine_manifest["input_paths"].items():
         if value is not None:
             assert not Path(value).is_absolute()
+
+
+def test_debug_mode_end_to_end_artifacts(monkeypatch, tmp_path: Path) -> None:
+    import tradutor.main as main  # noqa: WPS433
+
+    base_para = (
+        "This is a long paragraph in English with repeated words to test debug chunking and ensure more than one "
+        "chunk is produced cleanly without altering outputs."
+    )
+    sample_text = "\n\n".join(
+        [
+            " ".join([base_para] * 5),
+            " ".join([base_para] * 4),
+            " ".join([base_para] * 3),
+        ]
+    )
+    md_path = tmp_path / "sample.md"
+    md_path.write_text(sample_text, encoding="utf-8")
+
+    common_cfg = {
+        "data_dir": tmp_path,
+        "translate_chunk_chars": 80,
+        "refine_chunk_chars": 60,
+    }
+    base_cfg = AppConfig(output_dir=tmp_path / "base_out", **common_cfg)
+    debug_cfg = AppConfig(
+        output_dir=tmp_path / "debug_out",
+        debug_max_chunks=1,
+        debug_max_chars_per_file=50,
+        debug_store_llm_raw=False,
+        **common_cfg,
+    )
+
+    logger = setup_logging(logging.DEBUG)
+    monkeypatch.setattr(main, "LLMBackend", FakeLLMBackend)
+
+    base_args = types.SimpleNamespace(
+        command="traduz-md",
+        input=str(md_path),
+        backend="fake",
+        model="fake-model",
+        num_predict=64,
+        request_timeout=30,
+        preprocess_advanced=False,
+        normalize_paragraphs=False,
+        clear_cache=None,
+        translate_allow_adaptation=False,
+        use_glossary=False,
+        manual_glossary=None,
+        parallel=1,
+        debug=False,
+        debug_chunks=False,
+        split_by_sections=False,
+        fail_on_chunk_error=False,
+        resume=False,
+        no_refine=False,
+        cleanup_before_refine="off",
+        pdf_enabled=False,
+    )
+    debug_args = types.SimpleNamespace(**{**base_args.__dict__, "debug": True})
+
+    main.run_translate_md(base_args, base_cfg, logger)
+    base_output = read_text(base_cfg.output_dir / "sample_pt_refinado.md")
+
+    main.run_translate_md(debug_args, debug_cfg, logger)
+    debug_output_path = debug_cfg.output_dir / "sample_pt_refinado.md"
+    debug_output = read_text(debug_output_path)
+    assert debug_output == base_output
+
+    run_root = debug_cfg.output_dir / "debug_runs" / "sample"
+    runs = list(run_root.iterdir())
+    assert runs, "debug run directory should exist"
+    run_dir = runs[0]
+
+    expected_dirs = [
+        "00_inputs",
+        "10_preprocess",
+        "20_desquebrar",
+        "30_split_chunk",
+        "40_translate",
+        "50_cleanup_pre_refine",
+        "60_refine",
+        "99_reports",
+    ]
+    for dirname in expected_dirs:
+        assert (run_dir / dirname).is_dir()
+
+    translate_manifest = json.loads(read_text(run_dir / "40_translate" / "translate_manifest.json"))
+    refine_manifest = json.loads(read_text(run_dir / "60_refine" / "refine_manifest.json"))
+    run_summary = json.loads(read_text(run_dir / "99_reports" / "run_summary.json"))
+
+    assert re.match(r"sample/\d{8}_\d{6}$", translate_manifest["run_id"])
+    assert translate_manifest["run_id"] == refine_manifest["run_id"] == run_summary["run_id"]
+    total_chunks = translate_manifest["chunking"]["total_chunks"]
+    assert total_chunks >= 1
+    assert len(translate_manifest["chunks"]) == min(total_chunks, debug_cfg.debug_max_chunks or total_chunks)
+    total_refine_chunks = refine_manifest["refine"]["total_chunks"]
+    assert len(refine_manifest["chunks"]) == min(total_refine_chunks, debug_cfg.debug_max_chunks or total_refine_chunks)
+
+    def _assert_rel(path_str: str) -> None:
+        assert path_str is None or not Path(path_str).is_absolute()
+        assert path_str is None or not re.match(r"^[A-Za-z]:", path_str)
+
+    for path_value in translate_manifest["input_paths"].values():
+        _assert_rel(path_value)
+    for chunk in translate_manifest["chunks"]:
+        for key in ("debug_original", "debug_context", "debug_llm_raw", "debug_final"):
+            _assert_rel(chunk["outputs"][key])
+    for key, value in refine_manifest["input_paths"].items():
+        _assert_rel(value)
+    for chunk in refine_manifest["chunks"]:
+        for key in ("debug_original", "debug_context", "debug_llm_raw", "debug_final"):
+            _assert_rel(chunk["outputs"][key])
+    for rel_path in run_summary["paths"].values():
+        _assert_rel(rel_path)
+    for rel_path in run_summary["final_outputs"].values():
+        _assert_rel(rel_path)
+
+    chunk_dir = run_dir / "40_translate" / "debug_traducao"
+    assert (chunk_dir / "chunk001_original_en.txt").exists()
+    assert (chunk_dir / "chunk001_final_pt.txt").exists()
+    assert "[[OMITTED]]" in read_text(chunk_dir / "chunk001_llm_raw.txt")
+    assert not (chunk_dir / "chunk002_final_pt.txt").exists()
+    refine_chunk_dir = run_dir / "60_refine" / "debug_refine"
+    assert (refine_chunk_dir / "chunk001_final_pt.txt").exists()
+    assert not (refine_chunk_dir / "chunk002_final_pt.txt").exists()
+
+    assert (run_dir / "30_split_chunk" / "sections.json").exists()
+    assert (run_dir / "30_split_chunk" / "chunks.jsonl").exists()
+    assert (run_dir / "99_reports" / "errors.jsonl").exists()
+    assert run_summary["final_outputs"]["pt"] == "sample_pt.md"
+    assert run_summary["final_outputs"]["pt_refinado"] == "sample_pt_refinado.md"

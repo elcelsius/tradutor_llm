@@ -161,6 +161,9 @@ class DebugRunWriter:
         self.write_json("99_reports/timings.json", timing_data)
 
     def write_run_summary(self, payload: dict) -> None:
+        errors_path = self.run_dir / "99_reports" / "errors.jsonl"
+        errors_path.parent.mkdir(parents=True, exist_ok=True)
+        errors_path.touch(exist_ok=True)
         self.write_json("99_reports/run_summary.json", payload)
 
     def write_error(self, payload: dict) -> None:

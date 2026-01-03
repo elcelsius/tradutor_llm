@@ -440,18 +440,19 @@ def translate_document(
     if debug_run:
         debug_run.write_json("30_split_chunk/sections.json", sections_debug)
         for idx, rec in enumerate(chunk_records, start=1):
-            debug_run.append_jsonl(
-                "30_split_chunk/chunks.jsonl",
-                {
-                    "chunk_index": idx,
-                    "section_index": rec.get("section"),
-                    "section_title": rec.get("title", ""),
-                    "start_offset": rec.get("start_offset"),
-                    "end_offset": rec.get("end_offset"),
-                    "input_hash": debug_run.sha256_text(rec.get("text", "")),
-                    "chars_in": len(rec.get("text", "")),
-                },
-            )
+            if debug_run.should_write_chunk(idx):
+                debug_run.append_jsonl(
+                    "30_split_chunk/chunks.jsonl",
+                    {
+                        "chunk_index": idx,
+                        "section_index": rec.get("section"),
+                        "section_title": rec.get("title", ""),
+                        "start_offset": rec.get("start_offset"),
+                        "end_offset": rec.get("end_offset"),
+                        "input_hash": debug_run.sha256_text(rec.get("text", "")),
+                        "chars_in": len(rec.get("text", "")),
+                    },
+                )
     max_chunk_len = max((len(c["text"]) for c in chunk_records), default=0)
     logger.info(
         "Iniciando traducao: %d chunks (alvo=%d, max_observado=%d)",
@@ -653,7 +654,7 @@ def translate_document(
             processed_indices.add(idx)
             chunk_outputs[idx] = ""
             _write_progress()
-            if debug_run:
+            if debug_run and debug_run.should_write_chunk(idx):
                 debug_stage_dir = debug_run.stage_dir("40_translate") / "debug_traducao"
                 outputs_payload = {
                     "debug_original": debug_run.rel_path(debug_stage_dir / f"chunk{idx:03d}_original_en.txt"),
@@ -1212,7 +1213,7 @@ def translate_document(
                 "error": error_message,
             }
             _write_chunk_debug(entry)
-        if debug_run:
+        if debug_run and debug_run.should_write_chunk(idx):
             orig_quotes = _count_quotes(chunk)
             translated_quotes = _count_quotes(final_output)
             input_quote_lines = count_quote_lines(chunk)

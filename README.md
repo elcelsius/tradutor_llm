@@ -71,7 +71,7 @@ Resumos, métricas e progress são escritos em `saida/` (ver Outputs).
 - `--translate-allow-adaptation`: habilita bloco de adaptação no prompt.
 - `--split-by-sections` / `--skip-front-matter`: controle de headings/TOC.
 - `--cleanup-before-refine {off,auto,on}`: limpeza determinística antes do refine.
-- `--debug`: salva `_raw_extracted.md`, `_preprocessed.md` (e `_raw_desquebrado.md` se aplicável) e cria `saida/debug_runs/<slug>/<timestamp>/` com manifests completos.
+- `--debug`: ativa debug completo e grava artefatos/manifests por etapa em `saida/debug_runs/<slug>/<timestamp>/` (inputs, preprocess, desquebrar, chunking, translate, refine).
 - `--debug-chunks`: JSONL detalhado por chunk (tradução/refine).
 - `--fail-on-chunk-error`: aborta na primeira falha (senão marca placeholders).
 - `--pdf-enabled`: gera PDF após refine.
