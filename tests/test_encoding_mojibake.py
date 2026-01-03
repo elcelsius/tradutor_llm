@@ -4,15 +4,7 @@ from pathlib import Path
 
 import pytest
 
-
-MOJIBAKE_TOKENS = [
-    "ÔÇ£",
-    "ÔÇØ",
-    "ÔÇª",
-    "Ã¢â‚¬",
-    "├Ç",
-    "├┐",
-]
+from tradutor.mojibake import MOJIBAKE_TOKENS
 
 
 def _iter_source_files() -> list[Path]:

@@ -664,7 +664,7 @@ def desquebrar_stats_to_dict(stats: DesquebrarStats | None, cfg: AppConfig) -> d
 
 def normalize_md_paragraphs(md_text: str) -> str:
     """
-    Normaliza par├ígrafos juntando linhas internas, preservando blocos especiais.
+    Normaliza parágrafos juntando linhas internas, preservando blocos especiais.
     """
     if not md_text:
         return md_text

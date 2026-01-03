@@ -12,6 +12,13 @@ Este projeto é um **pipeline completo** para traduzir Light Novels em PDF/Markd
 ```bash
 pip install -r requirements.txt
 ```
+Para desenvolvimento/checagens locais:
+```bash
+pip install -r requirements-dev.txt
+pytest -q
+pre-commit install
+pre-commit run --all-files
+```
 2) Ajuste o `config.yaml` (modelos, caminhos, fonte do PDF). **Padrão:** Ollama rodando localmente.
 3) Coloque seus PDFs em `data/`.
 4) Rode a tradução completa (com refine; o PDF só sai se estiver habilitado).
