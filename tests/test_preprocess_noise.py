@@ -254,6 +254,28 @@ def test_preprocess_removes_soft_hyphen_and_spaced_caps() -> None:
     assert stats["spaced_caps_remaining"] == 0
 
 
+def test_preprocess_removes_watermark_globally_and_merges_dash_continuation() -> None:
+    raw = "\n".join(
+        [
+            "A normal line before.",
+            "OceanofPDF.com ruins this line.",
+            "He lost consciousness",
+            "—falling asleep on the spot.",
+            "Zerobooks appears here too.",
+            "Final narrative line after spam.",
+        ]
+    )
+    cleaned, stats = preprocess_text(raw, return_stats=True)
+    assert "OceanofPDF" not in cleaned
+    assert "Zerobooks" not in cleaned
+    assert "Join our Discord" not in cleaned
+    assert "A normal line before." in cleaned
+    assert "Final narrative line after spam." in cleaned
+    assert "He lost consciousness —falling asleep on the spot." in cleaned or "He lost consciousness—falling asleep on the spot." in cleaned
+    assert stats["watermarks_remaining"] == 0
+    assert len(cleaned.splitlines()) < len(raw.splitlines())
+
+
 def test_preprocess_fixes_under_merge_and_spam_block() -> None:
     raw = "\n".join(
         [
