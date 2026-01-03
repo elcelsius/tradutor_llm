@@ -28,9 +28,11 @@ from .cache_utils import (
 from .llm_backend import LLMBackend
 from .preprocess import (
     chunk_for_translation,
+    chunk_for_translation_with_offsets,
     paragraphs_from_text,
     preprocess_text,
 )
+from .debug_run import DebugRunWriter
 from .section_splitter import split_into_sections
 from .glossary_utils import format_manual_pairs_for_translation, select_terms_for_chunk
 from .sanitizer import log_report, sanitize_translation_output, SanitizationReport
@@ -336,6 +338,7 @@ def translate_document(
     split_by_sections: bool | None = None,
     allow_adaptation: bool | None = None,
     fail_on_chunk_error: bool | None = None,
+    debug_run: DebugRunWriter | None = None,
 ) -> str:
     """
     Executa pre-processamento (opcional), chunking e traducao por lotes com sanitizacao.
@@ -367,18 +370,48 @@ def translate_document(
             split_flag = False
     chunk_records = []
     original_paragraphs_total = 0
+    sections_debug = []
     for sidx, sec in enumerate(sections, start=1):
         paragraphs = paragraphs_from_text(sec["body"])
         original_paragraphs_total += len(paragraphs)
-        sec_chunks = chunk_for_translation(paragraphs, max_chars=cfg.translate_chunk_chars, logger=logger)
-        for ch in sec_chunks:
-            chunk_records.append({"section": sidx, "title": sec.get("title", ""), "text": ch})
+        if debug_run:
+            sec_chunks = chunk_for_translation_with_offsets(
+                paragraphs, max_chars=cfg.translate_chunk_chars, logger=logger
+            )
+        else:
+            sec_chunks = [(c, None, None) for c in chunk_for_translation(paragraphs, max_chars=cfg.translate_chunk_chars, logger=logger)]
+        section_start = sec.get("start_idx")
+        section_end = sec.get("end_idx")
+        if debug_run:
+            sections_debug.append(
+                {
+                    "title": sec.get("title", ""),
+                    "start_idx": section_start,
+                    "end_idx": section_end,
+                    "chars": len(sec.get("body", "")),
+                    "is_toc_stub": _is_stub_chunk(sec.get("body", "")),
+                }
+            )
+        for ch, start_offset, end_offset in sec_chunks:
+            global_start = (section_start + start_offset) if section_start is not None and start_offset is not None else None
+            global_end = (section_start + end_offset) if section_start is not None and end_offset is not None else None
+            chunk_records.append(
+                {
+                    "section": sidx,
+                    "title": sec.get("title", ""),
+                    "text": ch,
+                    "start_offset": global_start,
+                    "end_offset": global_end,
+                }
+            )
     sanitized_records: list[dict] = []
     for i, rec in enumerate(chunk_records):
         text = rec.get("text", "")
         if _is_stub_chunk(text):
             if i + 1 < len(chunk_records):
                 chunk_records[i + 1]["text"] = (text.strip() + "\n\n" + chunk_records[i + 1]["text"]).strip()
+                if rec.get("start_offset") is not None:
+                    chunk_records[i + 1]["start_offset"] = rec.get("start_offset")
                 logger.warning(
                     "chunk_toc_stub: merged chunk %d (title=%s, len=%d) into next chunk",
                     i + 1,
@@ -404,6 +437,21 @@ def translate_document(
         sanitized_records.append(rec)
     chunk_records = sanitized_records
     chunks = [c["text"] for c in chunk_records]
+    if debug_run:
+        debug_run.write_json("30_split_chunk/sections.json", sections_debug)
+        for idx, rec in enumerate(chunk_records, start=1):
+            debug_run.append_jsonl(
+                "30_split_chunk/chunks.jsonl",
+                {
+                    "chunk_index": idx,
+                    "section_index": rec.get("section"),
+                    "section_title": rec.get("title", ""),
+                    "start_offset": rec.get("start_offset"),
+                    "end_offset": rec.get("end_offset"),
+                    "input_hash": debug_run.sha256_text(rec.get("text", "")),
+                    "chars_in": len(rec.get("text", "")),
+                },
+            )
     max_chunk_len = max((len(c["text"]) for c in chunk_records), default=0)
     logger.info(
         "Iniciando traducao: %d chunks (alvo=%d, max_observado=%d)",
@@ -571,7 +619,7 @@ def translate_document(
     previous_context: str | None = None
     current_section: int | None = None
     debug_dir = Path(cfg.output_dir) / "debug_traducao"
-    chunk_offsets: list[tuple[int | None, int | None]] = [(None, None)] * len(chunks)
+    translate_manifest_chunks: list[dict] = []
 
     debug_file = None
     debug_file_path: Path | None = None
@@ -605,6 +653,47 @@ def translate_document(
             processed_indices.add(idx)
             chunk_outputs[idx] = ""
             _write_progress()
+            if debug_run:
+                debug_stage_dir = debug_run.stage_dir("40_translate") / "debug_traducao"
+                outputs_payload = {
+                    "debug_original": debug_run.rel_path(debug_stage_dir / f"chunk{idx:03d}_original_en.txt"),
+                    "debug_context": debug_run.rel_path(debug_stage_dir / f"chunk{idx:03d}_context.txt"),
+                    "debug_llm_raw": debug_run.rel_path(debug_stage_dir / f"chunk{idx:03d}_llm_raw.txt"),
+                    "debug_final": debug_run.rel_path(debug_stage_dir / f"chunk{idx:03d}_final_pt.txt"),
+                    "output_hash": debug_run.sha256_text(""),
+                }
+                translate_manifest_chunks.append(
+                    {
+                        "chunk_index": idx,
+                        "section_index": chunk_info.get("section"),
+                        "section_title": chunk_info.get("title", ""),
+                        "start_offset": chunk_info.get("start_offset"),
+                        "end_offset": chunk_info.get("end_offset"),
+                        "input_hash": debug_run.sha256_text(chunk),
+                        "chars_in": len(chunk),
+                        "context_hash": debug_run.sha256_text(previous_context) if previous_context else None,
+                        "from_cache": False,
+                        "from_duplicate": False,
+                        "llm_attempts": 0,
+                        "retry_reasons": [],
+                        "suspect_output": False,
+                        "suspect_reason": "",
+                        "contamination_detected": False,
+                        "sanitization_ratio": None,
+                        "dialogue": {
+                            "input_quotes": _count_quotes(chunk),
+                            "output_quotes": 0,
+                            "input_quote_lines": count_quote_lines(chunk),
+                            "output_quote_lines": 0,
+                            "possible_omission": False,
+                            "dialogue_splits": 0,
+                        },
+                        "normalizers": {"triple_quotes_removed": 0, "dialogue_splits": 0},
+                        "lengths": {"chars_out": 0, "ratio_out_in": 0.0},
+                        "outputs": outputs_payload,
+                        "errors": None,
+                    }
+                )
             continue
         chunk_glossary_text, glossary_matched, glossary_injected, chunk_terms = _build_chunk_glossary(
             glossary_manual_terms,
@@ -621,7 +710,8 @@ def translate_document(
             previous_context = None
             current_section = section_id
         h = chunk_hash(chunk)
-        start_offset, end_offset = chunk_offsets[idx - 1] if idx - 1 < len(chunk_offsets) else (None, None)
+        start_offset = chunk_info.get("start_offset")
+        end_offset = chunk_info.get("end_offset")
         from_cache = False
         from_duplicate = False
         llm_attempts = 0
@@ -633,6 +723,9 @@ def translate_document(
         cache_payload: dict | None = None
         cache_raw_output: str | None = None
         collapse_fallback = False
+        retry_reasons: list[str] = []
+        context_used = previous_context
+        sanitization_ratio: float | None = None
 
         if cache_exists("translate", h):
             data = load_cache("translate", h)
@@ -721,6 +814,7 @@ def translate_document(
                             raw_candidate = anti_hallucination_filter(orig=chunk, llm_raw=raw_text, cleaned=parsed_raw, mode="translate")
                             parsed_clean = anti_hallucination_filter(orig=chunk, llm_raw=raw_text, cleaned=parsed_clean, mode="translate")
                             sanitized_ratio = len(parsed_clean.strip()) / max(len(parsed_raw.strip()), 1) if parsed_raw.strip() else 1.0
+                            sanitization_ratio = sanitized_ratio
                             iq = _count_quotes(chunk)
                             oq = _count_quotes(parsed_clean)
                             iql = count_quote_lines(chunk)
@@ -759,6 +853,7 @@ def translate_document(
                             if retry:
                                 retry_log_reason = retry_reason or guardrail_reason or "retry"
                                 last_retry_reason = retry_log_reason
+                                retry_reasons.append(retry_log_reason)
                                 logger.warning(
                                     "QA retry traducao chunk %d/%d: reason=%s attempt=%d/%d",
                                     idx,
@@ -981,6 +1076,36 @@ def translate_document(
             if raw_text:
                 (debug_dir / f"{base}_llm_raw.txt").write_text(raw_text, encoding="utf-8")
             (debug_dir / f"{base}_final_pt.txt").write_text(final_output, encoding="utf-8")
+        if debug_run and debug_run.should_write_chunk(idx):
+            debug_stage_dir = debug_run.stage_dir("40_translate") / "debug_traducao"
+            debug_stage_dir.mkdir(parents=True, exist_ok=True)
+            base = f"chunk{idx:03d}"
+            debug_run.write_text(
+                debug_run.rel_path(debug_stage_dir / f"{base}_original_en.txt"),
+                chunk,
+            )
+            debug_run.write_text(
+                debug_run.rel_path(debug_stage_dir / f"{base}_context.txt"),
+                context_used or "",
+            )
+            if raw_text is not None:
+                raw_hash = debug_run.sha256_text(raw_text)
+                if not debug_run.store_llm_raw:
+                    llm_payload = f"[[OMITTED]]\n[[SHA256:{raw_hash}]]\n"
+                elif debug_run.max_chars_per_file and len(raw_text) > debug_run.max_chars_per_file:
+                    truncated = raw_text[: debug_run.max_chars_per_file]
+                    llm_payload = f"{truncated}\n\n[[TRUNCATED]]\n[[SHA256:{raw_hash}]]\n"
+                else:
+                    llm_payload = raw_text
+                debug_run.write_text(
+                    debug_run.rel_path(debug_stage_dir / f"{base}_llm_raw.txt"),
+                    llm_payload,
+                    allow_truncate=False,
+                )
+            debug_run.write_text(
+                debug_run.rel_path(debug_stage_dir / f"{base}_final_pt.txt"),
+                final_output,
+            )
         if cache_payload is not None:
             save_cache(
                 "translate",
@@ -1087,6 +1212,66 @@ def translate_document(
                 "error": error_message,
             }
             _write_chunk_debug(entry)
+        if debug_run:
+            orig_quotes = _count_quotes(chunk)
+            translated_quotes = _count_quotes(final_output)
+            input_quote_lines = count_quote_lines(chunk)
+            output_quote_lines = count_quote_lines(final_output)
+            possible_omission = False
+            if orig_quotes >= 4 and translated_quotes <= max(1, int(orig_quotes * 0.4)):
+                possible_omission = True
+            cleaned_ratio = (len(final_output.strip()) / max(len(chunk.strip()), 1)) if chunk.strip() else 0.0
+            output_hash = debug_run.sha256_text(final_output)
+            debug_stage_dir = debug_run.stage_dir("40_translate") / "debug_traducao"
+            outputs_payload = {
+                "debug_original": debug_run.rel_path(debug_stage_dir / f"chunk{idx:03d}_original_en.txt"),
+                "debug_context": debug_run.rel_path(debug_stage_dir / f"chunk{idx:03d}_context.txt"),
+                "debug_llm_raw": debug_run.rel_path(debug_stage_dir / f"chunk{idx:03d}_llm_raw.txt"),
+                "debug_final": debug_run.rel_path(debug_stage_dir / f"chunk{idx:03d}_final_pt.txt"),
+                "output_hash": output_hash,
+            }
+            translate_manifest_chunks.append(
+                {
+                    "chunk_index": idx,
+                    "section_index": chunk_info.get("section"),
+                    "section_title": chunk_info.get("title", ""),
+                    "start_offset": start_offset,
+                    "end_offset": end_offset,
+                    "input_hash": debug_run.sha256_text(chunk),
+                    "chars_in": len(chunk),
+                    "context_hash": debug_run.sha256_text(context_used) if context_used else None,
+                    "from_cache": from_cache,
+                    "from_duplicate": from_duplicate,
+                    "llm_attempts": llm_attempts,
+                    "retry_reasons": retry_reasons,
+                    "suspect_output": suspect_output,
+                    "suspect_reason": suspect_reason,
+                    "contamination_detected": bool(sanitizer_report.contamination_detected) if sanitizer_report else False,
+                    "sanitization_ratio": sanitization_ratio,
+                    "dialogue": {
+                        "input_quotes": orig_quotes,
+                        "output_quotes": translated_quotes,
+                        "input_quote_lines": input_quote_lines,
+                        "output_quote_lines": output_quote_lines,
+                        "possible_omission": possible_omission,
+                        "dialogue_splits": normalizer_stats.get("dialogue_splits", 0),
+                    },
+                    "normalizers": {
+                        "triple_quotes_removed": normalizer_stats.get("triple_quotes_removed", 0),
+                        "dialogue_splits": normalizer_stats.get("dialogue_splits", 0),
+                    },
+                    "lengths": {
+                        "chars_out": len(final_output),
+                        "ratio_out_in": round(cleaned_ratio, 3),
+                    },
+                    "outputs": outputs_payload,
+                    "errors": None
+                    if not error_message
+                    else {
+                        "message": error_message,
+                    },
+                }
+            )
     logger.info(
         "Resumo da traducao: total=%d sucesso=%d erro=%d",
         total_chunks,
@@ -1198,6 +1383,44 @@ def translate_document(
         debug_file.close()
         if debug_file_path:
             logger.info("Arquivo de debug de chunks: %s", debug_file_path)
+    if debug_run:
+        translate_manifest = {
+            "run_id": debug_run.run_id,
+            "stage": "translate",
+            "source_slug": source_slug or "",
+            "input_kind": debug_run.input_kind,
+            "input_paths": {
+                "preprocessed": debug_run.preprocessed_rel,
+                "desquebrado": debug_run.desquebrado_rel,
+            },
+            "chunking": {
+                "split_by_sections": split_flag,
+                "translate_chunk_chars": cfg.translate_chunk_chars,
+                "total_sections": len(sections),
+                "total_chunks": total_chunks,
+            },
+            "cache_signature": {
+                "backend": getattr(backend, "backend", None),
+                "model": getattr(backend, "model", None),
+                "num_predict": getattr(backend, "num_predict", None),
+                "temperature": getattr(backend, "temperature", None),
+                "repeat_penalty": getattr(backend, "repeat_penalty", None),
+                "translate_chunk_chars": cfg.translate_chunk_chars,
+                "glossary_hash": glossary_hash,
+            },
+            "chunks": translate_manifest_chunks,
+            "totals": {
+                "cache_hits": cache_hits,
+                "duplicate_reuse": duplicate_reuse,
+                "fallbacks": fallbacks,
+                "collapse_detected": collapse_detected,
+                "contamination_count": contamination_count,
+                "error_count": error_count,
+                "orig_chars_total": orig_chars_total,
+                "sanitized_chars_total": sanitized_chars_total,
+            },
+        }
+        debug_run.write_manifest("translate", translate_manifest)
     if failed_chunks:
         msg = (
             f"Traducao finalizada com falhas: {len(failed_chunks)}/{total_chunks} chunks nao foram traduzidos. "

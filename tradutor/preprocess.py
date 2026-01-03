@@ -351,6 +351,89 @@ def chunk_for_translation(paragraphs: List[str], max_chars: int, logger: logging
     return chunks
 
 
+def chunk_for_translation_with_offsets(
+    paragraphs: List[str],
+    max_chars: int,
+    logger: logging.Logger,
+) -> List[tuple[str, int | None, int | None]]:
+    """
+    Chunk seguro para tradução com offsets (start/end) no texto-base.
+
+    Mantém a mesma lógica de `chunk_for_translation`, retornando tuplas
+    (chunk_text, start_offset, end_offset).
+    """
+    text = "\n\n".join(p.strip() for p in paragraphs if p.strip())
+    if not text:
+        return []
+
+    boundary_re = re.compile(r"\n\n|[.!?](?:['\"”])?(?=\s|\n|$)")
+    chunks: List[tuple[str, int | None, int | None]] = []
+    start = 0
+    total_len = len(text)
+    lookahead = 400
+    consumed = 0
+
+    while start < total_len:
+        target_end = start + max_chars
+        hard_end = min(total_len, start + max_chars + lookahead)
+
+        if target_end >= total_len:
+            raw_slice = text[start:]
+            chunk_text = raw_slice.strip()
+            leading = len(raw_slice) - len(raw_slice.lstrip())
+            trailing = len(raw_slice) - len(raw_slice.rstrip())
+            start_offset = start + leading if chunk_text else None
+            end_offset = (start + len(raw_slice) - trailing) if chunk_text else None
+            chunks.append((chunk_text, start_offset, end_offset))
+            consumed += len(raw_slice)
+            break
+
+        window = text[start:hard_end]
+        after_target: int | None = None
+        before_target: int | None = None
+
+        for match in boundary_re.finditer(window):
+            end_pos = start + match.end()
+            if target_end <= end_pos <= hard_end:
+                after_target = end_pos
+            elif end_pos < target_end:
+                before_target = end_pos
+
+        if after_target:
+            chunk_end = after_target
+            logger.debug(
+                "tradução: chunk fechado em fim de frase após lookahead (len=%d)",
+                chunk_end - start,
+            )
+        elif before_target:
+            chunk_end = before_target
+            logger.debug(
+                "tradução: chunk fechado em limite seguro antes do alvo (len=%d)",
+                chunk_end - start,
+            )
+        else:
+            chunk_end = min(target_end, total_len)
+            logger.debug("tradução: chunk fechado no alvo (len=%d)", chunk_end - start)
+
+        if chunk_end <= start:
+            chunk_end = min(target_end, total_len)
+
+        raw_slice = text[start:chunk_end]
+        chunk_text = raw_slice.strip()
+        leading = len(raw_slice) - len(raw_slice.lstrip())
+        trailing = len(raw_slice) - len(raw_slice.rstrip())
+        start_offset = start + leading if chunk_text else None
+        end_offset = (start + len(raw_slice) - trailing) if chunk_text else None
+        chunks.append((chunk_text, start_offset, end_offset))
+        consumed += len(raw_slice)
+        start = chunk_end
+
+    if consumed != total_len:
+        logger.warning("tradução: soma dos chunks (%d) difere do texto original (%d)", consumed, total_len)
+
+    return chunks
+
+
 def chunk_for_refine(paragraphs: List[str], max_chars: int, logger: logging.Logger) -> List[str]:
     """Chunk seguro para refine com limite estrito."""
     return chunk_by_paragraphs(paragraphs, max_chars=max_chars, logger=logger, label="refine")
