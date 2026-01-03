@@ -25,15 +25,15 @@ RETORNE SOMENTE O TEXTO CORRIGIDO, SEM CABECALHOS OU COMENTARIOS.
 TEXTO:
 \"\"\"{chunk}\"\"\""""
 
-ELLIPSIS_RE = re.compile(r"\.\.\.|ÔÇª")
+ELLIPSIS_RE = re.compile(r"\.\.\.|…")
 SAFE_DIALOGUE_BREAK_PATTERNS = (
-    (re.compile(r"ÔÇØ{2,}\s*ÔÇ£"), "ÔÇØ\n\nÔÇ£"),
-    (re.compile(r"ÔÇØ\s*ÔÇ£"), "ÔÇØ\n\nÔÇ£"),
+    (re.compile(r"”{2,}\s*“"), "”\n\n“"),
+    (re.compile(r"”\s*“"), "”\n\n“"),
 )
-QUOTE_LINE_TOKENS = {'"', "ÔÇ£", "ÔÇØ", "'''", '"""'}
-QUOTE_CHARS = {'"', "ÔÇ£", "ÔÇØ"}
+QUOTE_LINE_TOKENS = {'"', "“", "”", "'''", '"""'}
+QUOTE_CHARS = {'"', "“", "”"}
 HYPHEN_LINEBREAK_RE = re.compile(r"(\w)-\s*\n\s*(\w)")
-STUTTER_SPACE_RE = re.compile(r"\b([A-Za-z├Ç-├┐])-\s+([A-Za-z├Ç-├┐])")
+STUTTER_SPACE_RE = re.compile(r"\b([A-Za-zÀ-ÿ])-\s+([A-Za-zÀ-ÿ])")
 POSTPROCESS_VERSION = 1
 
 

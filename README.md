@@ -3,6 +3,7 @@
 Este projeto é um **pipeline completo** para traduzir Light Novels em PDF/Markdown usando LLMs (Ollama ou Gemini). Ele cuida de tudo: extração do texto, limpeza, “desquebrar” (unir linhas quebradas), tradução, refine (revisão automática) e geração de PDF final.
 
 > **Para iniciantes:** siga a seção **Passo a passo rápido**. Toda a configuração central fica no `config.yaml`.
+> O projeto usa UTF-8. Configure seu editor para salvar em UTF-8.
 
 ---
 
