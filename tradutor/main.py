@@ -523,10 +523,11 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
 
             current_stage = "preprocess"
             start_stage = time.perf_counter()
-            pre_text = preprocess_text(
+            pre_text, pre_stats = preprocess_text(
                 raw_text,
                 logger,
                 skip_front_matter=getattr(args, "skip_front_matter", cfg.skip_front_matter),
+                return_stats=True,
             )
             timings["preprocess"] = time.perf_counter() - start_stage
             if args.debug:
@@ -538,10 +539,17 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                 debug_run.write_text(debug_run.preprocessed_rel, pre_text)
                 debug_run.write_preprocess_report(
                     {
-                        "chars_in": len(raw_text),
-                        "chars_out": len(pre_text),
-                        "removed_chars": max(len(raw_text) - len(pre_text), 0),
+                        "chars_in": pre_stats.get("chars_in", len(raw_text)),
+                        "chars_out": pre_stats.get("chars_out", len(pre_text)),
+                        "removed_chars": max(pre_stats.get("chars_in", len(raw_text)) - pre_stats.get("chars_out", len(pre_text)), 0),
                         "skip_front_matter": getattr(args, "skip_front_matter", cfg.skip_front_matter),
+                        "oceanofpdf_removed_count": pre_stats.get("oceanofpdf_removed_count"),
+                        "promo_lines_removed_count": pre_stats.get("promo_lines_removed_count"),
+                        "urls_removed_count": pre_stats.get("urls_removed_count"),
+                        "toc_blocks_removed_count": pre_stats.get("toc_blocks_removed_count"),
+                        "remaining_counts": pre_stats.get("remaining_counts"),
+                        "repeated_lines_removed_count": pre_stats.get("repeated_lines_removed_count"),
+                        "top_repeated_lines": pre_stats.get("top_repeated_lines"),
                     }
                 )
 

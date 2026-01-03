@@ -67,6 +67,39 @@ TOC_MARKER_RE = re.compile(
     re.IGNORECASE,
 )
 
+PROMO_DOMAINS: Final[list[str]] = [
+    "oceanofpdf",
+    "gomanga.com",
+    "jnovels",
+    "zerobooks",
+    "discord.gg",
+    "patreon",
+]
+
+PROMO_PHRASES: Final[list[str]] = [
+    "sign up for",
+    "read online",
+    "download",
+    "join our",
+    "support us",
+    "read more on",
+    "follow us",
+]
+
+TOC_MARKER_LINES: Final[list[str]] = [
+    "table of contents",
+    "contents",
+    "sumário",
+    "índice",
+    "indice",
+    "índice remissivo",
+    "color inserts",
+    "inserções coloridas",
+    "title page",
+    "página de título",
+    "copyrights and credits",
+]
+
 
 def extract_text_from_pdf(path: Path, logger: logging.Logger) -> str:
     """Extrai texto de um PDF usando PyMuPDF."""
@@ -169,6 +202,194 @@ def remove_noise_blocks(text: str) -> str:
     return "\n\n".join(p for p in cleaned if p != "")
 
 
+def _is_promo_line(line: str) -> bool:
+    norm = line.strip().lower()
+    if not norm:
+        return False
+    has_domain = any(dom in norm for dom in PROMO_DOMAINS)
+    has_phrase = any(phrase in norm for phrase in PROMO_PHRASES)
+    return has_domain or has_phrase
+
+
+def _remove_promo_lines(text: str) -> tuple[str, dict]:
+    lines = text.splitlines()
+    cleaned: list[str] = []
+    stats = {
+        "oceanofpdf_removed_count": 0,
+        "promo_lines_removed_count": 0,
+        "urls_removed_count": 0,
+    }
+    for line in lines:
+        stripped = line.strip()
+        norm = stripped.lower()
+        if not stripped:
+            cleaned.append("")
+            continue
+        is_short = len(stripped) <= 140
+        has_domain = any(dom in norm for dom in PROMO_DOMAINS)
+        has_url = bool(re.search(r"https?://|www\.", norm))
+        looks_dialogue = stripped.startswith(("\"", "“", "’", "‘", "—", "-")) or "—" in stripped
+        if looks_dialogue and not has_domain and not has_url:
+            cleaned.append(line)
+            continue
+        if "oceanofpdf" in norm and (is_short or has_domain or has_url):
+            stats["oceanofpdf_removed_count"] += 1
+            stats["promo_lines_removed_count"] += 1
+            if has_url:
+                stats["urls_removed_count"] += 1
+            continue
+        if is_short and _is_promo_line(stripped) and (has_domain or has_url or len(stripped.split()) <= 8):
+            stats["promo_lines_removed_count"] += 1
+            if has_domain or has_url:
+                stats["urls_removed_count"] += 1
+            continue
+        if has_domain and has_url and is_short:
+            stats["promo_lines_removed_count"] += 1
+            stats["urls_removed_count"] += 1
+            continue
+        cleaned.append(line)
+    remaining_counts = {
+        "oceanofpdf": sum(1 for ln in cleaned if "oceanofpdf" in ln.lower()),
+        "gomanga": sum(1 for ln in cleaned if "gomanga.com" in ln.lower()),
+        "jnovels": sum(1 for ln in cleaned if "jnovels" in ln.lower()),
+        "zerobooks": sum(1 for ln in cleaned if "zerobooks" in ln.lower()),
+    }
+    stats["remaining_counts"] = remaining_counts
+    return "\n".join(cleaned), stats
+
+
+def _is_toc_entry(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return True
+    norm = stripped.lower()
+    if any(marker in norm for marker in TOC_MARKER_LINES):
+        return True
+    if re.match(r"^(prologue|epilogue|afterword|chapter\s+\d+(:?[^\n]+)?)$", norm, flags=re.IGNORECASE):
+        return True
+    if re.match(r"^(pr[óo]logo|cap[ií]tulo\s+\d+|ep[ií]logo|p[oó]s-?escrito)", norm, flags=re.IGNORECASE):
+        return True
+    if len(stripped) < 80 and re.search(r"\b\d+\b", stripped):
+        return True
+    if len(stripped) < 80 and stripped.count(".") >= 2:
+        return True
+    return False
+
+
+def _remove_toc_blocks(text: str, *, head_window: int = 200, tail_window: int = 400) -> tuple[str, int]:
+    lines = text.splitlines()
+    removed_blocks = 0
+
+    def _toc_block_score(start_idx: int, end_idx: int) -> float:
+        window = lines[start_idx:end_idx]
+        if not window:
+            return 0.0
+        toc_like = 0
+        for ln in window:
+            if _is_toc_entry(ln):
+                toc_like += 1
+        return toc_like / len(window)
+
+    def _strip_in_range(start: int, end: int) -> None:
+        nonlocal removed_blocks, lines
+        idx = start
+        while idx < end and idx < len(lines):
+            current = lines[idx].strip().lower()
+            if current in TOC_MARKER_LINES or any(marker in current for marker in TOC_MARKER_LINES):
+                j = idx + 1
+                # limite da janela para avaliar densidade
+                limit = min(len(lines), j + 80)
+                while j < limit and _is_toc_entry(lines[j]):
+                    j += 1
+                score = _toc_block_score(idx, j)
+                if score >= 0.6 and (j - idx) >= 4:
+                    del lines[idx:j]
+                    removed_blocks += 1
+                    end -= (j - idx)
+                    continue
+            idx += 1
+
+    _strip_in_range(0, min(len(lines), head_window))
+    tail_start = max(0, len(lines) - tail_window)
+    _strip_in_range(tail_start, len(lines))
+    return "\n".join(lines), removed_blocks
+
+
+def _normalize_line_for_repeat(line: str) -> str:
+    norm = line.strip().lower()
+    norm = re.sub(r"\s+", " ", norm)
+    norm = re.sub(r"[.,;:!?\-–—]+", "", norm)
+    return norm
+
+
+def _remove_repeated_lines(text: str, *, min_freq: int = 6, max_len: int = 80) -> tuple[str, dict]:
+    lines = text.splitlines()
+    freq: dict[str, int] = {}
+    normalized: dict[int, str] = {}
+    for idx, ln in enumerate(lines):
+        norm = _normalize_line_for_repeat(ln)
+        normalized[idx] = norm
+        if not norm:
+            continue
+        freq[norm] = freq.get(norm, 0) + 1
+
+    to_remove: set[int] = set()
+    for idx, norm in normalized.items():
+        if not norm:
+            continue
+        count = freq.get(norm, 0)
+        if count >= min_freq and (len(norm) <= max_len or any(dom in norm for dom in PROMO_DOMAINS)):
+            to_remove.add(idx)
+
+    cleaned = [ln for idx, ln in enumerate(lines) if idx not in to_remove]
+    top_repeated = sorted(freq.items(), key=lambda kv: kv[1], reverse=True)[:5]
+    stats = {
+        "repeated_lines_removed_count": len(to_remove),
+        "top_repeated_lines": top_repeated,
+    }
+    return "\n".join(cleaned), stats
+
+
+def _fix_ocr_spacing(text: str) -> str:
+    def _is_upperish(token: str) -> bool:
+        return bool(re.fullmatch(r"[A-Z](?:[’']?[A-Z]+)?", token))
+
+    def _fix_line(line: str) -> str:
+        tokens = line.split()
+        new_tokens: list[str] = []
+        i = 0
+        while i < len(tokens):
+            if _is_upperish(tokens[i]):
+                seq: list[str] = []
+                long_count = 0
+                while i < len(tokens) and _is_upperish(tokens[i]):
+                    tok = tokens[i]
+                    if len(tok) > 1 and long_count >= 1:
+                        break
+                    if len(tok) > 1:
+                        long_count += 1
+                    seq.append(tok)
+                    i += 1
+                combined = "".join(seq)
+                if len(seq) >= 2 and long_count <= 1 and re.search(r"[AEIOU]", combined):
+                    new_tokens.append(combined)
+                else:
+                    new_tokens.extend(seq)
+            else:
+                new_tokens.append(tokens[i])
+                i += 1
+        return " ".join(new_tokens)
+
+    fixed_lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or not re.search(r"[A-Z]\s+[A-Z]", stripped):
+            fixed_lines.append(line)
+            continue
+        fixed_lines.append(_fix_line(line))
+    return "\n".join(fixed_lines)
+
+
 def strip_front_matter(text: str) -> str:
     """
     Remove tudo antes de Prologue/Chapter 1.
@@ -247,7 +468,13 @@ def strip_toc(
     return cleaned
 
 
-def preprocess_text(raw_text: str, logger: Optional[logging.Logger] = None, *, skip_front_matter: bool = False) -> str:
+def preprocess_text(
+    raw_text: str,
+    logger: Optional[logging.Logger] = None,
+    *,
+    skip_front_matter: bool = False,
+    return_stats: bool = False,
+) -> str | tuple[str, dict]:
     """
     Pré-processa o texto bruto extraído do PDF:
     - Normaliza quebras de linha
@@ -255,8 +482,10 @@ def preprocess_text(raw_text: str, logger: Optional[logging.Logger] = None, *, s
     - Remove front-matter/TOC quando skip_front_matter=True
     """
 
+    stats: dict[str, int | dict] = {"chars_in": len(raw_text)}
     text = raw_text.replace("\r\n", "\n").replace("\r", "\n")
-    text, _sanitize_stats = sanitize_extracted_text(text, logger=logger)
+    text, sanitize_stats = sanitize_extracted_text(text, logger=logger)
+    stats.update(sanitize_stats)
     if skip_front_matter:
         text = strip_front_matter(text)
         text = strip_toc(text, logger=logger)
@@ -264,16 +493,27 @@ def preprocess_text(raw_text: str, logger: Optional[logging.Logger] = None, *, s
     for pattern in FOOTER_PATTERNS:
         text = re.sub(pattern, " ", text, flags=re.IGNORECASE)
 
+    text, promo_stats = _remove_promo_lines(text)
+    stats.update(promo_stats)
+    text, toc_blocks_removed = _remove_toc_blocks(text)
+    stats["toc_blocks_removed_count"] = toc_blocks_removed
+
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r" +([,.;:!?])", r"\1", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
 
     text = text.strip()
     text = remove_noise_blocks(text)
+    text, repeat_stats = _remove_repeated_lines(text)
+    stats.update(repeat_stats)
+    text = _fix_ocr_spacing(text)
+    stats["chars_out"] = len(text)
 
     if logger is not None:
         logger.debug("Texto pré-processado: %d caracteres", len(text))
 
+    if return_stats:
+        return text, stats
     return text
 
 
