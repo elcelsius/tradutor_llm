@@ -97,6 +97,25 @@ def test_preprocess_removes_tail_toc_block() -> None:
     assert stats["toc_blocks_removed_count"] >= 1
 
 
+def test_preprocess_removes_tail_newsletter_block() -> None:
+    raw = "\n".join(
+        [
+            "Story core stays before.",
+            "Get the latest news about your favorite Seven Seas books and brand-new",
+            "licenses delivered to your inbox every week:",
+            "Or visit us online:",
+            "Story core stays after.",
+        ]
+    )
+    cleaned, stats = preprocess_text(raw, return_stats=True)
+    assert "Get the latest news" not in cleaned
+    assert "licenses delivered to your inbox every week" not in cleaned
+    assert "visit us online" not in cleaned.lower()
+    assert "Story core stays before." in cleaned
+    assert "Story core stays after." in cleaned
+    assert stats["promo_lines_removed_count"] >= 3
+
+
 def test_preprocess_keeps_narrative_with_contents_word() -> None:
     raw = "\n".join(
         [
@@ -164,6 +183,77 @@ def test_preprocess_fixes_ocr_spacing() -> None:
     assert "SOMETIME" in cleaned
 
 
+def test_preprocess_fixes_spaced_caps_and_hyphen_wraps() -> None:
+    raw = "\n".join(
+        [
+            "F IRST OFF— we go.",
+            "S OMETIME the rain falls.",
+            "M IMORI TOUKA had arrived.",
+            "A NOTHER…DIVINE?",
+            "W HAT WAS THAT?",
+            "W E CONTINUED onward.",
+            "I T WAS ON purpose.",
+            "th-",
+            "think about it.",
+            "Pidgey-",
+            "chan waved back.",
+        ]
+    )
+    cleaned = preprocess_text(raw)
+    assert "FIRST OFF— we go." in cleaned
+    assert "SOMETIME the rain falls." in cleaned
+    assert "MIMORI TOUKA had arrived." in cleaned
+    assert "ANOTHER…DIVINE?" in cleaned
+    assert "WHAT WAS THAT?" in cleaned
+    assert "WE CONTINUED onward." in cleaned
+    assert "IT WAS ON purpose." in cleaned
+    assert "th-think about it." in cleaned
+    assert "Pidgey-chan waved back." in cleaned
+
+
+def test_preprocess_reflows_paragraphs_and_preserves_story_start() -> None:
+    raw = "\n".join(
+        [
+            "Table of Contents",
+            "Newsletter",
+            "Prologue",
+            "“F IRST OFF—I’d like to know if we’re going to cast Freeze on",
+            "Kirihara.”",
+            "Sogou Ayaka’s face was still buried in Takao Hijiri’s chest, but I was speaking mainly to her. Her shoulders twitched in response and I waited for",
+            "her reply. When nothing came, Hijiri spoke in her stead.",
+            "Chapter 1",
+        ]
+    )
+    cleaned, stats = preprocess_text(raw, return_stats=True, skip_front_matter=False)
+    assert "OceanofPDF" not in cleaned
+    assert "Newsletter" not in cleaned
+    assert cleaned.splitlines()[0].startswith("Prologue")
+    assert "FIRST OFF" in cleaned
+    assert "Chapter 1" in cleaned
+    # reflow should have merged mid-sentence breaks
+    assert "waited for her reply" in cleaned
+    assert stats["reflow_merges"] >= 1
+    import re
+    assert len(cleaned.splitlines()) < len(raw.splitlines())
+
+
+def test_preprocess_removes_soft_hyphen_and_spaced_caps() -> None:
+    raw = "\n".join(
+        [
+            "This is an over\u00adwhelming problem.",
+            "F IRST and W EIRD samples should merge.",
+            "Normal line.",
+        ]
+    )
+    cleaned, stats = preprocess_text(raw, return_stats=True)
+    assert "\u00ad" not in cleaned
+    assert "overwhelming" in cleaned
+    assert "FIRST" in cleaned
+    assert "WEIRD" in cleaned
+    assert stats["soft_hyphen_removed"] >= 1
+    assert stats["spaced_caps_remaining"] == 0
+
+
 def test_preprocess_fixes_under_merge_and_spam_block() -> None:
     raw = "\n".join(
         [
@@ -180,6 +270,53 @@ def test_preprocess_fixes_under_merge_and_spam_block() -> None:
     assert "Get the latest news" not in cleaned
     assert "visit us online" not in cleaned
     assert "Story continues normally." in cleaned
+
+
+def test_preprocess_preserves_scene_separators() -> None:
+    raw = "\n".join(["***", "***", "Scene continues.", "***"])
+    cleaned = preprocess_text(raw)
+    assert cleaned.count("***") >= 2
+
+
+def test_preprocess_preserves_prologue_header() -> None:
+    raw = "\n".join(
+        [
+            "Table of Contents",
+            "Prologue",
+            "The book begins here.",
+            "Chapter 1",
+            "A later line.",
+        ]
+    )
+    cleaned = preprocess_text(raw)
+    assert "Prologue" in cleaned
+    assert "The book begins here." in cleaned
+
+
+def test_preprocess_preserves_prologue_body_with_toc() -> None:
+    raw = "\n".join(
+        [
+            "Table of Contents",
+            "Prologue",
+            "Chapter 1",
+            "Newsletter",
+            "OceanofPDF.com",
+            "",
+            "Prologue",
+            "",
+            "“F IRST OFF—I’d like to know if we’re going to cast Freeze on",
+            "Kirihara.”",
+            "Sogou Ayaka’s face was still buried in Takao Hijiri’s chest, but I was speaking mainly to her. Her shoulders twitched in response and I waited for",
+            "her reply. When nothing came, Hijiri spoke in her stead.",
+            "“Right… I agree that matter is one that we should discuss in short order.”",
+        ]
+    )
+    cleaned = preprocess_text(raw, skip_front_matter=False)
+    assert "FIRST OFF" in cleaned
+    assert "Kirihara" in cleaned
+    assert "Table of Contents" not in cleaned
+    assert "OceanofPDF" not in cleaned
+    assert cleaned.splitlines()[0].startswith("Prologue") or "FIRST OFF" in cleaned.splitlines()[0]
 
 
 class FakeLLMBackend:

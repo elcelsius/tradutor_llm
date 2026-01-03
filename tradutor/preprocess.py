@@ -240,42 +240,83 @@ def _remove_promo_lines(text: str) -> tuple[str, dict, list[str]]:
     stats = {
         "oceanofpdf_removed_count": 0,
         "promo_lines_removed_count": 0,
+        "promo_blocks_removed_count": 0,
         "urls_removed_count": 0,
     }
     removed_norms: list[str] = []
     compact_tokens = [re.sub(r"[^a-z0-9]", "", dom) for dom in PROMO_DOMAINS]
-    for line in lines:
+
+    def _update_stats(norm_line: str, *, has_url: bool, has_domain: bool) -> None:
+        stats["promo_lines_removed_count"] += 1
+        if has_url or has_domain:
+            stats["urls_removed_count"] += 1
+        if "oceanofpdf" in norm_line:
+            stats["oceanofpdf_removed_count"] += 1
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
         normalized = normalize_line_for_filters(line)
         norm_lower = normalized.lower()
         norm_compact = re.sub(r"[^a-z0-9]", "", norm_lower)
         if not normalized:
             cleaned.append("")
+            i += 1
             continue
-        is_short = len(normalized) <= 160
         has_domain = any(dom in norm_lower for dom in PROMO_DOMAINS) or any(tok in norm_compact for tok in compact_tokens)
         has_url = bool(URL_RE.search(norm_lower))
         has_phrase = any(phrase in norm_lower for phrase in PROMO_PHRASES)
-        looks_dialogue = line.lstrip().startswith(("\"", "“", "’", "‘", "—", "-"))
+        looks_dialogue = line.lstrip().startswith(('"', "“", "'", "’", "-", "–"))
+        long_narrative = len(normalized) > 180 and not (has_url or has_domain)
+        promo_seed = has_domain or has_url or has_phrase or "oceanofpdf" in norm_compact
         if looks_dialogue and not has_domain and not has_url:
             cleaned.append(line)
+            i += 1
             continue
-        long_narrative = len(normalized) > 180 and not (has_url or has_domain)
-        if "oceanofpdf" in norm_compact and (is_short or has_domain or has_url or has_phrase or long_narrative):
-            stats["oceanofpdf_removed_count"] += 1
-            stats["promo_lines_removed_count"] += 1
-            if has_url:
-                stats["urls_removed_count"] += 1
-            removed_norms.append(normalized)
+        if promo_seed and (has_domain or has_url or not long_narrative):
+            block_end = i + 1
+            while block_end < len(lines):
+                next_norm = normalize_line_for_filters(lines[block_end])
+                if not next_norm:
+                    block_end += 1
+                    break
+                next_lower = next_norm.lower()
+                next_compact = re.sub(r"[^a-z0-9]", "", next_lower)
+                next_domain = any(dom in next_lower for dom in PROMO_DOMAINS) or any(tok in next_compact for tok in compact_tokens)
+                next_url = bool(URL_RE.search(next_lower))
+                next_phrase = any(phrase in next_lower for phrase in PROMO_PHRASES)
+                short_line = len(next_norm) <= 140
+                letter_ratio = sum(1 for ch in next_norm if ch.isalpha()) / max(len(next_norm), 1)
+                low_linguistic = letter_ratio < 0.65
+                if next_domain or next_url or next_phrase or (short_line and (low_linguistic or next_norm.endswith(":"))):
+                    block_end += 1
+                    continue
+                break
+            removed_block = lines[i:block_end]
+            if len(removed_block) > 1:
+                stats["promo_blocks_removed_count"] += 1
+            for removed in removed_block:
+                removed_norm = normalize_line_for_filters(removed)
+                removed_lower = removed_norm.lower()
+                removed_compact = re.sub(r"[^a-z0-9]", "", removed_lower)
+                removed_has_domain = any(dom in removed_lower for dom in PROMO_DOMAINS) or any(
+                    tok in removed_compact for tok in compact_tokens
+                )
+                removed_has_url = bool(URL_RE.search(removed_lower))
+                _update_stats(removed_compact, has_url=removed_has_url, has_domain=removed_has_domain)
+                if removed_norm:
+                    removed_norms.append(removed_norm)
+            i = block_end
             continue
-        if (has_domain or has_url or has_phrase) and not long_narrative:
-            stats["promo_lines_removed_count"] += 1
-            if has_domain or has_url:
-                stats["urls_removed_count"] += 1
-            if "oceanofpdf" in norm_compact:
-                stats["oceanofpdf_removed_count"] += 1
+
+        if promo_seed and not long_narrative:
+            _update_stats(norm_compact, has_url=has_url, has_domain=has_domain)
             removed_norms.append(normalized)
+            i += 1
             continue
         cleaned.append(line)
+        i += 1
+
     remaining_counts = {
         "oceanofpdf": sum(1 for ln in cleaned if "oceanofpdf" in normalize_line_for_filters(ln).lower()),
         "gomanga": sum(1 for ln in cleaned if "gomanga.com" in normalize_line_for_filters(ln).lower()),
@@ -337,11 +378,19 @@ def _fix_under_merge(text: str) -> tuple[str, dict]:
             ends_sentence = bool(re.search(r"[.!?…]['\"]?$", curr))
             starts_dialogue = nxt.startswith(('"', "“", "‘", "—", "-"))
             promo_guard = any(dom in nxt.lower() for dom in PROMO_DOMAINS) or URL_RE.search(nxt)
+            next_is_heading = _is_heading_like(nxt)
+            if curr.strip().isupper() and nxt.strip().isupper() and len(curr.strip()) <= 40 and len(nxt.strip()) <= 40:
+                fixed.append(lines[i])
+                i += 1
+                continue
+            if curr.strip().isupper() and len(curr.strip()) <= 40 and nxt[:1].isupper():
+                fixed.append(lines[i])
+                i += 1
+                continue
             if (
                 not ends_sentence
-                and not starts_dialogue
                 and curr[-1].isalpha()
-                and nxt[:1].islower()
+                and (nxt[:1].islower() or (nxt[:1].isupper() and not starts_dialogue and not next_is_heading))
                 and not promo_guard
             ):
                 fixed.append(f"{curr} {nxt}")
@@ -353,8 +402,46 @@ def _fix_under_merge(text: str) -> tuple[str, dict]:
     return "\n".join(fixed), {"under_merge_fixes": merges}
 
 
+def _reflow_paragraphs(text: str) -> tuple[str, dict]:
+    """
+    Colapsa quebras duras dentro do mesmo par·grafo, mantendo linhas vazias e headings.
+
+    HeurÌstica conservadora: n„o atravessa linhas vazias, headings ou separadores (***).
+    """
+    lines = text.splitlines()
+    reflowed: list[str] = []
+    buffer: list[str] = []
+    merges = 0
+
+    def _flush() -> None:
+        nonlocal merges
+        if not buffer:
+            return
+        if len(buffer) > 1:
+            merges += len(buffer) - 1
+        reflowed.append(" ".join(buffer))
+        buffer.clear()
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            _flush()
+            reflowed.append("")
+            continue
+        if _is_heading_like(stripped) or re.fullmatch(r"\*{2,}", stripped):
+            _flush()
+            reflowed.append(line)
+            continue
+        if not buffer:
+            buffer.append(line.strip())
+        else:
+            buffer.append(line.strip())
+    _flush()
+    return "\n".join(reflowed), {"reflow_merges": merges}
+
+
 def _fix_hyphen_linebreaks(text: str) -> tuple[str, dict]:
-    pattern = re.compile(r"([A-Za-z]{2,20})-\s*\n\s*([a-z]{1,20})")
+    pattern = re.compile(r"([A-Za-z]{1,24})-\s*\n\s*([A-Za-z]{1,24})")
     count = 0
 
     def _repl(match: re.Match[str]) -> str:
@@ -369,7 +456,7 @@ def _fix_hyphen_linebreaks(text: str) -> tuple[str, dict]:
 def _is_toc_entry(line: str) -> bool:
     stripped = normalize_line_for_filters(line)
     if not stripped:
-        return True
+        return False
     norm = stripped.lower()
     if any(marker in norm for marker in TOC_MARKER_LINES):
         return True
@@ -379,7 +466,20 @@ def _is_toc_entry(line: str) -> bool:
         return True
     if len(stripped) < 80 and re.search(r"\b\d+\b", stripped):
         return True
-    if len(stripped) < 80 and stripped.count(".") >= 2:
+    if len(stripped) < 120 and re.search(r"\.{2,}\s*\d{1,4}$", stripped):
+        return True
+    return False
+
+
+def _is_heading_like(line: str) -> bool:
+    norm = normalize_line_for_filters(line).lower()
+    if not norm:
+        return False
+    if TOC_MARKER_RE.match(norm):
+        return True
+    if re.match(r"^(prologue|epilogue|afterword|chapter\s+\d+)", norm):
+        return True
+    if re.match(r"^(pr[óo]logo|cap[ií]tulo\s+\d+|ep[ií]logo)", norm):
         return True
     return False
 
@@ -389,7 +489,7 @@ def _remove_toc_blocks(
     *,
     head_window: int = 200,
     tail_window: int = 400,
-    head_min_entries: int = 4,
+    head_min_entries: int = 3,
     tail_min_entries: int = 12,
     min_density: float = 0.35,
     gap_limit: int = 8,
@@ -400,7 +500,20 @@ def _remove_toc_blocks(
     tail_removed = 0
 
     def _is_marker(norm: str) -> bool:
-        return norm in TOC_MARKER_LINES or any(marker in norm for marker in TOC_MARKER_LINES)
+        return norm in TOC_MARKER_LINES
+
+    def _looks_narrative(norm_line: str) -> bool:
+        if not norm_line:
+            return False
+        if len(norm_line) >= 120:
+            return True
+        alpha = sum(1 for ch in norm_line if ch.isalpha())
+        ratio = alpha / max(len(norm_line), 1)
+        if len(norm_line) > 40 and ratio > 0.6 and bool(re.search(r"[.!?]", norm_line)):
+            return True
+        if len(norm_line) >= 20 and ratio > 0.7 and bool(re.search(r"[.!?]", norm_line)):
+            return True
+        return False
 
     def _strip_in_range(start: int, end: int, *, is_tail: bool = False) -> None:
         nonlocal head_removed, tail_removed, lines
@@ -414,6 +527,7 @@ def _remove_toc_blocks(
                 total = 1
                 gap = 0
                 last_idx = idx
+                block_invalid = False
                 while j < limit:
                     total += 1
                     candidate_norm = normalize_line_for_filters(lines[j]).lower()
@@ -422,12 +536,20 @@ def _remove_toc_blocks(
                         gap = 0
                         last_idx = j
                     else:
+                        if _looks_narrative(candidate_norm):
+                            block_invalid = True
+                            break
                         gap += 1
                         if gap >= gap_limit:
                             break
                     j += 1
                 density = toc_like / total if total else 0
                 min_entries = tail_min_entries if is_tail else head_min_entries
+                if block_invalid and not (toc_like >= min_entries and density >= min_density):
+                    removed_lines.append(current_norm)
+                    del lines[idx]
+                    end = min(end, len(lines))
+                    continue
                 if toc_like >= min_entries and density >= min_density:
                     removed_lines.extend(normalize_line_for_filters(ln) for ln in lines[idx : last_idx + 1])
                     del lines[idx : last_idx + 1]
@@ -473,6 +595,8 @@ def _remove_repeated_lines(text: str, *, min_freq: int = 6, max_len: int = 80) -
     for idx, norm in normalized.items():
         if not norm:
             continue
+        if re.fullmatch(r"\*{2,}", lines[idx].strip()):
+            continue
         count = freq.get(norm, 0)
         if count >= min_freq and (len(norm) <= max_len or any(dom in norm for dom in PROMO_DOMAINS)):
             to_remove.add(idx)
@@ -488,15 +612,19 @@ def _remove_repeated_lines(text: str, *, min_freq: int = 6, max_len: int = 80) -
 
 
 def _fix_ocr_spacing(text: str) -> tuple[str, dict]:
+    trailing_punct_re = re.compile("([-\u2013\u2014.,;:!?\u2026'\"”’]+)$")
+
     def _split_token(token: str) -> tuple[str, str]:
-        match = re.match(r"([A-Z’']+)([—\-.,;:!?]*)$", token)
-        if match:
-            return match.group(1), match.group(2)
-        return token, ""
+        match = trailing_punct_re.search(token)
+        if not match:
+            return token, ""
+        start = match.start()
+        return token[:start], token[start:]
 
     def _is_upperish(token: str) -> bool:
         core, _ = _split_token(token)
-        return bool(re.fullmatch(r"[A-Z](?:[’']?[A-Z]+)?", core))
+        clean_core = re.sub(r"[^A-Z]", "", core)
+        return bool(clean_core) and bool(re.fullmatch(r"[A-Z]+", clean_core))
 
     def _fix_line(line: str) -> tuple[str, list[tuple[str, str]]]:
         tokens = line.split()
@@ -505,49 +633,58 @@ def _fix_ocr_spacing(text: str) -> tuple[str, dict]:
         i = 0
         while i < len(tokens):
             if _is_upperish(tokens[i]):
-                seq: list[str] = []
+                seq: list[tuple[str, str, str, str]] = []
                 long_count = 0
                 while i < len(tokens) and _is_upperish(tokens[i]):
                     tok = tokens[i]
-                    if len(tok) > 1 and long_count >= 1 and len(seq) >= 2 and len(tok) > 6:
+                    core, punct = _split_token(tok)
+                    clean_core = re.sub(r"[^A-Z]", "", core)
+                    if len(clean_core) > 1 and long_count >= 1 and len(seq) >= 2 and len(clean_core) > 6:
                         break
-                    if len(tok) > 1:
+                    if len(clean_core) > 1:
                         long_count += 1
-                    seq.append(tok)
+                    seq.append((tok, core, punct, clean_core))
                     i += 1
-                cores = []
-                trail = ""
-                for part in seq:
-                    core, punct = _split_token(part)
-                    cores.append(core)
-                    trail = punct or trail
+                cores = [core for (_, core, _, _) in seq]
+                cores_clean = [core_clean for (_, _, _, core_clean) in seq]
+                puncts = [punct for (_, _, punct, _) in seq]
+                trail = next((p for p in reversed(puncts) if p), "")
                 combined_core = "".join(cores)
+                combined_clean = "".join(cores_clean)
                 combined = combined_core + trail
-                allow_merge = len(seq) >= 2 and long_count <= 1 and re.search(r"[AEIOU]", combined_core)
-                if len(seq) == 2 and cores[0] == "I" and len(cores[1]) > 3:
+                allow_merge = len(seq) >= 2 and long_count <= 1 and re.search(r"[AEIOU]", combined_clean)
+                if len(seq) == 2 and cores_clean[0] == "I" and len(cores_clean[1]) > 3:
                     allow_merge = False
-                if len(combined_core) > 9:
+                if len(combined_clean) > 14:
                     allow_merge = False
-                if len(seq) >= 3 and len(cores[-1]) >= 8:
+                if len(seq) >= 3 and len(cores_clean[-1]) >= 8:
                     allow_merge = False
-                if len(seq) >= 3 and len(cores[-1]) >= 4:
+                if len(seq) >= 3 and len(cores_clean[-1]) >= 4:
                     allow_merge = False
 
                 if allow_merge:
                     new_tokens.append(combined)
-                    samples.append((" ".join(seq), combined))
+                    samples.append((" ".join(tok for (tok, _, _, _) in seq), combined))
                 else:
-                    # try partial merge for short prefixes (e.g., W E CONTINUED -> WE CONTINUED)
-                    if len(seq) >= 3 and all(len(c) == 1 for c in cores[:-1]):
-                        merged_prefix = "".join(cores[:-1])
+                    if len(seq) >= 3 and all(len(c) == 1 for c in cores_clean[:-1]):
+                        merged_prefix = "".join(cores_clean[:-1])
                         new_tokens.append(merged_prefix)
-                        new_tokens.append(seq[-1])
-                    elif len(seq) >= 2 and len(cores[0]) == 1 and len(cores[1]) <= 4:
-                        merged_prefix = "".join(cores[:2])
+                        new_tokens.append(seq[-1][0])
+                    elif (
+                        len(seq) >= 2
+                        and len(cores_clean[0]) == 1
+                        and cores_clean[0] != "I"
+                        and 2 <= len(cores_clean[1]) <= 12
+                        and re.search(r"[AEIOU]", cores_clean[1])
+                    ):
+                        merged_prefix = cores[0] + cores[1] + (puncts[1] if len(puncts) > 1 else "")
                         new_tokens.append(merged_prefix)
-                        new_tokens.extend(seq[2:])
+                        if len(samples) < 10:
+                            samples.append((f"{cores[0]} {cores[1]}", merged_prefix))
+                        for tok, _, _, _ in seq[2:]:
+                            new_tokens.append(tok)
                     else:
-                        new_tokens.extend(seq)
+                        new_tokens.extend(tok for (tok, _, _, _) in seq)
             else:
                 new_tokens.append(tokens[i])
                 i += 1
@@ -568,6 +705,31 @@ def _fix_ocr_spacing(text: str) -> tuple[str, dict]:
             samples.extend(local_samples[:remaining])
         fixed_lines.append(fixed)
     return "\n".join(fixed_lines), {"ocr_spacing_fixes": total_fixes, "ocr_spacing_samples": samples}
+
+
+def _fix_spaced_caps_pairs(text: str) -> tuple[str, dict]:
+    """
+    Junta pares isolados de letras mai£sculas separados por espa‡o (ex.: W E -> WE).
+    Conservador: exige vogal na palavra resultante ou tamanho pequeno.
+    """
+    pattern = re.compile(r"\b([A-Z])\s+([A-Z])\b")
+    fixes = 0
+    lines: list[str] = []
+    for line in text.splitlines():
+        new_line = line
+        while True:
+            match = pattern.search(new_line)
+            if not match:
+                break
+            combined = f"{match.group(1)}{match.group(2)}"
+            has_vowel = bool(re.search(r"[AEIOU]", combined))
+            if has_vowel or len(combined) <= 3:
+                new_line = new_line[: match.start()] + combined + new_line[match.end() :]
+                fixes += 1
+            else:
+                break
+        lines.append(new_line)
+    return "\n".join(lines), {"spaced_caps_pair_fixes": fixes}
 
 
 def strip_front_matter(text: str) -> str:
@@ -664,6 +826,8 @@ def preprocess_text(
 
     stats: dict[str, int | dict] = {"chars_in": len(raw_text)}
     text = raw_text.replace("\r\n", "\n").replace("\r", "\n")
+    stats["soft_hyphen_removed"] = text.count("\u00ad")
+    text = text.replace("\u00ad", "")
     text = ZERO_WIDTH_RE.sub("", text.replace("\xa0", " "))
     text, sanitize_stats = sanitize_extracted_text(text, logger=logger)
     stats.update(sanitize_stats)
@@ -694,6 +858,8 @@ def preprocess_text(
     text = text.strip()
     text, ocr_stats = _fix_ocr_spacing(text)
     stats.update(ocr_stats)
+    text, spaced_pair_stats = _fix_spaced_caps_pairs(text)
+    stats.update(spaced_pair_stats)
 
     text, under_merge_stats = _fix_under_merge(text)
     stats.update(under_merge_stats)
@@ -706,6 +872,37 @@ def preprocess_text(
     text, dedupe_stats, dedupe_removed = _dedupe_consecutive_lines(text)
     stats.update(dedupe_stats)
     removed_counter.update(dedupe_removed)
+
+    text, reflow_stats = _reflow_paragraphs(text)
+    stats.update(reflow_stats)
+
+    # Restaura heading de pr¢logo se ele existia no raw mas nÆo sobrou ap¢s a limpeza.
+    if (
+        not skip_front_matter
+        and "prologue" in normalize_line_for_filters(raw_text).lower()
+        and "prologue" not in normalize_line_for_filters(text).lower()
+    ):
+        lines = text.splitlines()
+        insert_at = 0
+        for idx, ln in enumerate(lines):
+            if ln.strip():
+                insert_at = idx
+                break
+        lines.insert(insert_at, "Prologue")
+        text = "\n".join(lines)
+
+    # Valida‡Æo leve de sa¡da
+    watermarks_remaining = sum(
+        1
+        for ln in text.splitlines()
+        if any(tok in normalize_line_for_filters(ln).lower() for tok in ("oceanofpdf", "zerobooks", "jnovels", "gomanga.com", "newsletter"))
+    )
+    stats["watermarks_remaining"] = watermarks_remaining
+    stats["soft_hyphen_remaining"] = text.count("\u00ad")
+    stats["spaced_caps_remaining"] = len(re.findall(r"\b[A-Z]\s+[A-Z]{2,}\b", text))
+    # primeira linha plausÌvel
+    first_non_empty = next((ln for ln in text.splitlines() if ln.strip()), "")
+    stats["first_line"] = first_non_empty
 
     stats["removed_lines_total"] = sum(removed_counter.values())
     stats["removed_lines_top"] = removed_counter.most_common(10)
