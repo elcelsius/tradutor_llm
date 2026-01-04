@@ -125,6 +125,13 @@ def normalize_line_for_filters(line: str) -> str:
     return normalized
 
 
+def _is_ellipsis_line(raw_line: str) -> bool:
+    stripped = raw_line.strip()
+    return bool(re.fullmatch(r"[\"“”']?\u2026[\"“”']?", stripped)) or bool(
+        re.fullmatch(r"[\"“”']?\.{3,}[\"“”']?", stripped)
+    )
+
+
 def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -326,6 +333,10 @@ def _remove_promo_lines(text: str, glossary: dict) -> tuple[str, dict, list[str]
         normalized = normalize_line_for_filters(line)
         norm_lower = normalized.lower()
         norm_compact = re.sub(r"[^a-z0-9]", "", norm_lower)
+        if _is_ellipsis_line(line):
+            cleaned.append(line)
+            i += 1
+            continue
         if not normalized:
             cleaned.append("")
             i += 1
@@ -421,6 +432,10 @@ def _dedupe_consecutive_lines(text: str) -> tuple[str, dict, list[str]]:
     prev_norm: str | None = None
     removed_count = 0
     for line in lines:
+        if _is_ellipsis_line(line):
+            cleaned.append(line)
+            prev_norm = None
+            continue
         norm = normalize_line_for_filters(line)
         if norm and prev_norm and norm == prev_norm:
             removed_count += 1
@@ -516,16 +531,20 @@ def _reflow_paragraphs(text: str) -> tuple[str, dict]:
             _flush()
             reflowed.append("")
             continue
-        if re.fullmatch(r"[.·…]{2,}", stripped):
+        if re.fullmatch(r"[\\s\"“”']*(?:[.·…]{2,})[\\s\"“”']*", stripped):
             _flush()
             reflowed.append(stripped)
             continue
+        if re.fullmatch(r"[\\s\"“”'\\-–—]*[.?!…]+[\\s\"“”'\\-–—]*", stripped):
+            _flush()
+            reflowed.append(stripped)
+            _flush()
+            continue
         if stripped.startswith(('"', "“")) and buffer:
-            # nova fala: se anterior termina frase, quebra par·grafo; sen„o, continua frase
-            if buffer[-1].rstrip().endswith((".", "!", "?", "…", '"', "”", "’")):
-                _flush()
-                buffer.append(stripped)
-                continue
+            # sempre inicia novo parágrafo para fala em linha própria
+            _flush()
+            buffer.append(stripped)
+            continue
         if _is_heading_like(stripped) or re.fullmatch(r"\*{2,}", stripped):
             _flush()
             reflowed.append(line)
@@ -743,6 +762,10 @@ def _remove_repeated_lines(text: str, *, min_freq: int = 6, max_len: int = 80) -
     freq: Counter[str] = Counter()
     normalized: dict[int, str] = {}
     for idx, ln in enumerate(lines):
+        if _is_ellipsis_line(ln):
+            # nunca conta linha de reticência como lixo repetido; mantemos diálogos de pausa
+            normalized[idx] = ""
+            continue
         norm = _normalize_line_for_repeat(ln)
         normalized[idx] = norm
         if norm:

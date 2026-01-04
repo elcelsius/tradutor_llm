@@ -393,8 +393,10 @@ def test_preprocess_preserves_isolated_ellipsis_line() -> None:
         ]
     )
     cleaned = preprocess_text(raw)
-    assert "Given the situation" in cleaned
-    assert "“…”" in cleaned
+    lines = cleaned.splitlines()
+    assert any("I don't think it's feasible" in ln for ln in lines)
+    assert "“…”" in lines
+    assert any("Given the situation" in ln for ln in lines)
 
 
 def test_preprocess_merges_quote_continuation_and_keeps_ellipsis_line() -> None:
@@ -408,7 +410,9 @@ def test_preprocess_merges_quote_continuation_and_keeps_ellipsis_line() -> None:
         ]
     )
     cleaned = preprocess_text(raw)
-    assert "believes that from “the bottom of his heart.”" in cleaned
+    lines = cleaned.splitlines()
+    assert any("believes that from" in ln for ln in lines)
+    assert "“the bottom of his heart.”" in lines[1]
     assert "\n...\n" in cleaned
 
 
@@ -430,6 +434,19 @@ def test_preprocess_fixes_under_merge_and_spam_block() -> None:
     assert "Story continues normally." in cleaned
 
 
+def test_preprocess_preserves_question_dialogue_as_paragraph() -> None:
+    raw = "\n".join(
+        [
+            "“?”",
+            "He looked up, unsure.",
+        ]
+    )
+    cleaned = preprocess_text(raw)
+    lines = cleaned.splitlines()
+    assert lines[0].strip() == "“?”"
+    assert any("He looked up" in ln for ln in lines[1:])
+
+
 def test_preprocess_still_removes_short_noise_lines() -> None:
     raw = "\n".join(
         [
@@ -444,6 +461,106 @@ def test_preprocess_still_removes_short_noise_lines() -> None:
     assert "discord.gg" not in cleaned
     assert "Sign up for our newsletter" not in cleaned
     assert "Normal story stays." in cleaned
+
+
+def test_preprocess_preserves_plain_ellipsis_line() -> None:
+    raw = "\n".join(
+        [
+            "She insisted it was for our safety.",
+            "...",
+            "If Sogou knew about this...",
+        ]
+    )
+    cleaned = preprocess_text(raw)
+    lines = cleaned.splitlines()
+    assert any("She insisted it was for our safety." in ln for ln in lines)
+    assert "..." in lines
+    assert any("If Sogou knew about this..." in ln for ln in lines)
+
+
+def test_preprocess_preserves_feasible_erratic_pause() -> None:
+    raw = "\n".join(
+        [
+            "Unfortunately, I don’t think it’s feasible for us to build a cooperative working relationship with Kirihara-kun at present.",
+            "...",
+            "Given the erratic and unstable nature of Kirihara-kun’s actions and mental state, it’s difficult to ascertain whether we could actually work together.",
+        ]
+    )
+    cleaned = preprocess_text(raw)
+    lines = cleaned.splitlines()
+    assert any("feasible for us to build a cooperative working relationship" in ln for ln in lines)
+    assert "..." in lines
+    assert any("Given the erratic and unstable nature of Kirihara-kun’s actions" in ln for ln in lines)
+
+
+def test_preprocess_preserves_curly_ellipsis_dialogue_line() -> None:
+    raw = "\n".join(
+        [
+            "And I know that Mimori-kun isn’t lying to us.”",
+            "“…”",
+            "So, she’s got that ability now then, eh?",
+        ]
+    )
+    cleaned = preprocess_text(raw)
+    lines = cleaned.splitlines()
+    assert any("Mimori-kun isn’t lying to us" in ln for ln in lines)
+    assert "“…”" in lines
+    assert any("So, she’s got that ability now then" in ln for ln in lines)
+
+
+def test_preprocess_preserves_multiple_curly_ellipsis_lines_even_if_repeated() -> None:
+    raw = "\n".join(
+        [
+            "Does Piggymaru remind her of some character in a book?",
+            "“…”",
+            "“…”",
+            "I see. I think it is a fine name. Nice to meet you, Piggymaru—",
+        ]
+    )
+    cleaned = preprocess_text(raw)
+    lines = cleaned.splitlines()
+    assert lines.count("“…”") >= 2
+    assert any("fine name" in ln for ln in lines)
+
+
+def test_preprocess_removes_oceanofpdf_watermark_line() -> None:
+    raw = "\n".join(
+        [
+            "OceanofPDF.com",
+            "Real content survives.",
+        ]
+    )
+    cleaned = preprocess_text(raw)
+    assert "OceanofPDF" not in cleaned
+    assert "Real content survives." in cleaned
+
+
+def test_preprocess_keeps_ellipsis_dialogue_between_anchors() -> None:
+    raw = "\n".join(
+        [
+            "And I know that Mimori-kun isn’t lying to us.”",
+            "“...”",
+            "So, she’s got that ability now then, eh?",
+        ]
+    )
+    cleaned = preprocess_text(raw)
+    assert "Mimori-kun isn’t lying to us" in cleaned
+    assert "“...”" in cleaned
+    assert "So, she’s got that ability now then" in cleaned
+
+
+def test_preprocess_keeps_interjection_eh() -> None:
+    raw = "\n".join(
+        [
+            "My collaborator is Nyantan Kikipat.”",
+            "“Eh?!”",
+            "“Nyaki.”",
+        ]
+    )
+    cleaned = preprocess_text(raw)
+    assert "Nyantan Kikipat" in cleaned
+    assert "“Eh?!”" in cleaned
+    assert "“Nyaki.”" in cleaned
 
 
 def test_preprocess_preserves_scene_separators() -> None:
