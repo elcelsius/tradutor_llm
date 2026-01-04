@@ -482,9 +482,7 @@ def _fix_under_merge(text: str) -> tuple[str, dict]:
                     nxt_is_heading = _is_heading_like(nxt)
                     nxt_dialogue = nxt.startswith(('"', "“", "‘", "—", "-"))
                     nxt_promo = any(dom in nxt.lower() for dom in PROMO_DOMAINS) or URL_RE.search(nxt)
-                    if not nxt_dialogue and not nxt_is_heading and not nxt_promo and (
-                        nxt[:1].islower() or len(first_word) <= 8
-                    ):
+                    if not nxt_dialogue and not nxt_is_heading and not nxt_promo and (nxt[:1].islower() or nxt[:1].isupper()):
                         fixed[-1] = f"{prev} {nxt}"
                         merges += 1
                         i += 2
@@ -616,6 +614,8 @@ def _normalize_uppercase_sentences(text: str) -> tuple[str, dict]:
             and " " in stripped
             and not _is_heading_like(stripped)
             and not re.fullmatch(r"\*{2,}", stripped)
+            and not any(p in stripped for p in ("!", "?"))
+            and not stripped.startswith(("\"", "“", "‘"))
         ):
             match = re.match(r"^([\"“‘(\\[]*)(.+)$", stripped)
             if match:
@@ -968,6 +968,36 @@ def _fix_spaced_caps_pairs(text: str) -> tuple[str, dict]:
     return "\n".join(lines), {"spaced_caps_pair_fixes": fixes}
 
 
+def _fix_mixed_caps(text: str) -> tuple[str, dict]:
+    """
+    Normaliza palavras com mistura estranha de maiúsculas/minúsculas (ex.: RuMORS).
+    Converte para minúsculas preservando a inicial se estiver no começo da linha.
+    Conservador: exige pelo menos 2 maiúsculas e 1 minúscula.
+    """
+    fixes = 0
+    out_lines: list[str] = []
+    for line in text.splitlines():
+        tokens = line.split()
+        new_tokens: list[str] = []
+        for idx, tok in enumerate(tokens):
+            letters = re.sub(r"[^A-Za-z]", "", tok)
+            upp = sum(1 for c in letters if c.isupper())
+            low = sum(1 for c in letters if c.islower())
+            if any(ch in tok for ch in ("-", "–", "—", "'", "’")):
+                new_tokens.append(tok)
+                continue
+            if upp >= 2 and low >= 1 and upp > low and not tok.isupper():
+                base = tok.lower()
+                if idx == 0:
+                    base = base.capitalize()
+                new_tokens.append(base)
+                fixes += 1
+            else:
+                new_tokens.append(tok)
+        out_lines.append(" ".join(new_tokens))
+    return "\n".join(out_lines), {"mixed_caps_fixes": fixes}
+
+
 def strip_front_matter(text: str) -> str:
     """
     Remove tudo antes de Prologue/Chapter 1.
@@ -1073,21 +1103,40 @@ def preprocess_text(
         text = strip_front_matter(text)
         text = strip_toc(text, logger=logger)
 
+    footers_removed = 0
+    footers_samples: list[str] = []
+    footers_pattern_counts: Counter[str] = Counter()
     for pattern in FOOTER_PATTERNS:
-        text = re.sub(pattern, " ", text, flags=re.IGNORECASE)
+        compiled = re.compile(pattern, flags=re.IGNORECASE)
+        matches = compiled.findall(text)
+        if matches:
+            footers_removed += len(matches)
+            for m in matches[:10]:
+                sample = m if isinstance(m, str) else "".join(m)
+                if sample:
+                    footers_samples.append(normalize_line_for_filters(sample))
+            footers_pattern_counts[pattern] += len(matches)
+        text = compiled.sub(" ", text)
+    stats["footers_removed_count"] = footers_removed
+    stats["footers_removed_samples"] = footers_samples[:10]
+    if footers_pattern_counts:
+        stats["footers_pattern_counts"] = dict(footers_pattern_counts)
 
     removed_counter: Counter[str] = Counter()
-    removed_records: list[tuple[str, str]] = []
+    removed_records: list[tuple[str, str, int]] = []
 
     text, promo_stats, promo_removed = _remove_promo_lines(text, glossary)
     stats.update(promo_stats)
     removed_counter.update(promo_removed)
-    removed_records.extend((normalize_line_for_filters(item), "promo") for item in promo_removed if item)
+    removed_records.extend((normalize_line_for_filters(item), "promo", 1) for item in promo_removed if item)
+    if footers_removed:
+        for sample in footers_samples or ["footer_pattern"]:
+            removed_records.append((sample, "footer", footers_removed))
 
     text, toc_stats = _remove_toc_blocks(text)
     stats.update(toc_stats)
     removed_counter.update(toc_stats.get("toc_removed_lines", []))
-    removed_records.extend((normalize_line_for_filters(item), "toc") for item in toc_stats.get("toc_removed_lines", []) if item)
+    removed_records.extend((normalize_line_for_filters(item), "toc", 1) for item in toc_stats.get("toc_removed_lines", []) if item)
 
     text, hyphen_stats = _fix_hyphen_linebreaks(text)
     stats.update(hyphen_stats)
@@ -1101,6 +1150,8 @@ def preprocess_text(
     stats.update(ocr_stats)
     text, spaced_pair_stats = _fix_spaced_caps_pairs(text)
     stats.update(spaced_pair_stats)
+    text, mixed_caps_stats = _fix_mixed_caps(text)
+    stats.update(mixed_caps_stats)
 
     text, under_merge_stats = _fix_under_merge(text)
     stats.update(under_merge_stats)
@@ -1109,12 +1160,12 @@ def preprocess_text(
     text, repeat_stats, repeat_removed = _remove_repeated_lines(text)
     stats.update(repeat_stats)
     removed_counter.update(repeat_removed)
-    removed_records.extend((normalize_line_for_filters(item), "repeated") for item in repeat_removed if item)
+    removed_records.extend((normalize_line_for_filters(item), "repeated", 1) for item in repeat_removed if item)
 
     text, dedupe_stats, dedupe_removed = _dedupe_consecutive_lines(text)
     stats.update(dedupe_stats)
     removed_counter.update(dedupe_removed)
-    removed_records.extend((normalize_line_for_filters(item), "dedupe") for item in dedupe_removed if item)
+    removed_records.extend((normalize_line_for_filters(item), "dedupe", 1) for item in dedupe_removed if item)
 
     text, reflow_stats = _reflow_paragraphs(text)
     stats.update(reflow_stats)
@@ -1174,10 +1225,10 @@ def preprocess_text(
     stats["removed_lines_top"] = removed_counter.most_common(10)
     # agregador leve de auditoria (top N) para removidos
     agg: dict[str, Counter[str]] = {}
-    for text_norm, reason in removed_records:
+    for text_norm, reason, count in removed_records:
         if not text_norm:
             continue
-        agg.setdefault(text_norm, Counter())[reason] += 1
+        agg.setdefault(text_norm, Counter())[reason] += count
     aggregated: list[dict[str, object]] = []
     for text_norm, reason_counts in agg.items():
         aggregated.append(
@@ -1192,7 +1243,7 @@ def preprocess_text(
     stats["removed_aggregated"] = aggregated[:max_items]
     stats["removed_aggregated_truncated"] = len(aggregated) > max_items
     # lista completa (normalizada) para auditoria, com motivo por item
-    stats["removed_full"] = [{"text": t, "reason": r} for (t, r) in removed_records if t]
+    stats["removed_full"] = [{"text": t, "reason": r, "count": c} for (t, r, c) in removed_records if t]
     stats["removed_full_count"] = len(stats["removed_full"])
     stats["urls_remaining_count"] = len(URL_RE.findall(text))
     toc_terms = ("table of contents", "contents")

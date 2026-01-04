@@ -600,6 +600,7 @@ def test_preprocess_report_includes_suspects_and_counts() -> None:
     assert "spaced_caps_remaining_samples" in stats
     assert "urls_remaining_count" in stats
     assert "toc_remaining_count" in stats
+    assert "footers_removed_count" in stats
 
 
 def test_preprocess_keeps_ellipsis_dialogue_between_anchors() -> None:
