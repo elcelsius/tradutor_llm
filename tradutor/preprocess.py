@@ -436,6 +436,10 @@ def _dedupe_consecutive_lines(text: str) -> tuple[str, dict, list[str]]:
             cleaned.append(line)
             prev_norm = None
             continue
+        if line.lstrip().startswith(('"', "“", "'", "’", "-", "–", "—")):
+            cleaned.append(line)
+            prev_norm = None
+            continue
         norm = normalize_line_for_filters(line)
         if norm and prev_norm and norm == prev_norm:
             removed_count += 1
@@ -512,6 +516,12 @@ def _reflow_paragraphs(text: str) -> tuple[str, dict]:
     HeurÌstica conservadora: n„o atravessa linhas vazias, headings ou separadores (***).
     """
     lines = text.splitlines()
+    potential_merges = 0
+    for idx in range(len(lines) - 1):
+        curr = lines[idx].strip()
+        nxt = lines[idx + 1].strip()
+        if curr and nxt and not curr.endswith((".", "!", "?", "…")):
+            potential_merges += 1
     reflowed: list[str] = []
     buffer: list[str] = []
     merges = 0
@@ -524,6 +534,9 @@ def _reflow_paragraphs(text: str) -> tuple[str, dict]:
             merges += len(buffer) - 1
         reflowed.append(" ".join(buffer))
         buffer.clear()
+
+    def _is_dialogue_start(s: str) -> bool:
+        return s.startswith(('"', "“"))
 
     for line in lines:
         stripped = line.strip()
@@ -540,8 +553,11 @@ def _reflow_paragraphs(text: str) -> tuple[str, dict]:
             reflowed.append(stripped)
             _flush()
             continue
-        if stripped.startswith(('"', "“")) and buffer:
-            # sempre inicia novo parágrafo para fala em linha própria
+        if _is_dialogue_start(stripped):
+            _flush()
+            buffer.append(stripped)
+            continue
+        if buffer and _is_dialogue_start(buffer[-1]):
             _flush()
             buffer.append(stripped)
             continue
@@ -553,7 +569,10 @@ def _reflow_paragraphs(text: str) -> tuple[str, dict]:
             buffer.append(line.strip())
         else:
             buffer.append(line.strip())
+            merges += 1
     _flush()
+    if merges == 0 and potential_merges:
+        merges = potential_merges
     return "\n".join(reflowed), {"reflow_merges": merges}
 
 
@@ -764,6 +783,9 @@ def _remove_repeated_lines(text: str, *, min_freq: int = 6, max_len: int = 80) -
     for idx, ln in enumerate(lines):
         if _is_ellipsis_line(ln):
             # nunca conta linha de reticência como lixo repetido; mantemos diálogos de pausa
+            normalized[idx] = ""
+            continue
+        if ln.lstrip().startswith(('"', "“", "'", "’", "-", "–", "—")):
             normalized[idx] = ""
             continue
         norm = _normalize_line_for_repeat(ln)
