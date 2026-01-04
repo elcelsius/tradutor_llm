@@ -50,6 +50,11 @@ FOOTER_PATTERNS: Final[list[str]] = [
     r"discord\.gg",
     r"stay up to date",
     r"download(?:ing)? our mobile app",
+    r"on light novels by universal",
+    r"usa only",
+    r"download all your favorite light novels",
+    r"favorite light novels",
+    r"\blight novels\.com\b",
 ]
 
 NOISE_PARAGRAPH_PATTERNS: Final[list[str]] = [
@@ -138,7 +143,7 @@ def _sha256_text(text: str) -> str:
 
 def _default_noise_glossary() -> dict:
     return {
-        "line_contains": PROMO_DOMAINS + PROMO_PHRASES,
+        "line_contains": PROMO_DOMAINS + PROMO_PHRASES + ["favorite light novels", "light novels"],
         "line_compact_contains": ["oceanofpdf", "zerobooks", "jnovels", "gomanga", "discordgg", "patreon"],
         "line_regex": [],
         "max_line_len": 160,
@@ -333,6 +338,13 @@ def _remove_promo_lines(text: str, glossary: dict) -> tuple[str, dict, list[str]
         normalized = normalize_line_for_filters(line)
         norm_lower = normalized.lower()
         norm_compact = re.sub(r"[^a-z0-9]", "", norm_lower)
+        if norm_lower.strip(" .") == "com":
+            _update_stats(norm_compact, has_url=True, has_domain=True)
+            removed_norms.append(normalized)
+            removed_lines.append(normalized)
+            _record_reason("single", normalized)
+            i += 1
+            continue
         if _is_ellipsis_line(line):
             cleaned.append(line)
             i += 1
@@ -826,7 +838,7 @@ def _fix_ocr_spacing(text: str) -> tuple[str, dict]:
     def _is_upperish(token: str) -> bool:
         core, _ = _split_token(token)
         clean_core = re.sub(r"[^A-Z]", "", core)
-        return bool(clean_core) and bool(re.fullmatch(r"[A-Z]+", clean_core))
+        return bool(clean_core) and core.isupper()
 
     def _fix_line(line: str) -> tuple[str, list[tuple[str, str]]]:
         tokens = line.split()
@@ -855,6 +867,13 @@ def _fix_ocr_spacing(text: str) -> tuple[str, dict]:
                 combined_clean = "".join(cores_clean)
                 combined = combined_core + trail
                 allow_merge = len(seq) >= 2 and long_count <= 1 and re.search(r"[AEIOU]", combined_clean)
+                # não junta se houver pontuação forte no meio e próximo token inicia com maiúscula (evita KUN? Is -> KUNIs)
+                next_token = tokens[i] if i < len(tokens) else ""
+                if any(p in combined for p in ("?", "!")) and next_token[:1].isupper():
+                    allow_merge = False
+                # evita CamelCase estranho quando todas as partes são words >1 (ex.: Mistress Anael)
+                if len(seq) == 2 and all(len(c) > 1 for c in cores_clean):
+                    allow_merge = False
                 if len(seq) == 2 and cores_clean[0] == "I" and len(cores_clean[1]) > 3:
                     allow_merge = False
                 if len(combined_clean) > 14:
@@ -864,7 +883,8 @@ def _fix_ocr_spacing(text: str) -> tuple[str, dict]:
                 if len(seq) >= 3 and len(cores_clean[-1]) >= 4:
                     allow_merge = False
 
-                if allow_merge:
+                has_punct_next_upper = any(p in combined for p in ("?", "!")) and next_token[:1].isupper()
+                if allow_merge and not has_punct_next_upper:
                     new_tokens.append(combined)
                     samples.append((" ".join(tok for (tok, _, _, _) in seq), combined))
                 else:
@@ -877,7 +897,7 @@ def _fix_ocr_spacing(text: str) -> tuple[str, dict]:
                         and len(cores_clean[0]) == 1
                         and cores_clean[0] != "I"
                         and 2 <= len(cores_clean[1]) <= 12
-                        and re.search(r"[AEIOU]", cores_clean[1])
+                        and (re.search(r"[AEIOU]", cores_clean[1]) or len(cores_clean[1]) <= 4)
                     ):
                         merged_prefix = cores[0] + cores[1] + (puncts[1] if len(puncts) > 1 else "")
                         new_tokens.append(merged_prefix)
@@ -890,7 +910,9 @@ def _fix_ocr_spacing(text: str) -> tuple[str, dict]:
             else:
                 new_tokens.append(tokens[i])
                 i += 1
-        return " ".join(new_tokens), samples
+        new_line = " ".join(new_tokens)
+        new_line = re.sub(r"([!?])([A-Za-z])", r"\\1 \\2", new_line)
+        return new_line, samples
 
     fixed_lines: list[str] = []
     samples: list[tuple[str, str]] = []
@@ -1043,14 +1065,17 @@ def preprocess_text(
         text = re.sub(pattern, " ", text, flags=re.IGNORECASE)
 
     removed_counter: Counter[str] = Counter()
+    removed_records: list[tuple[str, str]] = []
 
     text, promo_stats, promo_removed = _remove_promo_lines(text, glossary)
     stats.update(promo_stats)
     removed_counter.update(promo_removed)
+    removed_records.extend((normalize_line_for_filters(item), "promo") for item in promo_removed if item)
 
     text, toc_stats = _remove_toc_blocks(text)
     stats.update(toc_stats)
     removed_counter.update(toc_stats.get("toc_removed_lines", []))
+    removed_records.extend((normalize_line_for_filters(item), "toc") for item in toc_stats.get("toc_removed_lines", []) if item)
 
     text, hyphen_stats = _fix_hyphen_linebreaks(text)
     stats.update(hyphen_stats)
@@ -1072,10 +1097,12 @@ def preprocess_text(
     text, repeat_stats, repeat_removed = _remove_repeated_lines(text)
     stats.update(repeat_stats)
     removed_counter.update(repeat_removed)
+    removed_records.extend((normalize_line_for_filters(item), "repeated") for item in repeat_removed if item)
 
     text, dedupe_stats, dedupe_removed = _dedupe_consecutive_lines(text)
     stats.update(dedupe_stats)
     removed_counter.update(dedupe_removed)
+    removed_records.extend((normalize_line_for_filters(item), "dedupe") for item in dedupe_removed if item)
 
     text, reflow_stats = _reflow_paragraphs(text)
     stats.update(reflow_stats)
@@ -1116,6 +1143,25 @@ def preprocess_text(
 
     stats["removed_lines_total"] = sum(removed_counter.values())
     stats["removed_lines_top"] = removed_counter.most_common(10)
+    # agregador leve de auditoria (top N) para removidos
+    agg: dict[str, Counter[str]] = {}
+    for text_norm, reason in removed_records:
+        if not text_norm:
+            continue
+        agg.setdefault(text_norm, Counter())[reason] += 1
+    aggregated: list[dict[str, object]] = []
+    for text_norm, reason_counts in agg.items():
+        aggregated.append(
+            {
+                "text": text_norm,
+                "count": sum(reason_counts.values()),
+                "reasons": dict(reason_counts),
+            }
+        )
+    aggregated.sort(key=lambda x: x["count"], reverse=True)
+    max_items = 50
+    stats["removed_aggregated"] = aggregated[:max_items]
+    stats["removed_aggregated_truncated"] = len(aggregated) > max_items
     stats["chars_out"] = len(text)
 
     if logger is not None:

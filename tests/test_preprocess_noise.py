@@ -535,6 +535,44 @@ def test_preprocess_removes_oceanofpdf_watermark_line() -> None:
     assert "Real content survives." in cleaned
 
 
+def test_preprocess_keeps_punctuation_spacing_after_ocr_merge() -> None:
+    raw = "\n".join(
+        [
+            "M IMORI-KUN? Is that a person’s name…?",
+        ]
+    )
+    cleaned = preprocess_text(raw)
+    assert "MIMORI-KUN? Is that a person’s name" in cleaned
+
+
+def test_preprocess_keeps_spaces_between_words_upper_sequences() -> None:
+    raw = "\n".join(
+        [
+            "E HHH?! This little bird is Mistress Anael’s familiar?!",
+        ]
+    )
+    cleaned = preprocess_text(raw)
+    assert "EHHH?!" in cleaned
+    assert "EHHH?! This" in cleaned
+    assert "Mistress Anael" in cleaned
+
+
+def test_preprocess_removes_advert_header_variants() -> None:
+    raw = "\n".join(
+        [
+            "On Light Novels by Universal",
+            "USA ONLY",
+            "Download all your Favorite Light Novels .com",
+            "Prologue",
+            "Story starts here.",
+        ]
+    )
+    cleaned = preprocess_text(raw, skip_front_matter=False)
+    assert cleaned.splitlines()[0].startswith("Prologue")
+    assert "Universal" not in cleaned
+    assert "Favorite Light Novels" not in cleaned
+
+
 def test_preprocess_keeps_ellipsis_dialogue_between_anchors() -> None:
     raw = "\n".join(
         [
