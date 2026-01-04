@@ -574,6 +574,34 @@ def test_preprocess_removes_advert_header_variants() -> None:
     assert "Favorite Light Novels" not in cleaned
 
 
+def test_preprocess_merges_across_removed_footer_gap() -> None:
+    raw = "\n".join(
+        [
+            "To think she had gained the ability to see through lies, thought",
+            "Page 1",
+            "Goldenagato | mp4directs.com",
+            "Vicius, infuriated by the memory.",
+        ]
+    )
+    cleaned = preprocess_text(raw)
+    assert "thought Vicius" in cleaned
+
+
+def test_preprocess_report_includes_suspects_and_counts() -> None:
+    raw = "\n".join(
+        [
+            "Prologue",
+            "This is a line.",
+            "www.example.com",
+        ]
+    )
+    cleaned, stats = preprocess_text(raw, return_stats=True, skip_front_matter=False)
+    assert "spaced_caps_remaining" in stats
+    assert "spaced_caps_remaining_samples" in stats
+    assert "urls_remaining_count" in stats
+    assert "toc_remaining_count" in stats
+
+
 def test_preprocess_keeps_ellipsis_dialogue_between_anchors() -> None:
     raw = "\n".join(
         [

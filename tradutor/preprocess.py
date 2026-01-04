@@ -477,11 +477,18 @@ def _fix_under_merge(text: str) -> tuple[str, dict]:
             prev = fixed[-1] if fixed else ""
             if i + 1 < len(lines):
                 nxt = lines[i + 1].lstrip()
-                if prev and nxt and not re.search(r"[.!?…]['\"]?$", prev) and prev[-1].isalpha() and nxt[:1].islower():
-                    fixed[-1] = f"{prev} {nxt}"
-                    merges += 1
-                    i += 2
-                    continue
+                if prev and nxt and not re.search(r"[.!?…]['\"]?$", prev) and prev[-1].isalpha():
+                    first_word = nxt.split(" ")[0] if nxt else ""
+                    nxt_is_heading = _is_heading_like(nxt)
+                    nxt_dialogue = nxt.startswith(('"', "“", "‘", "—", "-"))
+                    nxt_promo = any(dom in nxt.lower() for dom in PROMO_DOMAINS) or URL_RE.search(nxt)
+                    if not nxt_dialogue and not nxt_is_heading and not nxt_promo and (
+                        nxt[:1].islower() or len(first_word) <= 8
+                    ):
+                        fixed[-1] = f"{prev} {nxt}"
+                        merges += 1
+                        i += 2
+                        continue
             fixed.append(line)
             i += 1
             continue
@@ -497,6 +504,7 @@ def _fix_under_merge(text: str) -> tuple[str, dict]:
             starts_dialogue = nxt.startswith(('"', "“", "‘", "—", "-"))
             promo_guard = any(dom in nxt.lower() for dom in PROMO_DOMAINS) or URL_RE.search(nxt)
             next_is_heading = _is_heading_like(nxt)
+            curr_all_caps = curr.strip().isupper()
             if curr.strip().isupper() and nxt.strip().isupper() and len(curr.strip()) <= 40 and len(nxt.strip()) <= 40:
                 fixed.append(lines[i])
                 i += 1
@@ -507,10 +515,14 @@ def _fix_under_merge(text: str) -> tuple[str, dict]:
                 continue
             if (
                 not ends_sentence
-                and curr[-1].isalpha()
-                and (nxt[:1].islower() or (nxt[:1].isupper() and not starts_dialogue and not next_is_heading))
+                and re.search(r"[A-Za-z0-9,;:–—-]$", curr)
+                and (
+                    nxt[:1].islower()
+                    or (nxt[:1].isupper() and len(nxt.split(" ")[0]) <= 4 and not starts_dialogue and not next_is_heading)
+                )
                 and not promo_guard
                 and not curr_is_heading
+                and not curr_all_caps
             ):
                 fixed.append(f"{curr} {nxt}")
                 merges += 1
@@ -556,11 +568,11 @@ def _reflow_paragraphs(text: str) -> tuple[str, dict]:
             _flush()
             reflowed.append("")
             continue
-        if re.fullmatch(r"[\\s\"“”']*(?:[.·…]{2,})[\\s\"“”']*", stripped):
+        if re.fullmatch(r"[\s\"“”']*(?:[.·…]{2,})[\s\"“”']*", stripped):
             _flush()
             reflowed.append(stripped)
             continue
-        if re.fullmatch(r"[\\s\"“”'\\-–—]*[.?!…]+[\\s\"“”'\\-–—]*", stripped):
+        if re.fullmatch(r"[\s\"“”'\-–—]*[.?!…]+[\s\"“”'\-–—]*", stripped):
             _flush()
             reflowed.append(stripped)
             _flush()
@@ -1136,7 +1148,24 @@ def preprocess_text(
     )
     stats["watermarks_remaining"] = watermarks_remaining
     stats["soft_hyphen_remaining"] = text.count("\u00ad")
-    stats["spaced_caps_remaining"] = len(re.findall(r"\b[A-Z]\s+[A-Z]{2,}\b", text))
+    def _spaced_caps_suspects(txt: str) -> list[str]:
+        suspects: list[str] = []
+        for ln in txt.splitlines():
+            tokens = ln.split()
+            for j in range(len(tokens) - 1):
+                a, b = tokens[j], tokens[j + 1]
+                if len(a) == 1 and a.isupper() and b.isupper():
+                    if a == "I" and len(b) > 3:
+                        continue
+                    if len(b) > 12:
+                        continue
+                    suspects.append(ln)
+                    break
+        return suspects
+
+    spaced_suspects = _spaced_caps_suspects(text)
+    stats["spaced_caps_remaining"] = len(spaced_suspects)
+    stats["spaced_caps_remaining_samples"] = spaced_suspects[:10]
     # primeira linha plausÌvel
     first_non_empty = next((ln for ln in text.splitlines() if ln.strip()), "")
     stats["first_line"] = first_non_empty
@@ -1165,6 +1194,9 @@ def preprocess_text(
     # lista completa (normalizada) para auditoria, com motivo por item
     stats["removed_full"] = [{"text": t, "reason": r} for (t, r) in removed_records if t]
     stats["removed_full_count"] = len(stats["removed_full"])
+    stats["urls_remaining_count"] = len(URL_RE.findall(text))
+    toc_terms = ("table of contents", "contents")
+    stats["toc_remaining_count"] = sum(1 for ln in text.splitlines() if normalize_line_for_filters(ln).lower() in toc_terms)
     stats["chars_out"] = len(text)
 
     if logger is not None:
