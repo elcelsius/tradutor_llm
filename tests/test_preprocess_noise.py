@@ -530,9 +530,10 @@ def test_preprocess_removes_oceanofpdf_watermark_line() -> None:
             "Real content survives.",
         ]
     )
-    cleaned = preprocess_text(raw)
+    cleaned, stats = preprocess_text(raw, return_stats=True)
     assert "OceanofPDF" not in cleaned
     assert "Real content survives." in cleaned
+    assert any("oceanofpdf" in item.get("text", "").lower() for item in stats.get("removed_full", []))
 
 
 def test_preprocess_keeps_punctuation_spacing_after_ocr_merge() -> None:

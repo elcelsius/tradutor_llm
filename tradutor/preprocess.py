@@ -1162,6 +1162,9 @@ def preprocess_text(
     max_items = 50
     stats["removed_aggregated"] = aggregated[:max_items]
     stats["removed_aggregated_truncated"] = len(aggregated) > max_items
+    # lista completa (normalizada) para auditoria, com motivo por item
+    stats["removed_full"] = [{"text": t, "reason": r} for (t, r) in removed_records if t]
+    stats["removed_full_count"] = len(stats["removed_full"])
     stats["chars_out"] = len(text)
 
     if logger is not None:
