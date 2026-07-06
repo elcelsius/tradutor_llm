@@ -62,14 +62,13 @@ NOISE_PARAGRAPH_PATTERNS: Final[list[str]] = [
     r"download(?:ing)? our mobile app",
     r"zerobooks",
     r"jnovels",
-    r"join our discord",
+    r"^\s*join our\b.*\b(?:discord|community|server)\b",
     r"newsletter",
-    r"follow us",
-    r"^\s*support us\b",
-    r"read (more|the latest) on",
+    r"^\s*follow us\b.*\b(?:on|at|twitter|facebook|instagram|discord|patreon|updates?)\b",
+    r"^\s*support us\b.*\b(?:patreon|paypal|ko-fi|donat|website|site|online)\b",
+    r"^\s*read (more|the latest) on\b",
     r"get the latest news",
-    r"visit us online",
-    r"visit us",
+    r"^\s*(?:or\s+)?visit us online\b",
 ]
 
 ZERO_WIDTH_RE = re.compile(r"[\u200b\u200c\u200d\ufeff]")
@@ -90,20 +89,21 @@ PROMO_DOMAINS: Final[list[str]] = [
 ]
 
 PROMO_PHRASES: Final[list[str]] = [
-    "sign up for",
-    "read online",
-    "download",
-    "join our",
-    "read more on",
-    "follow us",
     "thank you for reading",
     "thank you for downloading",
-    "visit us online",
     "get the latest news",
 ]
 
 PROMO_LINE_REGEXES: Final[list[str]] = [
-    r"^\s*support us\b",
+    r"^\s*sign up for\b.*\b(?:newsletter|updates?|email|inbox|account|free|alerts?)\b",
+    r"^\s*sign up for our\s*[!.:]?$",
+    r"^\s*read online\b",
+    r"^\s*read (?:more|the latest) on\b",
+    r"^\s*download(?:ing)?\b.*\b(?:mobile app|favorite light novels|light novels|pdf|e-?books?|app)\b",
+    r"^\s*join our\b.*\b(?:discord|community|server)\b",
+    r"^\s*follow us\b.*\b(?:on|at|twitter|facebook|instagram|discord|patreon|updates?)\b",
+    r"^\s*support us\b.*\b(?:patreon|paypal|ko-fi|donat|website|site|online)\b",
+    r"^\s*(?:or\s+)?visit us online\b",
 ]
 
 TOC_MARKER_LINES: Final[list[str]] = [
@@ -146,7 +146,7 @@ def _sha256_text(text: str) -> str:
 
 def _default_noise_glossary() -> dict:
     return {
-        "line_contains": PROMO_DOMAINS + PROMO_PHRASES + ["favorite light novels", "light novels"],
+        "line_contains": PROMO_DOMAINS + PROMO_PHRASES + ["favorite light novels"],
         "line_compact_contains": ["oceanofpdf", "zerobooks", "jnovels", "gomanga", "discordgg", "patreon"],
         "line_regex": list(PROMO_LINE_REGEXES),
         "max_line_len": 160,
@@ -259,20 +259,37 @@ def _join_broken_lines(text: str) -> str:
     return "\n\n".join(joined)
 
 
-def remove_noise_blocks(text: str) -> str:
-    """Remove paragrafos que pareçam ser ads/newsletter/discord etc."""
+def _remove_noise_blocks_with_stats(text: str) -> tuple[str, dict, list[str]]:
+    """Remove paragrafos que parecam ser ads/newsletter/discord etc."""
     paragraphs = text.split("\n\n")
     cleaned: list[str] = []
+    removed: list[str] = []
+    pattern_counts: Counter[str] = Counter()
     for para in paragraphs:
         norm = para.lower().strip()
         if not norm:
             cleaned.append("")
             continue
-        if any(re.search(pat, norm, flags=re.IGNORECASE) for pat in NOISE_PARAGRAPH_PATTERNS):
+        matched = next((pat for pat in NOISE_PARAGRAPH_PATTERNS if re.search(pat, norm, flags=re.IGNORECASE)), "")
+        if matched:
+            removed_norm = normalize_line_for_filters(para)
+            if removed_norm:
+                removed.append(removed_norm)
+                pattern_counts[matched] += 1
             continue
         cleaned.append(para.strip())
-    # reintroduz quebras duplas
-    return "\n\n".join(p for p in cleaned if p != "")
+    stats = {
+        "noise_blocks_removed_count": len(removed),
+        "noise_blocks_removed_pattern_counts": dict(pattern_counts),
+        "noise_blocks_removed_samples": removed[:10],
+    }
+    return "\n\n".join(p for p in cleaned if p != ""), stats, removed
+
+
+def remove_noise_blocks(text: str) -> str:
+    """Remove paragrafos que parecam ser ads/newsletter/discord etc."""
+    cleaned, _, _ = _remove_noise_blocks_with_stats(text)
+    return cleaned
 
 
 def _is_promo_line(line: str) -> bool:
@@ -1431,7 +1448,10 @@ def preprocess_text(
     text, under_merge_stats = _fix_under_merge(text)
     stats.update(under_merge_stats)
 
-    text = remove_noise_blocks(text)
+    text, noise_block_stats, noise_block_removed = _remove_noise_blocks_with_stats(text)
+    stats.update(noise_block_stats)
+    removed_counter.update(noise_block_removed)
+    removed_records.extend((normalize_line_for_filters(item), "noise_block", 1) for item in noise_block_removed if item)
     text, repeat_stats, repeat_removed = _remove_repeated_lines(text)
     stats.update(repeat_stats)
     removed_counter.update(repeat_removed)

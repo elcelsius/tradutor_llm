@@ -175,6 +175,31 @@ def test_preprocess_preserves_narrative_support_us_phrase() -> None:
     assert stats["promo_lines_removed_count"] >= 1
 
 
+def test_preprocess_preserves_narrative_promo_like_phrases() -> None:
+    raw = "\n".join(
+        [
+            "They asked whether he would join our side before sunset.",
+            "The guards came to visit us before the storm.",
+            "The scouts continued to follow us through the forest.",
+            "Support us in the next battle, and we might survive.",
+            "Join our Discord and meet thousands of readers.",
+            "Follow us on Twitter for updates.",
+            "Support us on Patreon.",
+            "Or visit us online:",
+        ]
+    )
+    cleaned, stats = preprocess_text(raw, return_stats=True)
+    assert "join our side" in cleaned
+    assert "came to visit us before the storm" in cleaned
+    assert "continued to follow us through the forest" in cleaned
+    assert "Support us in the next battle" in cleaned
+    assert "Join our Discord" not in cleaned
+    assert "Follow us on Twitter" not in cleaned
+    assert "Support us on Patreon" not in cleaned
+    assert "visit us online" not in cleaned
+    assert stats["promo_lines_removed_count"] >= 4
+
+
 def test_preprocess_keeps_dialogue_without_url() -> None:
     raw = "\n".join(
         [

@@ -92,16 +92,19 @@
 - `saida/debug_refine*/`: arquivos `orig/raw/final` quando `--debug-refine`.
 
 ## Debug playbook (chunks/merge/cache)
-1. **Reproduzir bug de chunking**
+1. **Auditar preprocess antes de tradução longa**
+   - Se já houver `saida/<slug>_raw_extracted.md`, rode `python scripts/audit_preprocess.py --input "saida/<slug>_raw_extracted.md"`.
+   - Inspecione `saida/preprocess_audit/<slug>_audit.md`: `suspicious_removed` e `raw_missing_candidates` devem ser propaganda/TOC, não narrativa.
+2. **Reproduzir bug de chunking**
    - Rode com `--debug-chunks`.
    - Inspecione `saida/*_pt_chunks_debug.jsonl` (tradução) ou `*_chunks_debug.jsonl` (refine).
-2. **Verificar cache indevido**
+3. **Verificar cache indevido**
    - Limpe com `--clear-cache all` ou apague `saida/cache_*`.
    - Rode novamente e compare `cache_hits` nos reports.
-3. **Problemas de merge/recomposição**
+4. **Problemas de merge/recomposição**
    - Compare `*_progress.json` (mapa `chunks`) com o arquivo final.
    - Procure discrepâncias em `paragraph_mismatch` do report.
-4. **Saídas colapsadas ou contaminadas**
+5. **Saídas colapsadas ou contaminadas**
    - Verifique `collapse_detected` nos reports.
    - Procure entradas suspeitas nos JSONLs de debug.
 
@@ -133,6 +136,7 @@
 - QA objetiva: `tradutor/quality_checks.py` checa termos canônicos, aliases ruins, inglês residual, marcadores internos, aspas e sinais simples de gênero.
 - Benchmarks: `bench_llms`, `bench_refine_llms` e `bench_e2e_llms` usam o pipeline real, geram `*_qa.json` e aceitam glossário.
 - Normalizadores: interjeições comuns (`Phew`, `Geez`, `Huh`, `Ugh`) são normalizadas para PT-BR; atribuições quebradas em travessão (`— perguntou...`) são reunidas ao diálogo anterior.
+- Preprocess: `scripts/audit_preprocess.py` gera auditoria isolada do raw extraído, incluindo remoções suspeitas e linhas do raw que não aparecem no texto limpo.
 
 ## Observações de incerteza
 - Não encontrei configuração formal de lint/format (`pyproject.toml`, `setup.cfg`, `tox.ini`).

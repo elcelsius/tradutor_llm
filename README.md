@@ -107,6 +107,14 @@ Mesmas opções de tradução/refine relevantes; inclui `--normalize-paragraphs`
 - Para ampliar a lista de ruído, passe um JSON via `--preprocess-noise-glossary` (ou `preprocess_noise_glossary_path` no `config.yaml`). Estrutura esperada: `{"line_contains": [...], "line_compact_contains": [...], "line_regex": [...], "max_line_len": 160}`.
 - Apenas linhas curtas que casarem com esses padrões são removidas; contadores e amostras ficam em `preprocess_report.json`.
 
+Auditoria isolada do preprocess, sem chamar LLM:
+
+```bash
+python scripts/audit_preprocess.py --input "saida/meu_livro_raw_extracted.md"
+```
+
+O comando grava em `saida/preprocess_audit/`: texto preprocessado, `*_preprocess_report.json`, `*_audit.json` e um `*_audit.md` com remoções suspeitas e linhas narrativas do raw que não foram encontradas no texto limpo.
+
 ### Subcomando `refina` (PT → PT refinado)
 - `--input <*_pt.md>` (senão refina todos em `saida/`).
 - Glossário manual/dinâmico: `--use-glossary`, `--manual-glossary`, `--dynamic-glossary`, `--auto-glossary-dir`.
