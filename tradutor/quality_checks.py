@@ -81,7 +81,7 @@ MASCULINE_NOUN_CONTEXT_RE = re.compile(r"\b(?:olhar|rosto|semblante|sorriso|tom)
 
 def _term_variants(term: GlossaryEntry) -> list[str]:
     variants = [str(term.get("key", "")).strip()]
-    aliases = term.get("aliases") or []
+    aliases = term.get("source_aliases") or term.get("aliases") or []
     if isinstance(aliases, str):
         aliases = [aliases]
     if isinstance(aliases, list):
@@ -90,7 +90,16 @@ def _term_variants(term: GlossaryEntry) -> list[str]:
 
 
 def _bad_aliases(term: GlossaryEntry) -> list[str]:
-    aliases = term.get("bad_aliases") or []
+    aliases = term.get("bad_aliases") or term.get("forbidden_aliases") or []
+    if isinstance(aliases, str):
+        aliases = [aliases]
+    if not isinstance(aliases, list):
+        return []
+    return [str(alias).strip() for alias in aliases if str(alias).strip()]
+
+
+def _allowed_target_aliases(term: GlossaryEntry) -> list[str]:
+    aliases = term.get("allowed_target_aliases") or term.get("target_aliases") or []
     if isinstance(aliases, str):
         aliases = [aliases]
     if not isinstance(aliases, list):
@@ -153,6 +162,7 @@ def _check_glossary(
             continue
 
         variants = _term_variants(term)
+        allowed_target_aliases = {alias.casefold() for alias in _allowed_target_aliases(term)}
         source_has_term = any(_contains(source_text, variant) for variant in variants)
         target_has_pt = _contains(translated_text, pt)
 
@@ -172,6 +182,8 @@ def _check_glossary(
                 if variant == pt:
                     continue
                 if _contains(pt, variant):
+                    continue
+                if variant.casefold() in allowed_target_aliases:
                     continue
                 if _contains(translated_text, variant):
                     _add_issue(

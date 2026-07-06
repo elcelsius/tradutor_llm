@@ -48,7 +48,11 @@ STUB_HEADER_RE = re.compile(
     r"^#?\s*(prologue|chapter\s+\d+(?::[^\n]+)?|epilogue|afterword)\s*$",
     re.IGNORECASE,
 )
-TRANSLATE_PIPELINE_VERSION = "4"
+PT_HEADING_RE = re.compile(
+    r"^#?\s*(pr[oó]logo|cap[ií]tulo\s+\d+(?::[^\n]*)?|ep[ií]logo|p[oó]s[- ]?escrito|posf[aá]cio)\s*$",
+    re.IGNORECASE,
+)
+TRANSLATE_PIPELINE_VERSION = "5"
 TRANSLATE_START_MARKER_RE = r"###\s*TEXTO_TRADUZ(?:IDO|DO)?_INICIO"
 TRANSLATE_END_MARKER_RE = r"###\s*TEXTO_TRADUZ(?:IDO|DO)?_FIM"
 TRANSLATE_ANY_MARKER_RE = r"###\s*TEXTO_TRADUZ[A-Z_]*"
@@ -177,6 +181,44 @@ def _parse_translation_output(raw: str) -> str:
     if cleaned:
         return cleaned
     raise ValueError("Saida vazia apos tentar extrair texto traduzido.")
+
+
+def source_heading_to_pt(title: str | None) -> str | None:
+    """Converte titulo estrutural do original para heading Markdown em PT-BR."""
+    if not title:
+        return None
+    clean = str(title).strip().strip("#").strip()
+    if not clean or clean.lower() == "full text":
+        return None
+    if re.fullmatch(r"prologue", clean, flags=re.IGNORECASE):
+        return "# Prólogo"
+    if re.fullmatch(r"epilogue", clean, flags=re.IGNORECASE):
+        return "# Epílogo"
+    if re.fullmatch(r"afterword", clean, flags=re.IGNORECASE):
+        return "# Pós-escrito"
+    match = re.fullmatch(r"chapter\s+(\d+)(?::\s*(.*))?", clean, flags=re.IGNORECASE)
+    if match:
+        number = match.group(1)
+        subtitle = (match.group(2) or "").strip()
+        return f"# Capítulo {number}: {subtitle}".rstrip()
+    return None
+
+
+def ensure_section_heading(output: str, source_title: str | None) -> tuple[str, bool]:
+    """Garante que a primeira saída de uma seção mantenha seu heading estrutural."""
+    heading = source_heading_to_pt(source_title)
+    if not heading:
+        return output, False
+    lines = output.splitlines()
+    first_idx = next((idx for idx, line in enumerate(lines) if line.strip()), None)
+    if first_idx is not None:
+        first = lines[first_idx].strip()
+        if PT_HEADING_RE.match(first):
+            return output, False
+    stripped = output.strip()
+    if not stripped:
+        return heading, True
+    return f"{heading}\n\n{stripped}", True
 
 
 def _strip_translate_markers(text: str) -> str:
@@ -313,10 +355,10 @@ def enforce_canonical_terms(text: str, terms: list[dict]) -> tuple[str, dict]:
         variants: list[str] = []
         if term.get("enforce"):
             variants.append(str(term.get("key", "")).strip())
-            aliases = term.get("aliases") or []
+            aliases = term.get("source_aliases") or term.get("aliases") or []
             if isinstance(aliases, list):
                 variants.extend(str(a).strip() for a in aliases if str(a).strip())
-        bad_aliases = term.get("bad_aliases") or []
+        bad_aliases = term.get("bad_aliases") or term.get("forbidden_aliases") or []
         if isinstance(bad_aliases, str):
             bad_aliases = [bad_aliases]
         if isinstance(bad_aliases, list):
@@ -1309,6 +1351,22 @@ def translate_document(
             failed_chunks.add(midx)
         _write_progress()
 
+    heading_fixes = 0
+    seen_output_sections: set[int] = set()
+    for idx in range(1, total_chunks + 1):
+        chunk_info = chunk_records[idx - 1] if idx - 1 < len(chunk_records) else {}
+        section_id = chunk_info.get("section")
+        if section_id is None or section_id in seen_output_sections:
+            continue
+        seen_output_sections.add(section_id)
+        fixed_output, changed = ensure_section_heading(
+            chunk_outputs.get(idx, ""),
+            str(chunk_info.get("title", "")),
+        )
+        if changed:
+            chunk_outputs[idx] = fixed_output
+            heading_fixes += 1
+
     ordered_outputs = [chunk_outputs.get(i, f"[CHUNK_NAO_PROCESSADO_{i}]") for i in range(1, total_chunks + 1)]
     translated_chunks = ordered_outputs
 
@@ -1372,6 +1430,7 @@ def translate_document(
         "max_chunk_chars_observed": max_chunk_len,
         "dialogue_splits": normalization_totals.get("dialogue_splits", 0),
         "triple_quotes_removed": normalization_totals.get("triple_quotes_removed", 0),
+        "section_heading_fixes": heading_fixes,
     }
     if paragraph_mismatch:
         report["paragraph_mismatch"] = paragraph_mismatch
@@ -1392,6 +1451,7 @@ def translate_document(
             "max_chunk_chars_observed": max_chunk_len,
             "dialogue_splits": normalization_totals.get("dialogue_splits", 0),
             "triple_quotes_removed": normalization_totals.get("triple_quotes_removed", 0),
+            "section_heading_fixes": heading_fixes,
         }
         metrics_path = Path(cfg.output_dir) / f"{slug}_translate_metrics.json"
         metrics_path.write_text(json.dumps(metrics_payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1437,6 +1497,7 @@ def translate_document(
                 "error_count": error_count,
                 "orig_chars_total": orig_chars_total,
                 "sanitized_chars_total": sanitized_chars_total,
+                "section_heading_fixes": heading_fixes,
             },
         }
         debug_run.write_manifest("translate", translate_manifest)

@@ -126,14 +126,19 @@ O comando grava em `saida/preprocess_audit/`: texto preprocessado, `*_preprocess
 Converte um `.md` em PDF com as configs de fonte/margem do `config.yaml`.
 
 ## Glossário (fonte única em código: `tradutor/glossary_utils.py`)
-- Manual: JSON com `terms: [{key, pt, aliases?, category?, notes?, locked?, enforce?, gender?, bad_aliases?}]`. Use `--manual-glossary`. Se não for informado, `--use-glossary` procura `glossario/glossario_manual.json` e depois `glossario/glossario_geral.json`.
+- Manual: JSON com `terms: [{key, pt, source_aliases?, aliases?, bad_aliases?, allowed_target_aliases?, category?, notes?, locked?, enforce?, gender?}]`. Use `--manual-glossary`. Se não for informado, `--use-glossary` procura `glossario/glossario_manual.json` e depois `glossario/glossario_geral.json`.
+- `source_aliases`: aliases que podem aparecer no original/entrada e servem para localizar o termo no chunk. O campo legado `aliases` é aceito, mas deve espelhar apenas aliases de busca.
+- `bad_aliases`: formas proibidas ou não canônicas no PT-BR; quando encontradas na saída podem ser reportadas/corrigidas para `pt`.
+- `allowed_target_aliases`: formas de saída aceitas embora diferentes de `pt` (ex.: apelidos já naturalizados), para não gerar falso positivo no QA.
 - O glossário real local (`glossario/glossario_geral.json`) não é versionado. Mantenha apenas exemplos no Git.
 - Glossário dinâmico salvo em `saida/glossario_dinamico.json` quando habilitado no refine.
 - Injeção por chunk: só termos que aparecem no chunk entram no prompt (`select_terms_for_chunk`, limite `translate_glossary_match_limit`; fallback de até `translate_glossary_fallback_limit` termos quando nada casa).
 - Enforcement: termos com `enforce=true` são forçados no texto traduzido (após o LLM) apenas para os termos selecionados naquele chunk (`translate.enforce_canonical_terms`). `bad_aliases` também é usado para corrigir aliases sabidamente errados sem exigir que todos os aliases legítimos sejam forçados.
+- Migração local de aliases conhecidos: `python scripts/migrate_glossary_aliases.py glossario/glossario_geral.json --write`.
 
 ## Cleanup antes do refine
 - `cleanup_before_refine` (off/auto/on) aplica dedupe e fix de diálogos colados (`tradutor/cleanup.py::cleanup_before_refine`). Quando aplicado, gera `<slug>_pre_refine_cleanup.md` para inspeção.
+- O refine usa guardrails rígidos para rejeitar saídas que alterem a quantidade de parágrafos/linhas fora dos normalizadores estruturais conhecidos. Quando o refine não trouxer ganho literário claro, prefira revisar o `<slug>_pt.md` com a etapa determinística abaixo.
 
 ## Resume e progress
 - Tradução: `<slug>_pt_progress.json` inclui hashes e chunks para retomar (`translate.translate_document` via `run_translate`/`run_translate_md`).
@@ -144,12 +149,15 @@ Converte um `.md` em PDF com as configs de fonte/margem do `config.yaml`.
 - Com `--debug`, também são gravados `saida/<slug>_raw_extracted.md`, `saida/<slug>_preprocessed.md` e `saida/<slug>_raw_desquebrado.md`, úteis para avaliar cada etapa do pipeline.
 - Tradução: `saida/<slug>_pt.md`, `<slug>_translate_report.json`, `<slug>_translate_metrics.json`, progress (`_pt_progress.json`), debug opcional (`debug_traducao/`, `*_pt_chunks_debug.jsonl`).
 - Refine: `saida/<slug>_pt_refinado.md`, `<slug>_refine_report.json`, `<slug>_refine_metrics.json`, progress (`_pt_refinado_progress.json`), debug opcional (`debug_refine*/`).
+- Revisão determinística pós-tradução: `scripts/review_translation.py` gera `<slug>_pt_revisado.md` e um report JSON com headings restaurados, substituições editoriais conservadoras e correções de `bad_aliases`.
 - Desquebrar: métricas em `<slug>_desquebrar_metrics.json` se rodar com LLM; debug raw/preprocess quando `--debug`.
 - PDF: `saida/pdf/<slug>_pt_refinado.pdf` se `--pdf-enabled`.
 - Caches: `saida/cache_traducao`, `saida/cache_refine`, `saida/cache_desquebrar` (`tradutor/cache_utils.py`).
 
 ## Testes e qualidade
 - Testes locais: `pytest -q`.
+- Revisão determinística de um volume já traduzido:
+  `python scripts/review_translation.py --input "saida/meu_livro_pt.md" --output "saida/meu_livro_pt_revisado.md" --sections "saida/debug_runs/<slug>/<run>/30_split_chunk/sections.json" --glossary "glossario/glossario_geral.json" --report "saida/meu_livro_pt_revisado_report.json"`.
 - Hooks locais: `pre-commit run --all-files` (mojibake, EOF, whitespace; usa `scripts/check_mojibake.py` que importa tokens de `tradutor/mojibake.py`).
 - CI: GitHub Actions (`.github/workflows/ci.yml`) roda `pytest -q` e `pre-commit run --all-files` em Ubuntu/Windows com Python 3.12, cache de pip.
 - Benchmarks locais: `python -m tradutor.bench_llms`, `python -m tradutor.bench_refine_llms` e `python -m tradutor.bench_e2e_llms`. Os resultados gerados em `benchmark/traducao`, `benchmark/refine`, `benchmark/e2e` e `benchmark/literario` são locais e ignorados pelo Git.

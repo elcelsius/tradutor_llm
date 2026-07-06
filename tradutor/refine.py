@@ -53,7 +53,7 @@ from .quote_fix import fix_unbalanced_quotes, count_curly_quotes, fix_blank_line
 from .text_postprocess import apply_structural_normalizers, apply_custom_normalizers, fix_dialogue_artifacts
 from .debug_run import DebugRunWriter
 
-REFINE_PIPELINE_VERSION = "6"
+REFINE_PIPELINE_VERSION = "7"
 
 
 def refine_prompt_fingerprint() -> str:
@@ -229,7 +229,15 @@ def _count_nonblank_lines(text: str) -> int:
     return sum(1 for line in text.splitlines() if line.strip())
 
 
-def _dialogue_or_paragraph_regression(original: str, cleaned: str) -> dict:
+def _dialogue_or_paragraph_regression(
+    original: str,
+    cleaned: str,
+    *,
+    allowed_paragraph_increase: int = 0,
+    allowed_paragraph_decrease: int = 0,
+    allowed_line_increase: int = 0,
+    allowed_line_decrease: int = 0,
+) -> dict:
     original_quote_lines = _count_leading_quote_dialogues(original)
     cleaned_quote_lines = _count_leading_quote_dialogues(cleaned)
     original_dash_lines = _count_leading_dash_dialogues(original)
@@ -260,14 +268,14 @@ def _dialogue_or_paragraph_regression(original: str, cleaned: str) -> dict:
 
     paragraph_structure_changed = False
     if original_paragraphs >= 4:
-        max_paragraphs = max(original_paragraphs + 2, int(original_paragraphs * 1.45))
-        min_paragraphs = max(1, int(original_paragraphs * 0.65))
+        max_paragraphs = original_paragraphs + max(0, allowed_paragraph_increase)
+        min_paragraphs = max(1, original_paragraphs - max(0, allowed_paragraph_decrease))
         paragraph_structure_changed = cleaned_paragraphs > max_paragraphs or cleaned_paragraphs < min_paragraphs
 
     line_structure_changed = False
     if original_nonblank_lines >= 2:
-        max_lines = max(original_nonblank_lines + 4, int(original_nonblank_lines * 1.45))
-        min_lines = max(1, int(original_nonblank_lines * 0.65))
+        max_lines = original_nonblank_lines + max(0, allowed_line_increase)
+        min_lines = max(1, original_nonblank_lines - max(0, allowed_line_decrease))
         line_structure_changed = cleaned_nonblank_lines > max_lines or cleaned_nonblank_lines < min_lines
 
     return {
@@ -307,15 +315,23 @@ def sanitize_refine_chunk_output(
     stats["blank_lines_fixed"] = fixes
     cleaned, count_split = re.subn(r"”\s+“", "”\n\n“", cleaned)
     stats["dialogue_splits"] = count_split
-    cleaned = re.sub(
+    cleaned, tag_joins = re.subn(
         r"”\s*\n\s*\n\s*(?=(perguntou|disse|respondeu|murmurou|exclamou)\b)",
         "” ",
         cleaned,
         flags=re.IGNORECASE,
     )
+    stats["dialogue_tag_joins"] = tag_joins
 
     artifacts = '"""' in cleaned
-    structure_info = _dialogue_or_paragraph_regression(original, cleaned)
+    structure_info = _dialogue_or_paragraph_regression(
+        original,
+        cleaned,
+        allowed_paragraph_increase=count_split,
+        allowed_paragraph_decrease=tag_joins,
+        allowed_line_increase=count_split,
+        allowed_line_decrease=tag_joins,
+    )
     opens_curly, closes_curly = count_curly_quotes(cleaned)
     opens_q = opens_curly + cleaned.count('"')
     closes_q = closes_curly + cleaned.count('"')

@@ -105,6 +105,40 @@ def test_quality_checks_does_not_flag_alias_inside_canonical_translation() -> No
     assert report["issues_by_type"].get("source_term_in_target") is None
 
 
+def test_quality_checks_allows_explicit_target_alias() -> None:
+    source = "The Wildly Beautiful Emperor arrived."
+    translated = "Zine chegou ao acampamento."
+    terms = [
+        {
+            "key": "Wildly Beautiful Emperor",
+            "pt": "Imperador Selvagemente Belo",
+            "source_aliases": ["Beautiful Wild Emperor"],
+            "allowed_target_aliases": ["Zine"],
+        }
+    ]
+
+    report = run_translation_quality_checks(source, translated, terms)
+
+    assert report["issues_by_type"].get("source_term_in_target") is None
+
+
+def test_quality_checks_flags_bad_alias_separately_from_source_alias() -> None:
+    source = "The Children of Vicius were summoned."
+    translated = "Os Discípulos de Vicius foram convocados."
+    terms = [
+        {
+            "key": "Children of Vicius",
+            "pt": "Filhos de Vicius",
+            "source_aliases": ["Vicius's Disciples"],
+            "bad_aliases": ["Discípulos de Vicius"],
+        }
+    ]
+
+    report = run_translation_quality_checks(source, translated, terms)
+
+    assert report["issues_by_type"]["bad_alias_in_target"] == 1
+
+
 def test_quality_checks_does_not_flag_fixed_expression_de_surpresa() -> None:
     source = "Kirihara was caught off guard."
     translated = "Mesmo tendo sido pego de surpresa, Kirihara permaneceu quieto."

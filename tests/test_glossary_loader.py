@@ -23,7 +23,9 @@ def test_glossary_loader_preserves_enforcement_metadata(tmp_path: Path) -> None:
                         "type": "personagem",
                         "enforce": True,
                         "aliases": ["Kayako Suou", "Kayado"],
+                        "source_aliases": ["Kayako Suou"],
                         "bad_aliases": ["Kayado"],
+                        "allowed_target_aliases": ["Kayako"],
                         "notes": "Aliada de Ayaka.",
                     }
                 ]
@@ -44,7 +46,10 @@ def test_glossary_loader_preserves_enforcement_metadata(tmp_path: Path) -> None:
     assert term["enforce"] is True
     assert term["gender"] == "feminino"
     assert term["type"] == "personagem"
+    assert term["source_aliases"] == ["Kayako Suou"]
+    assert term["aliases"] == ["Kayako Suou"]
     assert term["bad_aliases"] == ["Kayado"]
+    assert term["allowed_target_aliases"] == ["Kayako"]
 
 
 def test_translation_glossary_prompt_includes_metadata() -> None:
@@ -66,6 +71,21 @@ def test_translation_glossary_prompt_includes_metadata() -> None:
     assert "genero: masculino plural" in block
     assert "uso obrigatorio" in block
     assert "Não usar Quatro Sábios." in block
+
+
+def test_translation_glossary_prompt_includes_forbidden_aliases() -> None:
+    block = format_manual_pairs_for_translation(
+        [
+            {
+                "key": "Children of Vicius",
+                "pt": "Filhos de Vicius",
+                "bad_aliases": ["Discípulos de Vicius"],
+            }
+        ],
+        limit=None,
+    )
+
+    assert "nao usar: Discípulos de Vicius" in block
 
 
 def test_resolve_manual_glossary_path_prefers_explicit_path(tmp_path: Path) -> None:

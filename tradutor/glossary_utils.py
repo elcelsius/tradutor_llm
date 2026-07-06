@@ -75,6 +75,14 @@ def _build_manual_pt_index(terms: List[GlossaryEntry]) -> GlossaryPtIndex:
     return idx
 
 
+def _string_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
 def _merge_indexes(manual_index: GlossaryIndex, dynamic_index: GlossaryIndex) -> GlossaryIndex:
     merged = dict(manual_index)
     for key, entry in dynamic_index.items():
@@ -105,14 +113,9 @@ def _load_terms(path: Path, source: str, logger: logging.Logger) -> List[Glossar
         pt = str(entry.get("pt", "")).strip()
         if not key or not pt:
             continue
-        raw_aliases = entry.get("aliases") or []
-        aliases: list[str] = []
-        if isinstance(raw_aliases, str):
-            raw_aliases = [raw_aliases]
-        if isinstance(raw_aliases, list):
-            for alias in raw_aliases:
-                if isinstance(alias, str) and alias.strip():
-                    aliases.append(alias.strip())
+        source_aliases = _string_list(entry.get("source_aliases") or entry.get("aliases") or [])
+        bad_aliases = _string_list(entry.get("bad_aliases") or entry.get("forbidden_aliases") or [])
+        allowed_target_aliases = _string_list(entry.get("allowed_target_aliases") or entry.get("target_aliases") or [])
         normalized: GlossaryEntry = {
             "key": key,
             "pt": pt,
@@ -120,10 +123,15 @@ def _load_terms(path: Path, source: str, logger: logging.Logger) -> List[Glossar
             "notes": entry.get("notes"),
             "source": "manual" if source == "manual" else "dynamic",
             "locked": bool(entry.get("locked", source == "manual")),
-            "aliases": aliases,
-            "aliases_norm": [normalize_key(a) for a in aliases],
+            # `aliases` is kept as a compatibility alias for source-side matching.
+            "aliases": source_aliases,
+            "source_aliases": source_aliases,
+            "aliases_norm": [normalize_key(a) for a in source_aliases],
+            "source_aliases_norm": [normalize_key(a) for a in source_aliases],
+            "bad_aliases": bad_aliases,
+            "allowed_target_aliases": allowed_target_aliases,
         }
-        for field in ("enforce", "gender", "type", "term_type", "bad_aliases"):
+        for field in ("enforce", "gender", "type", "term_type"):
             if field in entry:
                 normalized[field] = entry[field]
         terms.append(normalized)
@@ -251,6 +259,9 @@ def format_manual_pairs_for_translation(manual_terms: list[GlossaryEntry], limit
             hints.append(f"genero: {gender}")
         if entry.get("enforce"):
             hints.append("uso obrigatorio")
+        bad_aliases = _string_list(entry.get("bad_aliases"))
+        if bad_aliases:
+            hints.append("nao usar: " + ", ".join(bad_aliases[:5]))
         if notes:
             hints.append(str(notes))
         if hints:
@@ -300,7 +311,7 @@ def select_terms_for_chunk(
         if not key_norm or key_norm in seen:
             continue
         aliases_norm: list[str] = []
-        raw_aliases = term.get("aliases_norm") or term.get("aliases") or []
+        raw_aliases = term.get("source_aliases_norm") or term.get("aliases_norm") or term.get("source_aliases") or term.get("aliases") or []
         if isinstance(raw_aliases, list):
             aliases_norm = [normalize_key(str(a)) for a in raw_aliases if str(a).strip()]
         matched = _matches_term(key_norm) or any(_matches_term(a) for a in aliases_norm)

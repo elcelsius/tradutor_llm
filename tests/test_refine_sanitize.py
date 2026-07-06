@@ -60,6 +60,24 @@ def test_sanitize_rejects_large_paragraph_reflow():
     assert info["paragraph_structure_changed"]
 
 
+def test_sanitize_rejects_single_paragraph_split_in_refine_chunk():
+    original = "Um.\n\nDois.\n\nTres.\n\nQuatro."
+    raw = "Um.\n\nDois.\n\nTres.\n\nQuatro.\n\nCinco."
+    _, ok, info = sanitize_refine_chunk_output(raw, original, logger=None, label="t7b")
+    assert not ok
+    assert info["paragraph_structure_changed"]
+
+
+def test_sanitize_allows_own_glued_dialogue_split():
+    original = "Um.\n\nDois.\n\nTres.\n\n“Oi.” “Tchau.”"
+    raw = original
+    cleaned, ok, info = sanitize_refine_chunk_output(raw, original, logger=None, label="t7c")
+    assert ok
+    assert "”\n\n“" in cleaned
+    assert info["dialogue_splits"] == 1
+    assert not info["paragraph_structure_changed"]
+
+
 def test_sanitize_rejects_large_line_reflow_inside_paragraphs():
     original = "Um. Dois. Tres. Quatro.\n\nCinco. Seis. Sete. Oito."
     raw = "Um.\nDois.\nTres.\nQuatro.\n\nCinco.\nSeis.\nSete.\nOito."
