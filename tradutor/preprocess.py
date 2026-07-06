@@ -65,7 +65,7 @@ NOISE_PARAGRAPH_PATTERNS: Final[list[str]] = [
     r"join our discord",
     r"newsletter",
     r"follow us",
-    r"support us",
+    r"^\s*support us\b",
     r"read (more|the latest) on",
     r"get the latest news",
     r"visit us online",
@@ -94,13 +94,16 @@ PROMO_PHRASES: Final[list[str]] = [
     "read online",
     "download",
     "join our",
-    "support us",
     "read more on",
     "follow us",
     "thank you for reading",
     "thank you for downloading",
     "visit us online",
     "get the latest news",
+]
+
+PROMO_LINE_REGEXES: Final[list[str]] = [
+    r"^\s*support us\b",
 ]
 
 TOC_MARKER_LINES: Final[list[str]] = [
@@ -145,7 +148,7 @@ def _default_noise_glossary() -> dict:
     return {
         "line_contains": PROMO_DOMAINS + PROMO_PHRASES + ["favorite light novels", "light novels"],
         "line_compact_contains": ["oceanofpdf", "zerobooks", "jnovels", "gomanga", "discordgg", "patreon"],
-        "line_regex": [],
+        "line_regex": list(PROMO_LINE_REGEXES),
         "max_line_len": 160,
     }
 
@@ -278,7 +281,8 @@ def _is_promo_line(line: str) -> bool:
         return False
     has_domain = any(dom in norm for dom in PROMO_DOMAINS)
     has_phrase = any(phrase in norm for phrase in PROMO_PHRASES)
-    return has_domain or has_phrase
+    has_regex = any(re.search(pat, norm, flags=re.IGNORECASE) for pat in PROMO_LINE_REGEXES)
+    return has_domain or has_phrase or has_regex
 
 
 def _remove_promo_lines(text: str, glossary: dict) -> tuple[str, dict, list[str]]:

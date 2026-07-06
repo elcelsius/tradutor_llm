@@ -157,6 +157,24 @@ def test_preprocess_preserves_dialogue_with_sign_up_phrase() -> None:
     assert stats["promo_lines_removed_count"] >= 1
 
 
+def test_preprocess_preserves_narrative_support_us_phrase() -> None:
+    raw = "\n".join(
+        [
+            "It seems that some were accessories that provided bonuses to stats,",
+            "while others could be attached to weapons or armor to enhance their quality.",
+            "Most, however, seemed to be meant to support us for the period immediately",
+            "after our summoning and it felt like much of their relevance faded as we",
+            "leveled up. Mine and Itsuki's unique items were of that nature.",
+            "Support us on Patreon",
+        ]
+    )
+    cleaned, stats = preprocess_text(raw, return_stats=True)
+    assert "meant to support us for the period immediately" in cleaned
+    assert "after our summoning" in cleaned
+    assert "Support us on Patreon" not in cleaned
+    assert stats["promo_lines_removed_count"] >= 1
+
+
 def test_preprocess_keeps_dialogue_without_url() -> None:
     raw = "\n".join(
         [
