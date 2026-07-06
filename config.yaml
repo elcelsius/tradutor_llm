@@ -5,6 +5,8 @@
 # Ollama (runtime)
 # ============================================================================
 ollama_keep_alive: "30m"             # mantém o modelo carregado (melhora performance em livros longos)
+ollama_api_mode: chat                # generate | chat; chat replica melhor o comportamento do app do Ollama
+ollama_think: false                  # null/true/false; false evita gastar tokens em "thinking" sem resposta
 
 # Contexto por etapa (se estiver None, Ollama usa o padrão do servidor/modelo)
 # Sugestão inicial para seu hardware:
@@ -19,7 +21,7 @@ refine_num_ctx: 6144
 # Modelos de tradução (PDF -> PT)
 # ============================================================================
 translate_backend: ollama            # ollama ou gemini
-translate_model: gemma3:27b-it-q4_K_M
+translate_model: mistral-small3.2:24b-instruct-2506-q4_K_M
 translate_temperature: 0.55          # se quiser mais fidelidade, teste 0.30
 translate_repeat_penalty: 1.10
 translate_chunk_chars: 2048          # alvo por chunk (caracteres)
@@ -55,7 +57,7 @@ pdf_language: pt-BR
 # Refine (pós-tradução)
 # ============================================================================
 refine_backend: ollama
-refine_model: mistral-small3.1:24b-instruct-2503-q4_K_M
+refine_model: gemma4:26b-a4b-it-q4_K_M
 refine_temperature: 0.20
 refine_repeat_penalty: 1.08
 refine_chunk_chars: 3072

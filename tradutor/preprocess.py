@@ -398,6 +398,8 @@ def _remove_promo_lines(text: str, glossary: dict) -> tuple[str, dict, list[str]
                 stats["promo_blocks_removed_count"] += 1
             for removed in removed_block:
                 removed_norm = normalize_line_for_filters(removed)
+                if not removed_norm:
+                    continue
                 removed_lower = removed_norm.lower()
                 removed_compact = re.sub(r"[^a-z0-9]", "", removed_lower)
                 removed_has_domain = any(dom in removed_lower for dom in line_contains) or any(
@@ -465,6 +467,174 @@ def _dedupe_consecutive_lines(text: str) -> tuple[str, dict, list[str]]:
     return "\n".join(cleaned), {"dedupe_removed_count": removed_count}, removed_norms
 
 
+def _merge_hard_wraps_across_gaps(text: str) -> tuple[str, dict]:
+    """
+    Junta linhas separadas por gaps/páginas quando claramente são continuação de frase.
+    """
+    lines = text.splitlines()
+    merged: list[str] = []
+    merges = 0
+    i = 0
+    chapter_line_re = re.compile(r"chapter\s+\d+:?", re.IGNORECASE)
+    while i < len(lines):
+        curr = lines[i]
+        j = i + 1
+        while j < len(lines) and not lines[j].strip():
+            j += 1
+        if j < len(lines):
+            nxt = lines[j]
+        else:
+            nxt = ""
+        if curr.strip() and nxt.strip() and j > i + 1:
+            curr_up = curr.strip().isupper() and len(curr.strip()) <= 40
+            nxt_up = nxt.strip().isupper() and len(nxt.strip()) <= 40
+            curr_ends_sentence = bool(re.search(r"[.!?…]['\"]?$", curr.strip()))
+            nxt_dialogue = nxt.lstrip().startswith(('"', "“", "‘", "—", "-"))
+            prev_is_chapter = bool(merged) and chapter_line_re.match(merged[-1].strip())
+            nxt_heading = _is_heading_like(nxt) or (prev_is_chapter and len(nxt.strip().split()) <= 3)
+            curr_subheading = prev_is_chapter and (len(curr.strip().split()) <= 4) and (not _is_heading_like(curr))
+            if (
+                not curr_ends_sentence
+                and not nxt_dialogue
+                and not nxt_heading
+                and not _is_heading_like(curr)
+                and not curr_subheading
+                and not _is_ellipsis_line(curr)
+                and not (curr_up and nxt_up)
+            ):
+                merged.append(f"{curr.rstrip()} {nxt.lstrip()}")
+                merges += 1
+                i = j + 1
+                continue
+        merged.append(curr)
+        i += 1
+    return "\n".join(merged), {"hard_wrap_merges": merges}
+
+
+def _remove_blank_between_dialogue(text: str) -> str:
+    lines = text.splitlines()
+    out: list[str] = []
+    for idx, line in enumerate(lines):
+        if not line.strip():
+            prev_dialogue = out and out[-1].lstrip().startswith(('"', "“"))
+            next_dialogue = False
+            if idx + 1 < len(lines):
+                next_dialogue = lines[idx + 1].lstrip().startswith(('"', "“"))
+            if prev_dialogue and next_dialogue:
+                continue
+        out.append(line)
+    return "\n".join(out)
+
+
+
+def _ensure_subheading_isolated(text: str) -> tuple[str, dict]:
+    """Ensure short chapter subheadings remain on their own line.
+
+    Fixes cases like: 'Name MUNIN PRESSED...' right after 'Chapter N:' by splitting
+    the first token(s) as a subheading line.
+    """
+    lines = text.splitlines()
+    out: list[str] = []
+    fixes = 0
+
+    chapter_re = re.compile(r"^chapter\s+\d+:?\s*$", re.IGNORECASE)
+    i = 0
+    while i < len(lines):
+        ln = lines[i]
+        out.append(ln)
+        if chapter_re.match(ln.strip()):
+            # look ahead to next non-empty line
+            j = i + 1
+            while j < len(lines) and not lines[j].strip():
+                out.append(lines[j])
+                j += 1
+            if j < len(lines):
+                cand = lines[j].strip()
+                # If cand looks like merged "Subheading NARRATION..." split it.
+                # Limit subheading to 1-3 TitleCase words, followed by ALLCAPS-ish narration.
+                m2 = re.match(r"^([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\s+([A-Z]{2,}.*)$", cand)
+                if m2:
+                    sub = m2.group(1).strip()
+                    rest = m2.group(2).strip()
+                    out.append(sub)
+                    out.append("")
+                    out.append(rest)
+                    fixes += 1
+                    i = j + 1
+                    continue
+        i += 1
+    return "\n".join(out), {"subheading_isolation_fixes": fixes}
+
+
+def _split_dialogue_narration_boundaries(text: str) -> tuple[str, dict]:
+    """Split cases where a dialogue paragraph ends and narration starts on same line.
+
+    Example: '♪” Then Seras...' -> '♪”\n\nThen Seras...'
+    Conservative: only triggers when a line starts with an opening quote.
+    """
+    lines = text.splitlines()
+    out: list[str] = []
+    fixes = 0
+    # closing quote variants after punctuation or music note
+    boundary_re = re.compile(r'([.!?…\\u266a])([\"”’\'])\\s+(?=[A-Z])')
+    for ln in lines:
+        stripped = ln.lstrip()
+        if stripped.startswith(("\"", "“", "‘")) and boundary_re.search(ln):
+            new_ln = boundary_re.sub(r"\1\2\n\n", ln)
+            if new_ln != ln:
+                fixes += 1
+                # boundary_re inserts newlines; keep as-is split into multiple lines
+                out.extend(new_ln.splitlines())
+                continue
+        out.append(ln)
+    return "\n".join(out), {"dialogue_narration_split_fixes": fixes}
+
+
+def _wrap_very_long_lines(text: str, *, max_len: int = 1200) -> tuple[str, dict]:
+    """Break extremely long lines to improve diff/QA without changing paragraph boundaries.
+
+    Only wraps lines longer than max_len. Wrap is done on sentence boundaries when possible,
+    otherwise on spaces. Keeps paragraphs (no extra blank lines added).
+    """
+    lines = text.splitlines()
+    out: list[str] = []
+    wraps = 0
+    max_observed = 0
+    over_800 = 0
+    for ln in lines:
+        ln_len = len(ln)
+        max_observed = max(max_observed, ln_len)
+        if ln_len > 800:
+            over_800 += 1
+        if ln_len <= max_len or not ln.strip():
+            out.append(ln)
+            continue
+        # Try to split on sentence boundaries first.
+        s = ln
+        parts: list[str] = []
+        while len(s) > max_len:
+            # find last sentence end before max_len
+            cut = None
+            for m3 in re.finditer(r"[.!?…][\"”’']?\s+", s):
+                if m3.end() <= max_len:
+                    cut = m3.end()
+            if cut is None or cut < max_len * 0.5:
+                # fallback: last space
+                cut = s.rfind(" ", 0, max_len)
+                if cut <= 0:
+                    break
+                cut = cut + 1
+            parts.append(s[:cut].rstrip())
+            s = s[cut:].lstrip()
+            wraps += 1
+        if parts:
+            out.extend(parts)
+            out.append(s)
+        else:
+            out.append(ln)
+    return "\n".join(out), {"very_long_line_wraps": wraps, "max_line_length": max_observed, "lines_over_800": over_800}
+
+
 def _fix_under_merge(text: str) -> tuple[str, dict]:
     lines = text.splitlines()
     fixed: list[str] = []
@@ -482,7 +652,9 @@ def _fix_under_merge(text: str) -> tuple[str, dict]:
                     nxt_is_heading = _is_heading_like(nxt)
                     nxt_dialogue = nxt.startswith(('"', "“", "‘", "—", "-"))
                     nxt_promo = any(dom in nxt.lower() for dom in PROMO_DOMAINS) or URL_RE.search(nxt)
-                    if not nxt_dialogue and not nxt_is_heading and not nxt_promo and (nxt[:1].islower() or nxt[:1].isupper()):
+                    if _is_heading_like(prev):
+                        pass
+                    elif not nxt_dialogue and not nxt_is_heading and not nxt_promo and (nxt[:1].islower() or nxt[:1].isupper()):
                         fixed[-1] = f"{prev} {nxt}"
                         merges += 1
                         i += 2
@@ -560,10 +732,17 @@ def _reflow_paragraphs(text: str) -> tuple[str, dict]:
     def _is_dialogue_start(s: str) -> bool:
         return s.startswith(('"', "“"))
 
-    for line in lines:
+    chapter_line_re = re.compile(r"chapter\s+\d+:?", re.IGNORECASE)
+    last_emitted: str | None = None
+    for idx, line in enumerate(lines):
         stripped = line.strip()
         if not stripped:
             _flush()
+            reflowed.append("")
+            continue
+        if stripped.isupper() and len(stripped) <= 40:
+            _flush()
+            reflowed.append(line)
             reflowed.append("")
             continue
         if re.fullmatch(r"[\s\"“”']*(?:[.·…]{2,})[\s\"“”']*", stripped):
@@ -579,19 +758,34 @@ def _reflow_paragraphs(text: str) -> tuple[str, dict]:
             _flush()
             buffer.append(stripped)
             continue
-        if buffer and _is_dialogue_start(buffer[-1]):
-            _flush()
-            buffer.append(stripped)
-            continue
         if _is_heading_like(stripped) or re.fullmatch(r"\*{2,}", stripped):
             _flush()
             reflowed.append(line)
+            # só injeta blank se a próxima linha não for blank
+            next_line = lines[idx + 1].strip() if idx + 1 < len(lines) else ""
+            if next_line and (not reflowed or reflowed[-1] != ""):
+                reflowed.append("")
+            last_emitted = stripped
             continue
+        prev_is_chapter = bool(last_emitted) and chapter_line_re.match(last_emitted.lower())
+        if prev_is_chapter and len(stripped.split()) <= 3:
+            _flush()
+            reflowed.append(stripped)
+            last_emitted = stripped
+            continue
+        # If we are inside a dialogue paragraph (started with a quote) and the last line ends
+        # with a closing quote, do NOT merge the next narration line into the same paragraph.
+        if buffer and buffer[0].lstrip().startswith(('"', '“')):
+            prev_tail = buffer[-1].rstrip()
+            if re.search(r"[\"”’']\s*$", prev_tail) and (not stripped.startswith(('\"', '“'))):
+                if stripped[:1].isupper():
+                    _flush()
         if not buffer:
             buffer.append(line.strip())
         else:
             buffer.append(line.strip())
             merges += 1
+        last_emitted = None
     _flush()
     if merges == 0 and potential_merges:
         merges = potential_merges
@@ -652,6 +846,20 @@ def _strip_inline_watermarks(text: str) -> tuple[str, dict]:
     return text, {"inline_watermark_removed_chars": removed}
 
 
+def _spaced_caps_suspects(text: str) -> list[str]:
+    """
+    Detecta padräo real de caps espaçados (ex.: 'O H WHAT') para auditoria.
+
+    Usa regex estrita para evitar falsos positivos em frases já normalizadas.
+    """
+    pattern = re.compile(r"\b(?:[A-Z]\s+){2,}[A-Z][A-Za-z]*\b")
+    samples: list[str] = []
+    for ln in text.splitlines():
+        if pattern.search(ln):
+            samples.append(ln.strip())
+    return samples
+
+
 def _fix_hyphen_linebreaks(text: str) -> tuple[str, dict]:
     pattern = re.compile(r"([A-Za-z]{1,24})-\s*\n\s*([A-Za-z]{1,24})")
     count = 0
@@ -664,6 +872,49 @@ def _fix_hyphen_linebreaks(text: str) -> tuple[str, dict]:
     fixed = pattern.sub(_repl, text)
     return fixed, {"hyphen_linebreak_fixes": count}
 
+
+
+def _fix_ellipsis_spacing(text: str) -> tuple[str, dict]:
+    """Ensure a space exists after ellipsis only when it is clearly a missing-space artifact.
+
+    We *only* add a space when an ellipsis is immediately followed by a **lowercase** letter.
+    This avoids breaking stylized text like: "ANOTHER…DIVINE?" (keeps no space before DIVINE).
+    Handles both unicode ellipsis (\u2026) and three dots (...).
+    Examples:
+      - "quick-witted\u2026to" -> "quick-witted\u2026 to"
+      - "Invasion\u2026the" -> "Invasion\u2026 the"
+      - "ANOTHER\u2026DIVINE?" -> unchanged
+    """
+    unicode_ell = "\u2026"
+    before = text
+    ellipsis_hits = 0
+
+    def _should_skip(start: int) -> bool:
+        tail = before[start : start + 5]
+        return bool(re.match(r"[A-Z]{2,}", tail))
+
+    def _repl_unicode(match: re.Match[str]) -> str:
+        nonlocal ellipsis_hits
+        idx = match.start(1)
+        if _should_skip(idx):
+            return match.group(0)
+        ellipsis_hits += 1
+        return f"{unicode_ell} {match.group(1)}"
+
+    def _repl_dots(match: re.Match[str]) -> str:
+        nonlocal ellipsis_hits
+        idx = match.start(1)
+        if _should_skip(idx):
+            return match.group(0)
+        ellipsis_hits += 1
+        return f"... {match.group(1)}"
+
+    text = re.sub(r"\u2026([A-Za-z])", _repl_unicode, text)
+    text = re.sub(r"\.\.\.([A-Za-z])", _repl_dots, text)
+    # collapse any accidental double spaces after ellipsis (for the cases we touched)
+    text = re.sub(r"\u2026\s{2,}(?=[A-Za-z])", unicode_ell + " ", text)
+    text = re.sub(r"\.\.\.\s{2,}(?=[A-Za-z])", "... ", text)
+    return text, {"ellipsis_spacing_fixes": ellipsis_hits}
 
 def _is_toc_entry(line: str) -> bool:
     stripped = normalize_line_for_filters(line)
@@ -879,6 +1130,8 @@ def _fix_ocr_spacing(text: str) -> tuple[str, dict]:
                 combined_clean = "".join(cores_clean)
                 combined = combined_core + trail
                 allow_merge = len(seq) >= 2 and long_count <= 1 and re.search(r"[AEIOU]", combined_clean)
+                if any(("," in p) or ("." in p) or (";" in p) for p in puncts):
+                    allow_merge = False
                 # não junta se houver pontuação forte no meio e próximo token inicia com maiúscula (evita KUN? Is -> KUNIs)
                 next_token = tokens[i] if i < len(tokens) else ""
                 if any(p in combined for p in ("?", "!")) and next_token[:1].isupper():
@@ -984,6 +1237,9 @@ def _fix_mixed_caps(text: str) -> tuple[str, dict]:
             upp = sum(1 for c in letters if c.isupper())
             low = sum(1 for c in letters if c.islower())
             if any(ch in tok for ch in ("-", "–", "—", "'", "’")):
+                new_tokens.append(tok)
+                continue
+            if "…" in tok or "..." in tok:
                 new_tokens.append(tok)
                 continue
             if upp >= 2 and low >= 1 and upp > low and not tok.isupper():
@@ -1106,16 +1362,24 @@ def preprocess_text(
     footers_removed = 0
     footers_samples: list[str] = []
     footers_pattern_counts: Counter[str] = Counter()
+    footer_matches_counter: Counter[str] = Counter()
     for pattern in FOOTER_PATTERNS:
         compiled = re.compile(pattern, flags=re.IGNORECASE)
         matches = compiled.findall(text)
         if matches:
             footers_removed += len(matches)
+            footers_pattern_counts[pattern] += len(matches)
+            for m in matches:
+                sample = m if isinstance(m, str) else "".join(m)
+                norm_s = normalize_line_for_filters(sample)
+                if norm_s:
+                    footer_matches_counter[norm_s] += 1
+            # keep a few representative samples for quick report
             for m in matches[:10]:
                 sample = m if isinstance(m, str) else "".join(m)
-                if sample:
-                    footers_samples.append(normalize_line_for_filters(sample))
-            footers_pattern_counts[pattern] += len(matches)
+                norm_s = normalize_line_for_filters(sample)
+                if norm_s:
+                    footers_samples.append(norm_s)
         text = compiled.sub(" ", text)
     stats["footers_removed_count"] = footers_removed
     stats["footers_removed_samples"] = footers_samples[:10]
@@ -1127,12 +1391,16 @@ def preprocess_text(
 
     text, promo_stats, promo_removed = _remove_promo_lines(text, glossary)
     stats.update(promo_stats)
+    stats["promo_lines_removed_total"] = stats.get("promo_lines_removed_count", stats.get("promo_lines_removed_total", 0))
     removed_counter.update(promo_removed)
     removed_records.extend((normalize_line_for_filters(item), "promo", 1) for item in promo_removed if item)
-    if footers_removed:
-        for sample in footers_samples or ["footer_pattern"]:
-            removed_records.append((sample, "footer", footers_removed))
 
+    # Registra remoções de footer de forma consistente (por texto removido).
+    if 'footer_matches_counter' in locals() and footer_matches_counter:
+        removed_counter.update(footer_matches_counter)
+        for txt_norm, cnt in footer_matches_counter.items():
+            removed_records.append((txt_norm, "footer", int(cnt)))
+    
     text, toc_stats = _remove_toc_blocks(text)
     stats.update(toc_stats)
     removed_counter.update(toc_stats.get("toc_removed_lines", []))
@@ -1140,6 +1408,9 @@ def preprocess_text(
 
     text, hyphen_stats = _fix_hyphen_linebreaks(text)
     stats.update(hyphen_stats)
+
+    text, ell_stats = _fix_ellipsis_spacing(text)
+    stats.update(ell_stats)
 
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r" +([,.;:!?])", r"\1", text)
@@ -1167,14 +1438,27 @@ def preprocess_text(
     removed_counter.update(dedupe_removed)
     removed_records.extend((normalize_line_for_filters(item), "dedupe", 1) for item in dedupe_removed if item)
 
+    text, gap_merge_stats = _merge_hard_wraps_across_gaps(text)
+    stats.update(gap_merge_stats)
+
     text, reflow_stats = _reflow_paragraphs(text)
     stats.update(reflow_stats)
+
+    text, subhead_stats = _ensure_subheading_isolated(text)
+    stats.update(subhead_stats)
+
+    text, dn_split_stats = _split_dialogue_narration_boundaries(text)
+    stats.update(dn_split_stats)
+
+    text, wrap_stats = _wrap_very_long_lines(text, max_len=800)
+    stats.update(wrap_stats)
 
     text, upper_stats = _normalize_uppercase_sentences(text)
     stats.update(upper_stats)
 
     text, inline_stats = _strip_inline_watermarks(text)
     stats.update(inline_stats)
+    text = _remove_blank_between_dialogue(text)
 
     # Restaura heading de pr¢logo se ele existia no raw mas nÆo sobrou ap¢s a limpeza.
     if (
@@ -1199,30 +1483,22 @@ def preprocess_text(
     )
     stats["watermarks_remaining"] = watermarks_remaining
     stats["soft_hyphen_remaining"] = text.count("\u00ad")
-    def _spaced_caps_suspects(txt: str) -> list[str]:
-        suspects: list[str] = []
-        for ln in txt.splitlines():
-            tokens = ln.split()
-            for j in range(len(tokens) - 1):
-                a, b = tokens[j], tokens[j + 1]
-                if len(a) == 1 and a.isupper() and b.isupper():
-                    if a == "I" and len(b) > 3:
-                        continue
-                    if len(b) > 12:
-                        continue
-                    suspects.append(ln)
-                    break
-        return suspects
-
     spaced_suspects = _spaced_caps_suspects(text)
     stats["spaced_caps_remaining"] = len(spaced_suspects)
     stats["spaced_caps_remaining_samples"] = spaced_suspects[:10]
+    text = re.sub(r"\n{3,}", "\n\n", text)
     # primeira linha plausÌvel
     first_non_empty = next((ln for ln in text.splitlines() if ln.strip()), "")
     stats["first_line"] = first_non_empty
 
-    stats["removed_lines_total"] = sum(removed_counter.values())
-    stats["removed_lines_top"] = removed_counter.most_common(10)
+    counts_by_text: Counter[str] = Counter()
+    for text_norm, _, count in removed_records:
+        if text_norm:
+            counts_by_text[text_norm] += count
+    stats["removed_lines_occurrences_total"] = sum(counts_by_text.values())
+    stats["removed_lines_unique_total"] = len(counts_by_text)
+    stats["removed_lines_total"] = stats["removed_lines_occurrences_total"]
+    stats["removed_lines_top"] = counts_by_text.most_common(10)
     # agregador leve de auditoria (top N) para removidos
     agg: dict[str, Counter[str]] = {}
     for text_norm, reason, count in removed_records:

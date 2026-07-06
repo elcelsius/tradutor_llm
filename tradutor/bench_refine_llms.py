@@ -1,5 +1,9 @@
 """
-Benchmark simples para comparar modelos Ollama no refine usando o prompt do pipeline.
+Benchmark simples para comparar modelos Ollama no refine.
+
+Por padrao usa o pipeline real de refine: split de secoes/chunks, cleanup,
+guardrails, cache e pos-processo. Use --single-prompt apenas para o modo
+legado de uma chamada direta ao prompt.
 """
 
 from __future__ import annotations
@@ -10,13 +14,20 @@ import logging
 import re
 import subprocess
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import requests
 
 from tradutor.config import AppConfig, load_config
+from tradutor.glossary_utils import (
+    build_glossary_state,
+    format_glossary_for_prompt,
+    resolve_manual_glossary_path,
+)
 from tradutor.llm_backend import LLMBackend
-from tradutor.refine import _call_with_retry, build_refine_prompt
+from tradutor.quality_checks import format_quality_cell, run_translation_quality_checks
+from tradutor.refine import _call_with_retry, build_refine_prompt, refine_markdown_file
 from tradutor.utils import setup_logging
 
 
@@ -30,9 +41,9 @@ def _normalize_base_url(endpoint: str) -> str:
     return endpoint.rstrip("/")
 
 
-def call_ollama(model: str, prompt: str, endpoint: str, cfg: AppConfig, logger: logging.Logger) -> tuple[str, float]:
+def build_backend(model: str, endpoint: str, cfg: AppConfig, logger: logging.Logger) -> LLMBackend:
     base_url = _normalize_base_url(endpoint)
-    backend = LLMBackend(
+    return LLMBackend(
         backend="ollama",
         model=model,
         temperature=cfg.refine_temperature,
@@ -41,7 +52,15 @@ def call_ollama(model: str, prompt: str, endpoint: str, cfg: AppConfig, logger: 
         request_timeout=cfg.request_timeout,
         repeat_penalty=cfg.refine_repeat_penalty,
         num_predict=cfg.refine_num_predict,
+        num_ctx=cfg.refine_num_ctx,
+        keep_alive=getattr(cfg, "ollama_keep_alive", "30m"),
+        api_mode=getattr(cfg, "ollama_api_mode", "generate"),
+        think=getattr(cfg, "ollama_think", None),
     )
+
+
+def call_ollama_single_prompt(model: str, prompt: str, endpoint: str, cfg: AppConfig, logger: logging.Logger) -> tuple[str, float]:
+    backend = build_backend(model=model, endpoint=endpoint, cfg=cfg, logger=logger)
     start = time.monotonic()
     _raw, refined = _call_with_retry(
         backend=backend,
@@ -52,6 +71,31 @@ def call_ollama(model: str, prompt: str, endpoint: str, cfg: AppConfig, logger: 
     )
     elapsed = time.monotonic() - start
     return refined, elapsed
+
+
+def call_ollama_pipeline(
+    model: str,
+    input_path: Path,
+    endpoint: str,
+    cfg: AppConfig,
+    logger: logging.Logger,
+    glossary_state=None,
+) -> tuple[str, float]:
+    backend = build_backend(model=model, endpoint=endpoint, cfg=cfg, logger=logger)
+    model_slug = slugify_model(model)
+    output_path = Path(cfg.output_dir) / f"{input_path.stem}_{model_slug}_refine_body.md"
+    start = time.monotonic()
+    refine_markdown_file(
+        input_path=input_path,
+        output_path=output_path,
+        backend=backend,
+        cfg=cfg,
+        logger=logger,
+        cleanup_mode=str(getattr(cfg, "cleanup_before_refine", "off")),
+        glossary_state=glossary_state,
+    )
+    elapsed = time.monotonic() - start
+    return output_path.read_text(encoding="utf-8"), elapsed
 
 
 def _list_models_via_cli() -> list[str]:
@@ -139,13 +183,42 @@ def write_model_output(out_dir: Path, slug: str, model: str, refined: str, elaps
     return out_path.name
 
 
+def write_error_output(out_dir: Path, slug: str, model: str, elapsed: float, input_path: Path, error: str) -> str:
+    model_slug = slugify_model(model)
+    out_path = out_dir / f"{slug}_{model_slug}_refine_erro.md"
+    header = [
+        f"# Benchmark de refine - {model}",
+        f"- Modelo: {model}",
+        f"- Arquivo de origem: {input_path}",
+        f"- Tempo ate falha: {elapsed:.2f} s",
+        "- Status: falhou",
+        "",
+        "## Erro",
+        "",
+        error,
+        "",
+    ]
+    out_path.write_text("\n".join(header), encoding="utf-8")
+    return out_path.name
+
+
+def write_quality_report(out_dir: Path, slug: str, model: str, report: dict) -> str:
+    model_slug = slugify_model(model)
+    out_path = out_dir / f"{slug}_{model_slug}_refine_qa.json"
+    out_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    return out_path.name
+
+
 def write_summary(
     out_dir: Path,
     slug: str,
     input_path: Path,
     used_chars: int,
     endpoint: str,
-    rows: list[tuple[str, str, float]],
+    cfg: AppConfig,
+    rows: list[dict[str, str | float]],
+    glossary_path: Path | None = None,
+    glossary_terms_count: int = 0,
 ) -> None:
     lines = [
         f"# Resumo de benchmark de refine - {slug}",
@@ -153,12 +226,23 @@ def write_summary(
         f"- Arquivo de origem: {input_path}",
         f"- Caracteres usados: {used_chars}",
         f"- Endpoint: {endpoint}",
+        f"- Temperatura: {cfg.refine_temperature}",
+        f"- num_ctx: {cfg.refine_num_ctx}",
+        f"- num_predict: {cfg.refine_num_predict}",
+        f"- repeat_penalty: {cfg.refine_repeat_penalty}",
+        f"- ollama_api_mode: {cfg.ollama_api_mode}",
+        f"- ollama_think: {cfg.ollama_think}",
+        f"- Glossário: {glossary_path if glossary_path else 'desativado'}",
+        f"- Termos de glossário carregados: {glossary_terms_count}",
         "",
-        "| Modelo | Arquivo de saida | Tempo (s) |",
-        "|--------|------------------|-----------|",
+        "| Modelo | Arquivo de saida | QA | Relatório QA | Tempo (s) | Status | Erro |",
+        "|--------|------------------|----|--------------|-----------|--------|------|",
     ]
-    for model, fname, elapsed in rows:
-        lines.append(f"| {model} | {fname} | {elapsed:.2f} |")
+    for row in rows:
+        elapsed = float(row["elapsed"])
+        lines.append(
+            f"| {row['model']} | {row['file']} | {row.get('quality', '')} | {row.get('qa_file', '')} | {elapsed:.2f} | {row['status']} | {row.get('error', '')} |"
+        )
     (out_dir / f"resumo_refine_{slug}.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -168,6 +252,43 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--models", nargs="*", help="Lista de modelos Ollama a usar")
     parser.add_argument("--max-chars", type=int, default=1500, help="Maximo de caracteres do texto de entrada")
     parser.add_argument("--out-dir", default="benchmark/refine", help="Diretorio de saida para resultados")
+    parser.add_argument(
+        "--single-prompt",
+        action="store_true",
+        help="Modo legado: chama diretamente o prompt de refine, sem pipeline completo.",
+    )
+    parser.add_argument("--temperature", type=float, help="Override de refine_temperature do config.yaml")
+    parser.add_argument("--num-ctx", type=int, help="Override de refine_num_ctx do config.yaml")
+    parser.add_argument("--num-predict", type=int, help="Override de refine_num_predict do config.yaml")
+    parser.add_argument("--repeat-penalty", type=float, help="Override de refine_repeat_penalty do config.yaml")
+    parser.add_argument("--timeout", type=int, help="Override de request_timeout do config.yaml")
+    parser.add_argument(
+        "--use-glossary",
+        action="store_true",
+        help="Ativa glossário manual/dinâmico no benchmark de refine e no relatório de QA.",
+    )
+    parser.add_argument(
+        "--manual-glossary",
+        help="Arquivo JSON de glossário manual (padrão: glossario/glossario_manual.json ou glossario/glossario_geral.json).",
+    )
+    parser.add_argument(
+        "--dynamic-glossary",
+        help="Arquivo JSON de glossário dinâmico (padrão: _pipeline_state/glossario_dinamico.json).",
+    )
+    parser.add_argument(
+        "--auto-glossary-dir",
+        help="Diretório opcional com JSONs adicionais de glossário manual.",
+    )
+    parser.add_argument(
+        "--ollama-api-mode",
+        choices=["generate", "chat"],
+        help="Override de ollama_api_mode do config.yaml.",
+    )
+    parser.add_argument(
+        "--ollama-think",
+        choices=["true", "false", "auto"],
+        help="Override de ollama_think do config.yaml. Use false para modelos que gastam tokens em thinking.",
+    )
     parser.add_argument(
         "--endpoint",
         default="http://localhost:11434/api/generate",
@@ -180,6 +301,25 @@ def main() -> None:
     logger = setup_logging(logging.INFO)
     cfg = load_config()
     args = parse_args()
+    think_override = None
+    if args.ollama_think == "true":
+        think_override = True
+    elif args.ollama_think == "false":
+        think_override = False
+    elif args.ollama_think == "auto":
+        think_override = None
+    else:
+        think_override = cfg.ollama_think
+    cfg = replace(
+        cfg,
+        refine_temperature=args.temperature if args.temperature is not None else cfg.refine_temperature,
+        refine_num_ctx=args.num_ctx if args.num_ctx is not None else cfg.refine_num_ctx,
+        refine_num_predict=args.num_predict if args.num_predict is not None else cfg.refine_num_predict,
+        refine_repeat_penalty=args.repeat_penalty if args.repeat_penalty is not None else cfg.refine_repeat_penalty,
+        request_timeout=args.timeout if args.timeout is not None else cfg.request_timeout,
+        ollama_api_mode=args.ollama_api_mode if args.ollama_api_mode is not None else cfg.ollama_api_mode,
+        ollama_think=think_override,
+    )
     input_path = Path(args.input)
     if not input_path.exists():
         raise SystemExit(f"Arquivo de entrada não encontrado: {input_path}")
@@ -204,25 +344,110 @@ def main() -> None:
             )
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    state_dir = out_dir / "_pipeline_state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    cfg = replace(cfg, output_dir=state_dir)
+    glossary_path: Path | None = None
+    manual_dir: Path | None = None
+    dynamic_path_override: Path | None = None
+    glossary_terms_count = 0
+    if args.use_glossary:
+        glossary_path = resolve_manual_glossary_path(args.manual_glossary)
+        manual_dir = Path(args.auto_glossary_dir) if args.auto_glossary_dir else None
+        dynamic_path_override = Path(args.dynamic_glossary) if args.dynamic_glossary else None
+        preview_state = build_glossary_state(
+            manual_path=glossary_path,
+            dynamic_path=dynamic_path_override,
+            logger=logger,
+            manual_dir=manual_dir,
+        )
+        if preview_state:
+            glossary_terms_count = len(preview_state.manual_terms)
 
     text = read_input(input_path, max_chars=args.max_chars)
-    prompt = build_refine_prompt(text)
+    effective_input_path = input_path
+    if args.max_chars > 0:
+        effective_input_path = state_dir / f"{input_path.stem}_input_{args.max_chars}.md"
+        effective_input_path.write_text(text, encoding="utf-8")
 
     slug = input_path.stem.lower()
-    rows: list[tuple[str, str, float]] = []
+    rows: list[dict[str, str | float]] = []
 
     for model in models:
-        refined, elapsed = call_ollama(
-            model=model,
-            prompt=prompt,
-            endpoint=args.endpoint,
-            cfg=cfg,
-            logger=logger,
-        )
-        fname = write_model_output(out_dir, slug, model, refined, elapsed, input_path)
-        rows.append((model, fname, elapsed))
+        started = time.monotonic()
+        try:
+            model_glossary_state = None
+            if args.use_glossary and glossary_path:
+                model_dynamic_path = dynamic_path_override
+                if model_dynamic_path is None:
+                    model_dynamic_path = state_dir / f"glossario_dinamico_{slugify_model(model)}.json"
+                model_glossary_state = build_glossary_state(
+                    manual_path=glossary_path,
+                    dynamic_path=model_dynamic_path,
+                    logger=logger,
+                    manual_dir=manual_dir,
+                )
+            if args.single_prompt:
+                glossary_block = None
+                if model_glossary_state:
+                    glossary_block = format_glossary_for_prompt(model_glossary_state.combined_index)
+                prompt = build_refine_prompt(
+                    text,
+                    glossary_enabled=bool(glossary_block),
+                    glossary_block=glossary_block,
+                )
+                refined, elapsed = call_ollama_single_prompt(
+                    model=model,
+                    prompt=prompt,
+                    endpoint=args.endpoint,
+                    cfg=cfg,
+                    logger=logger,
+                )
+            else:
+                refined, elapsed = call_ollama_pipeline(
+                    model=model,
+                    input_path=effective_input_path,
+                    endpoint=args.endpoint,
+                    cfg=cfg,
+                    logger=logger,
+                    glossary_state=model_glossary_state,
+                )
+            fname = write_model_output(out_dir, slug, model, refined, elapsed, input_path)
+            quality_report = run_translation_quality_checks(
+                text,
+                refined,
+                model_glossary_state.manual_terms if model_glossary_state else None,
+            )
+            qa_file = write_quality_report(out_dir, slug, model, quality_report)
+            rows.append(
+                {
+                    "model": model,
+                    "file": fname,
+                    "qa_file": qa_file,
+                    "quality": format_quality_cell(quality_report),
+                    "elapsed": elapsed,
+                    "status": "ok",
+                    "error": "",
+                }
+            )
+        except Exception as exc:
+            elapsed = time.monotonic() - started
+            error = str(exc).replace("|", "\\|").replace("\n", " ")
+            logger.error("Benchmark de refine falhou para %s: %s", model, exc)
+            fname = write_error_output(out_dir, slug, model, elapsed, input_path, str(exc))
+            rows.append({"model": model, "file": fname, "qa_file": "", "quality": "", "elapsed": elapsed, "status": "falhou", "error": error})
 
-    write_summary(out_dir, slug, input_path, len(text), args.endpoint, rows)
+    write_summary(
+        out_dir,
+        slug,
+        input_path,
+        len(text),
+        args.endpoint,
+        cfg,
+        rows,
+        glossary_path=glossary_path,
+        glossary_terms_count=glossary_terms_count,
+    )
 
 
 if __name__ == "__main__":

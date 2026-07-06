@@ -1,4 +1,4 @@
-from tradutor.cleanup import dedupe_adjacent_lines, fix_glued_dialogues, cleanup_before_refine
+from tradutor.cleanup import dedupe_adjacent_lines, fix_glued_dialogues, cleanup_before_refine, detect_glued_dialogues
 
 
 def test_dedupe_adjacent_lines_removes_repeats() -> None:
@@ -18,6 +18,17 @@ def test_fix_glued_dialogues_inserts_newline() -> None:
     assert '"Tudo bem?"' in out
     assert "\n" in out.strip()
     assert stats["breaks_inserted"] >= 1
+
+
+def test_fix_glued_dialogues_does_not_split_regular_sentences() -> None:
+    src = (
+        "Heróis e vilões. A gente nem tá na mesma história. "
+        "Eles gostam de fingir que tudo faz parte de uma grande narrativa."
+    )
+    out, stats = fix_glued_dialogues(src)
+    assert out == src
+    assert stats["breaks_inserted"] == 0
+    assert not detect_glued_dialogues(src)
 
 
 def test_cleanup_idempotent() -> None:

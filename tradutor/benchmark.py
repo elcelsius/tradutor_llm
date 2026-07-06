@@ -46,6 +46,9 @@ def run_benchmark(models: List[Dict]) -> None:
             request_timeout=cfg.request_timeout,
             repeat_penalty=model_cfg.get("repeat_penalty", cfg.translate_repeat_penalty),
             num_predict=model_cfg.get("num_predict", cfg.translate_num_predict),
+            num_ctx=getattr(cfg, "translate_num_ctx", None),
+            api_mode=getattr(cfg, "ollama_api_mode", "generate"),
+            think=getattr(cfg, "ollama_think", None),
         )
         logger.info(
             "Benchmark com LLM: name=%s backend=%s model=%s temp=%.2f chunk=%d timeout=%ds num_predict=%d",

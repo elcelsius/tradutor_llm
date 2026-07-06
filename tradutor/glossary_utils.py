@@ -14,6 +14,10 @@ GlossaryPtIndex = Dict[str, GlossaryEntry]
 GLOSSARIO_SUGERIDO_INICIO = "===GLOSSARIO_SUGERIDO_INICIO==="
 GLOSSARIO_SUGERIDO_FIM = "===GLOSSARIO_SUGERIDO_FIM==="
 DEFAULT_GLOSSARY_PROMPT_LIMIT = 100
+DEFAULT_MANUAL_GLOSSARY_CANDIDATES = (
+    Path("glossario/glossario_manual.json"),
+    Path("glossario/glossario_geral.json"),
+)
 
 
 def normalize_key(key: str) -> str:
@@ -24,6 +28,16 @@ def normalize_key(key: str) -> str:
 def normalize_value(value: str) -> str:
     """Normaliza textos (key/pt) para comparação insensível a caixa/espaços."""
     return value.strip().lower()
+
+
+def resolve_manual_glossary_path(path: str | Path | None = None) -> Path:
+    """Resolve o glossário manual padrão, mantendo fallback para o arquivo real do projeto."""
+    if path:
+        return Path(path)
+    for candidate in DEFAULT_MANUAL_GLOSSARY_CANDIDATES:
+        if candidate.exists():
+            return candidate
+    return DEFAULT_MANUAL_GLOSSARY_CANDIDATES[0]
 
 
 def _is_valid_dynamic_term(candidate: str, logger: logging.Logger) -> bool:
@@ -109,6 +123,9 @@ def _load_terms(path: Path, source: str, logger: logging.Logger) -> List[Glossar
             "aliases": aliases,
             "aliases_norm": [normalize_key(a) for a in aliases],
         }
+        for field in ("enforce", "gender", "type", "term_type", "bad_aliases"):
+            if field in entry:
+                normalized[field] = entry[field]
         terms.append(normalized)
     logger.info("Glossário %s carregado: %d termos.", source, len(terms))
     return terms
@@ -223,7 +240,22 @@ def format_manual_pairs_for_translation(manual_terms: list[GlossaryEntry], limit
         pt = str(entry.get("pt", "")).strip()
         if not en or not pt:
             continue
-        lines.append(f'Ingles: "{en}" -> Portugues: "{pt}"')
+        line = f'Ingles: "{en}" -> Portugues: "{pt}"'
+        hints: list[str] = []
+        category = entry.get("category")
+        gender = entry.get("gender")
+        notes = entry.get("notes")
+        if category:
+            hints.append(f"categoria: {category}")
+        if gender:
+            hints.append(f"genero: {gender}")
+        if entry.get("enforce"):
+            hints.append("uso obrigatorio")
+        if notes:
+            hints.append(str(notes))
+        if hints:
+            line += " | " + " | ".join(hints)
+        lines.append(line)
     return "\n".join(lines)
 
 

@@ -21,9 +21,30 @@ Pipeline em Python 3.12 para converter PDFs/Markdown em PT-BR com LLM (Ollama ou
 Todas as fontes são UTF-8 (ver testes e hook de mojibake). Use editor com UTF-8.
 
 ## Guia rápido
+### Configuração recomendada atual
+O `config.yaml` versionado está ajustado para a baseline local mais forte encontrada nos benchmarks:
+
+- Tradução: `mistral-small3.2:24b-instruct-2506-q4_K_M`
+- Desquebrar: `gemma3:27b-it-q4_K_M`
+- Refine: `gemma4:26b-a4b-it-q4_K_M`
+- Ollama API: `chat`, com `ollama_think: false`
+- Cleanup antes do refine: `auto`
+
+Para produzir todos os arquivos úteis para inspeção (extraído, preprocessado, desquebrado, traduzido e refinado), rode com `--debug`:
+
+```bash
+python -m tradutor.main traduz \
+  --input "data/meu_livro.pdf" \
+  --use-glossary \
+  --request-timeout 600 \
+  --cleanup-before-refine auto \
+  --clear-cache all \
+  --debug
+```
+
 ### 1) Traduzir PDF (com desquebrar + refine)
 ```bash
-python -m tradutor.main traduz --input "data/meu_livro.pdf"
+python -m tradutor.main traduz --input "data/meu_livro.pdf" --use-glossary
 ```
 Saídas em `saida/`: `meu_livro_pt.md`, `meu_livro_pt_refinado.md`, relatórios JSON e caches (ver Outputs).
 
@@ -97,9 +118,11 @@ Mesmas opções de tradução/refine relevantes; inclui `--normalize-paragraphs`
 Converte um `.md` em PDF com as configs de fonte/margem do `config.yaml`.
 
 ## Glossário (fonte única em código: `tradutor/glossary_utils.py`)
-- Manual: JSON com `terms: [{key, pt, aliases?, category?, notes?, locked?}]`. Use `--manual-glossary`. Glossário dinâmico salvo em `saida/glossario_dinamico.json` quando habilitado no refine.
+- Manual: JSON com `terms: [{key, pt, aliases?, category?, notes?, locked?, enforce?, gender?, bad_aliases?}]`. Use `--manual-glossary`. Se não for informado, `--use-glossary` procura `glossario/glossario_manual.json` e depois `glossario/glossario_geral.json`.
+- O glossário real local (`glossario/glossario_geral.json`) não é versionado. Mantenha apenas exemplos no Git.
+- Glossário dinâmico salvo em `saida/glossario_dinamico.json` quando habilitado no refine.
 - Injeção por chunk: só termos que aparecem no chunk entram no prompt (`select_terms_for_chunk`, limite `translate_glossary_match_limit`; fallback de até `translate_glossary_fallback_limit` termos quando nada casa).
-- Enforcement: termos com `enforce=true` são forçados no texto traduzido (após o LLM) apenas para os termos selecionados naquele chunk (`translate.enforce_canonical_terms`).
+- Enforcement: termos com `enforce=true` são forçados no texto traduzido (após o LLM) apenas para os termos selecionados naquele chunk (`translate.enforce_canonical_terms`). `bad_aliases` também é usado para corrigir aliases sabidamente errados sem exigir que todos os aliases legítimos sejam forçados.
 
 ## Cleanup antes do refine
 - `cleanup_before_refine` (off/auto/on) aplica dedupe e fix de diálogos colados (`tradutor/cleanup.py::cleanup_before_refine`). Quando aplicado, gera `<slug>_pre_refine_cleanup.md` para inspeção.
@@ -110,6 +133,7 @@ Converte um `.md` em PDF com as configs de fonte/margem do `config.yaml`.
 - Estados rápidos: `saida/state_traducao.json`, `saida/state_refine.json`.
 
 ## Outputs, caches e debug (ver também docs/OUTPUTS.md)
+- Com `--debug`, também são gravados `saida/<slug>_raw_extracted.md`, `saida/<slug>_preprocessed.md` e `saida/<slug>_raw_desquebrado.md`, úteis para avaliar cada etapa do pipeline.
 - Tradução: `saida/<slug>_pt.md`, `<slug>_translate_report.json`, `<slug>_translate_metrics.json`, progress (`_pt_progress.json`), debug opcional (`debug_traducao/`, `*_pt_chunks_debug.jsonl`).
 - Refine: `saida/<slug>_pt_refinado.md`, `<slug>_refine_report.json`, `<slug>_refine_metrics.json`, progress (`_pt_refinado_progress.json`), debug opcional (`debug_refine*/`).
 - Desquebrar: métricas em `<slug>_desquebrar_metrics.json` se rodar com LLM; debug raw/preprocess quando `--debug`.
@@ -120,6 +144,12 @@ Converte um `.md` em PDF com as configs de fonte/margem do `config.yaml`.
 - Testes locais: `pytest -q`.
 - Hooks locais: `pre-commit run --all-files` (mojibake, EOF, whitespace; usa `scripts/check_mojibake.py` que importa tokens de `tradutor/mojibake.py`).
 - CI: GitHub Actions (`.github/workflows/ci.yml`) roda `pytest -q` e `pre-commit run --all-files` em Ubuntu/Windows com Python 3.12, cache de pip.
+- Benchmarks locais: `python -m tradutor.bench_llms`, `python -m tradutor.bench_refine_llms` e `python -m tradutor.bench_e2e_llms`. Os resultados gerados em `benchmark/traducao`, `benchmark/refine`, `benchmark/e2e` e `benchmark/literario` são locais e ignorados pelo Git.
+
+## Versionamento de dados
+- Não versionar PDFs reais, saídas de tradução/refine, caches, debug runs ou glossários reais.
+- `data/`, `saida/`, `glossario/*.json` (exceto exemplos) e resultados gerados de benchmark ficam no `.gitignore`.
+- Para reproduzir avaliação em outro ambiente, versionar apenas scripts, exemplos mínimos e documentação; os volumes e glossários reais devem ser repostos localmente.
 
 ## Troubleshooting
 - **UTF-8/mojibake:** fontes/tokens inválidos são bloqueados por testes/hook. Use editor em UTF-8.
@@ -131,5 +161,5 @@ Converte um `.md` em PDF com as configs de fonte/margem do `config.yaml`.
 - **PDF não gerado:** confira `--pdf-enabled` e fonte configurada em `config.yaml`.
 
 ## Roadmap curto (doc)
-- Confirmar/atualizar exemplos de modelos recomendados (dependem do host).
-- Adicionar exemplos de glossários reais (sem dados sensíveis) em `glossario/`.
+- Evoluir a avaliação literária para comparar voz de personagem, naturalidade, gírias e preservação de diálogo entre combinações de modelos.
+- Adicionar exemplos sintéticos de glossário/benchmark sem dados reais.

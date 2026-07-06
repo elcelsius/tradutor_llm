@@ -59,6 +59,30 @@ class _NarrativeRetryBackend:
         return type("Resp", (), {"text": text})
 
 
+class _TypoMarkerBackend:
+    backend = "stub"
+    model = "stub"
+    num_predict = 10
+    temperature = 0.1
+    repeat_penalty = 1.0
+
+    def generate(self, prompt: str):
+        text = "### TEXTO_TRADUZIDO_INICIO\nTexto traduzido.\n### TEXTO_TRADUZDO_FIM"
+        return type("Resp", (), {"text": text})
+
+
+class _QuotedDialogueBackend:
+    backend = "stub"
+    model = "stub"
+    num_predict = 10
+    temperature = 0.1
+    repeat_penalty = 1.0
+
+    def generate(self, prompt: str):
+        text = '### TEXTO_TRADUZIDO_INICIO\n"Oi."\n\nNarracao.\n\n"Sim."\n### TEXTO_TRADUZIDO_FIM'
+        return type("Resp", (), {"text": text})
+
+
 def test_translate_retries_on_truncated_output(tmp_path: Path) -> None:
     cfg = AppConfig(output_dir=tmp_path, max_retries=2, split_by_sections=False)
     backend = _RetryBackend()
@@ -132,3 +156,51 @@ def test_translate_parses_output_without_end_marker(tmp_path: Path) -> None:
 
     assert "Titulo traduzido" in result
     assert "TEXTO_TRADUZIDO" not in result
+
+
+def test_translate_strips_typo_translation_marker(tmp_path: Path) -> None:
+    cfg = AppConfig(output_dir=tmp_path, max_retries=1, split_by_sections=False)
+    logger = logging.getLogger("typo-marker")
+
+    result = translate_document(
+        pdf_text="Short input for marker cleanup.",
+        backend=_TypoMarkerBackend(),
+        cfg=cfg,
+        logger=logger,
+        source_slug="sample",
+        progress_path=None,
+        resume_manifest=None,
+        glossary_text=None,
+        debug_translation=False,
+        parallel_workers=1,
+        debug_chunks=False,
+        already_preprocessed=True,
+    )
+
+    assert "Texto traduzido" in result
+    assert "TEXTO_TRADUZ" not in result
+
+
+def test_translate_preserves_quoted_dialogue_lines(tmp_path: Path) -> None:
+    cfg = AppConfig(output_dir=tmp_path, max_retries=1, split_by_sections=False)
+    logger = logging.getLogger("quoted-dialogue")
+
+    result = translate_document(
+        pdf_text="A short paragraph.\n\nAnother short paragraph.",
+        backend=_QuotedDialogueBackend(),
+        cfg=cfg,
+        logger=logger,
+        source_slug="sample",
+        progress_path=None,
+        resume_manifest=None,
+        glossary_text=None,
+        debug_translation=False,
+        parallel_workers=1,
+        debug_chunks=False,
+        already_preprocessed=True,
+    )
+
+    assert '"Oi."' in result
+    assert '"Sim."' in result
+    assert "— Oi." not in result
+    assert "— Sim." not in result

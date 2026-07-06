@@ -48,7 +48,10 @@ STUB_HEADER_RE = re.compile(
     r"^#?\s*(prologue|chapter\s+\d+(?::[^\n]+)?|epilogue|afterword)\s*$",
     re.IGNORECASE,
 )
-TRANSLATE_PIPELINE_VERSION = "1"
+TRANSLATE_PIPELINE_VERSION = "4"
+TRANSLATE_START_MARKER_RE = r"###\s*TEXTO_TRADUZ(?:IDO|DO)?_INICIO"
+TRANSLATE_END_MARKER_RE = r"###\s*TEXTO_TRADUZ(?:IDO|DO)?_FIM"
+TRANSLATE_ANY_MARKER_RE = r"###\s*TEXTO_TRADUZ[A-Z_]*"
 
 
 def translation_prompt_fingerprint(*, allow_adaptation: bool) -> str:
@@ -63,7 +66,7 @@ def translation_prompt_fingerprint(*, allow_adaptation: bool) -> str:
 
 def _extract_last_sentence(text: str) -> str:
     """Extrai a ultima frase simples (delimitada por .!?) e limpa marcadores."""
-    cleaned = re.sub(r"###\s*TEXTO_TRADUZIDO_[A-Z_]*", "", text)
+    cleaned = re.sub(TRANSLATE_ANY_MARKER_RE, "", text, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     parts = re.split(r"(?<=[.!?])\s+", cleaned)
     for part in reversed(parts):
@@ -155,7 +158,7 @@ Nada antes ou depois dos marcadores.
 def _parse_translation_output(raw: str) -> str:
     """Extrai bloco entre TEXTO_TRADUZIDO_INICIO/FIM; se ausentes, retorna o texto util."""
     match = re.search(
-        r"###\s*TEXTO_TRADUZIDO_INICIO\s*(.*?)(?:###\s*TEXTO_TRADUZIDO_FIM\s*|$)",
+        rf"{TRANSLATE_START_MARKER_RE}\s*(.*?)(?:{TRANSLATE_END_MARKER_RE}\s*|$)",
         raw,
         flags=re.IGNORECASE | re.DOTALL,
     )
@@ -164,7 +167,7 @@ def _parse_translation_output(raw: str) -> str:
         if candidate:
             return candidate
 
-    end_only = re.search(r"^(.*?)###\s*TEXTO_TRADUZIDO_FIM", raw, flags=re.IGNORECASE | re.DOTALL)
+    end_only = re.search(rf"^(.*?){TRANSLATE_END_MARKER_RE}", raw, flags=re.IGNORECASE | re.DOTALL)
     if end_only:
         candidate = end_only.group(1).strip()
         if candidate:
@@ -180,12 +183,12 @@ def _strip_translate_markers(text: str) -> str:
     """Remove qualquer linha/bloco com marcadores TEXTO_TRADUZIDO_ remanescentes."""
     lines = []
     for ln in text.splitlines():
-        if "TEXTO_TRADUZIDO_" in ln:
+        if re.search(TRANSLATE_ANY_MARKER_RE, ln, flags=re.IGNORECASE):
             continue
         lines.append(ln)
     cleaned = "\n".join(lines)
     cleaned = re.sub(
-        r"### TEXTO_TRADUZIDO_INICIO.*?(### TEXTO_TRADUZIDO_FIM)?",
+        rf"{TRANSLATE_START_MARKER_RE}.*?({TRANSLATE_END_MARKER_RE})?",
         "",
         cleaned,
         flags=re.DOTALL | re.IGNORECASE,
@@ -302,15 +305,22 @@ def enforce_canonical_terms(text: str, terms: list[dict]) -> tuple[str, dict]:
         return text, {}
     replacements: dict[str, int] = {}
     for term in terms:
-        if not term or not term.get("enforce"):
+        if not term:
             continue
         pt = str(term.get("pt", "")).strip()
         if not pt:
             continue
-        variants = [str(term.get("key", "")).strip()]
-        aliases = term.get("aliases") or []
-        if isinstance(aliases, list):
-            variants.extend(str(a).strip() for a in aliases if str(a).strip())
+        variants: list[str] = []
+        if term.get("enforce"):
+            variants.append(str(term.get("key", "")).strip())
+            aliases = term.get("aliases") or []
+            if isinstance(aliases, list):
+                variants.extend(str(a).strip() for a in aliases if str(a).strip())
+        bad_aliases = term.get("bad_aliases") or []
+        if isinstance(bad_aliases, str):
+            bad_aliases = [bad_aliases]
+        if isinstance(bad_aliases, list):
+            variants.extend(str(a).strip() for a in bad_aliases if str(a).strip())
         for variant in variants:
             if not variant:
                 continue
@@ -517,6 +527,11 @@ def translate_document(
     chunk_metrics: list[dict] = []
 
     glossary_hash = chunk_hash(glossary_text) if glossary_text else None
+    manual_glossary_hash = (
+        chunk_hash(json.dumps(glossary_manual_terms, ensure_ascii=False, sort_keys=True))
+        if glossary_manual_terms
+        else None
+    )
     chunk_hashes = [chunk_hash(c) for c in chunks]
     prompt_hash = translation_prompt_fingerprint(allow_adaptation=allow_adapt_flag)
     current_cache_signature = {
@@ -527,6 +542,7 @@ def translate_document(
         "repeat_penalty": getattr(backend, "repeat_penalty", None),
         "translate_chunk_chars": cfg.translate_chunk_chars,
         "glossary_hash": glossary_hash,
+        "manual_glossary_hash": manual_glossary_hash,
         "doc_hash": doc_hash,
         "source": source_slug or "",
         "allow_adaptation": allow_adapt_flag,
@@ -1027,6 +1043,7 @@ def translate_document(
                             "repeat_penalty": getattr(backend, "repeat_penalty", None),
                             "translate_chunk_chars": cfg.translate_chunk_chars,
                             "glossary_hash": glossary_hash,
+                            "manual_glossary_hash": manual_glossary_hash,
                             "allow_adaptation": allow_adapt_flag,
                             "split_by_sections": split_flag,
                             "dialogue_guardrails_mode": dialogue_guardrails_mode,
@@ -1064,7 +1081,7 @@ def translate_document(
 
         final_output = parsed_clean if parsed_clean is not None else chunk_outputs.get(idx, "")
         final_output, normalizer_stats = apply_structural_normalizers(final_output)
-        final_output = apply_custom_normalizers(final_output)
+        final_output = apply_custom_normalizers(final_output, convert_quote_dialogues=False)
         normalization_totals["dialogue_splits"] += normalizer_stats.get("dialogue_splits", 0)
         normalization_totals["triple_quotes_removed"] += normalizer_stats.get("triple_quotes_removed", 0)
         chunk_outputs[idx] = final_output
@@ -1408,6 +1425,7 @@ def translate_document(
                 "repeat_penalty": getattr(backend, "repeat_penalty", None),
                 "translate_chunk_chars": cfg.translate_chunk_chars,
                 "glossary_hash": glossary_hash,
+                "manual_glossary_hash": manual_glossary_hash,
             },
             "chunks": translate_manifest_chunks,
             "totals": {

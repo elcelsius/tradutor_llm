@@ -253,7 +253,7 @@ def sanitize_refine_output(text: str) -> str:
     Sanitizacao leve para saida do refinador:
     - remove tags <think> e </think>
     - remove cabecalhos "Texto refinado:" / "Refined text:"
-    - remove marcadores de traducao remanescentes (### TEXTO_TRADUZIDO_*)
+    - remove marcadores de traducao remanescentes (### TEXTO_TRADUZIDO_* e typos próximos)
     - remove blocos de glossario legado (===GLOSSARIO_SUGERIDO_INICIO=== ... FIM=== ou orfaos)
     - remove espacos extras nas extremidades
     Nao aplica regras agressivas nem corta paragrafos.
@@ -268,13 +268,26 @@ def sanitize_refine_output(text: str) -> str:
     cleaned = "\n".join(filtered_lines)
 
     cleaned = re.sub(
-        r"### TEXTO_TRADUZIDO_INICIO.*?### TEXTO_TRADUZIDO_FIM",
+        r"^\s*###\s*TEXTO_REFINADO_(?:INICIO|FIM)\s*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
+    cleaned = re.sub(
+        r"###\s*TEXTO_REFINADO_(?:INICIO|FIM)",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+
+    cleaned = re.sub(
+        r"###\s*TEXTO_TRADUZ[A-Z_]*INICIO.*?###\s*TEXTO_TRADUZ[A-Z_]*FIM",
         "",
         cleaned,
         flags=re.IGNORECASE | re.DOTALL,
     )
     cleaned = re.sub(
-        r"### TEXTO_TRADUZIDO_[A-Z_]*",
+        r"###\s*TEXTO_TRADUZ[A-Z_]*",
         "",
         cleaned,
         flags=re.IGNORECASE,

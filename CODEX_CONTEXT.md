@@ -128,7 +128,13 @@
 - Cleanup pré-refine: dedupe não remove falas/onomatopeias curtas (Crack!, "— ?", "— …") a menos que haja glitch claro (>=4 repetições consecutivas).
 - Tradução/QA: retries para aspas desbalanceadas ou repetições extras de linhas curtas; pós-processo remove aspas curvas sobrando em falas iniciadas por travessão.
 - Glossário: suporte a `enforce` por termo; "Lord of the Flies" -> "Senhor das Moscas" aplicado automaticamente quando o termo aparece no chunk.
+- Baseline local atual: tradução com `mistral-small3.2:24b-instruct-2506-q4_K_M`, desquebrar com `gemma3:27b-it-q4_K_M`, refine com `gemma4:26b-a4b-it-q4_K_M`, Ollama em modo `chat` e `ollama_think: false`.
+- Glossário: loader preserva `enforce`, `gender`, `type`, `term_type` e `bad_aliases`; `--use-glossary` resolve `glossario/glossario_manual.json` ou `glossario/glossario_geral.json`.
+- QA objetiva: `tradutor/quality_checks.py` checa termos canônicos, aliases ruins, inglês residual, marcadores internos, aspas e sinais simples de gênero.
+- Benchmarks: `bench_llms`, `bench_refine_llms` e `bench_e2e_llms` usam o pipeline real, geram `*_qa.json` e aceitam glossário.
+- Normalizadores: interjeições comuns (`Phew`, `Geez`, `Huh`, `Ugh`) são normalizadas para PT-BR; atribuições quebradas em travessão (`— perguntou...`) são reunidas ao diálogo anterior.
 
 ## Observações de incerteza
 - Não encontrei configuração formal de lint/format (`pyproject.toml`, `setup.cfg`, `tox.ini`).
 - Não encontrei políticas de branch/commit. Caso existam, documente em `AGENTS.md`.
+- Revisão literária inicial sugeriu que `mistral-small3.1` pode preservar diálogo melhor em alguns trechos, apesar da baseline objetiva/e2e favorecer `mistral-small3.2`. Não trocar o default sem nova matriz literária.

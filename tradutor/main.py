@@ -15,7 +15,7 @@ from typing import Iterable
 
 from .config import AppConfig, ensure_paths, load_config
 from .debug_run import DebugRunWriter
-from .glossary_utils import build_glossary_state, format_manual_pairs_for_translation
+from .glossary_utils import build_glossary_state, format_manual_pairs_for_translation, resolve_manual_glossary_path
 from .llm_backend import LLMBackend
 from .pdf_export import markdown_to_pdf
 from .pdf_reader import extract_pdf_text
@@ -96,7 +96,7 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
     t.add_argument(
         "--manual-glossary",
         type=str,
-        help="Arquivo JSON de glossario manual para a traducao (padrao: glossario/glossario_manual.json).",
+        help="Arquivo JSON de glossario manual para a traducao (padrao: glossario/glossario_manual.json ou glossario/glossario_geral.json).",
     )
     t.add_argument(
         "--parallel",
@@ -235,7 +235,7 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
     tm.add_argument(
         "--manual-glossary",
         type=str,
-        help="Arquivo JSON de glossario manual para a traducao (padrao: glossario/glossario_manual.json).",
+        help="Arquivo JSON de glossario manual para a traducao (padrao: glossario/glossario_manual.json ou glossario/glossario_geral.json).",
     )
     tm.add_argument(
         "--parallel",
@@ -443,6 +443,8 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
         num_predict=args.num_predict,
         num_ctx=cfg.translate_num_ctx,
         keep_alive=getattr(cfg, "ollama_keep_alive", "30m"),
+        api_mode=getattr(cfg, "ollama_api_mode", "generate"),
+        think=getattr(cfg, "ollama_think", None),
     )
     logger.info(
         "LLM de tradução: backend=%s model=%s temp=%.2f chunk=%d timeout=%ds num_predict=%d",
@@ -460,11 +462,15 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
     if fail_on_chunk_error is None:
         fail_on_chunk_error = getattr(cfg, "fail_on_chunk_error", False)
     if getattr(args, "use_glossary", False):
-        manual_path = Path(args.manual_glossary) if args.manual_glossary else Path("glossario/glossario_manual.json")
+        manual_path = resolve_manual_glossary_path(args.manual_glossary)
         glossary_state = build_glossary_state(manual_path=manual_path, dynamic_path=None, logger=logger, manual_dir=None)
         if glossary_state:
             glossary_text = format_manual_pairs_for_translation(glossary_state.manual_terms, limit=30)
-            logger.info("Glossário manual carregado para tradução: %d termos (usando até 30 no prompt).", len(glossary_state.manual_terms))
+            logger.info(
+                "Glossário manual carregado para tradução: %d termos de %s (usando até 30 no prompt).",
+                len(glossary_state.manual_terms),
+                manual_path,
+            )
         else:
             logger.warning("Uso de glossário solicitado, mas nenhum glossário manual carregado.")
 
@@ -614,6 +620,8 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                         repeat_penalty=args.desquebrar_repeat_penalty,
                         num_ctx=getattr(cfg, "desquebrar_num_ctx", None),
                         keep_alive=getattr(cfg, "ollama_keep_alive", "30m"),
+                        api_mode=getattr(cfg, "ollama_api_mode", "generate"),
+                        think=getattr(cfg, "ollama_think", None),
                     )
                     start_stage = time.perf_counter()
                     working_text, desquebrar_stats = desquebrar_text(
@@ -738,6 +746,8 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                     num_predict=cfg.refine_num_predict,
                     num_ctx=getattr(cfg, "refine_num_ctx", None),
                     keep_alive=getattr(cfg, "ollama_keep_alive", "30m"),
+                    api_mode=getattr(cfg, "ollama_api_mode", "generate"),
+                    think=getattr(cfg, "ollama_think", None),
                 )
                 logger.info(
                     "LLM de refine (opcional): backend=%s model=%s temp=%.2f chunk=%d timeout=%ds num_predict=%d",
@@ -1006,6 +1016,8 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
             num_predict=args.num_predict,
             num_ctx=cfg.translate_num_ctx,
             keep_alive=getattr(cfg, "ollama_keep_alive", "30m"),
+            api_mode=getattr(cfg, "ollama_api_mode", "generate"),
+            think=getattr(cfg, "ollama_think", None),
         )
         logger.info(
             "LLM de tradu‡Æo: backend=%s model=%s temp=%.2f chunk=%d timeout=%ds num_predict=%d",
@@ -1023,11 +1035,15 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
         if fail_on_chunk_error is None:
             fail_on_chunk_error = getattr(cfg, "fail_on_chunk_error", False)
         if getattr(args, "use_glossary", False):
-            manual_path = Path(args.manual_glossary) if args.manual_glossary else Path("glossario/glossario_manual.json")
+            manual_path = resolve_manual_glossary_path(args.manual_glossary)
             glossary_state = build_glossary_state(manual_path=manual_path, dynamic_path=None, logger=logger, manual_dir=None)
             if glossary_state:
                 glossary_text = format_manual_pairs_for_translation(glossary_state.manual_terms, limit=30)
-                logger.info("Gloss rio manual carregado para tradu‡Æo: %d termos (usando at‚ 30 no prompt).", len(glossary_state.manual_terms))
+                logger.info(
+                    "Glossário manual carregado para tradução: %d termos de %s (usando até 30 no prompt).",
+                    len(glossary_state.manual_terms),
+                    manual_path,
+                )
             else:
                 logger.warning("Uso de gloss rio solicitado, mas nenhum gloss rio manual carregado.")
 
@@ -1136,6 +1152,8 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
             num_predict=cfg.refine_num_predict,
             num_ctx=getattr(cfg, "refine_num_ctx", None),
             keep_alive=getattr(cfg, "ollama_keep_alive", "30m"),
+            api_mode=getattr(cfg, "ollama_api_mode", "generate"),
+            think=getattr(cfg, "ollama_think", None),
         )
         logger.info(
             "LLM de refine (opcional): backend=%s model=%s temp=%.2f chunk=%d timeout=%ds num_predict=%d",
@@ -1329,6 +1347,8 @@ def run_refine(args, cfg: AppConfig, logger: logging.Logger) -> None:
         num_predict=args.num_predict,
         num_ctx=getattr(cfg, "refine_num_ctx", None),
         keep_alive=getattr(cfg, "ollama_keep_alive", "30m"),
+        api_mode=getattr(cfg, "ollama_api_mode", "generate"),
+        think=getattr(cfg, "ollama_think", None),
     )
     logger.info(
         "LLM de refine: backend=%s model=%s temp=%.2f chunk=%d timeout=%ds num_predict=%d",
@@ -1345,12 +1365,12 @@ def run_refine(args, cfg: AppConfig, logger: logging.Logger) -> None:
     if cleanup_mode not in ("off", "auto", "on"):
         cleanup_mode = "off"
     if getattr(args, "use_glossary", False):
-        manual_path = Path(args.manual_glossary) if args.manual_glossary else None
+        manual_path = resolve_manual_glossary_path(args.manual_glossary)
         manual_dir = Path(args.auto_glossary_dir) if getattr(args, "auto_glossary_dir", None) else None
         dynamic_path = Path(args.dynamic_glossary) if args.dynamic_glossary else cfg.output_dir / "glossario_dinamico.json"
         logger.info(
             "Modo glossário ativo. Manual: %s | Dinâmico: %s | Auto-dir: %s",
-            manual_path if manual_path else "nenhum",
+            manual_path,
             dynamic_path,
             manual_dir if manual_dir else "nenhum",
         )

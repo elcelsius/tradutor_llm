@@ -1,9 +1,13 @@
 # Configuração centralizada — Tradução (PDF) + Desquebrar + Refine
 # Recomendado para Light Novel (fantasia/RPG) com robustez de pipeline.
 
+ollama_keep_alive: "30m"             # mantém o modelo carregado entre chamadas
+ollama_api_mode: chat                # generate | chat; chat replica melhor o comportamento do app do Ollama
+ollama_think: false                  # null/true/false; false evita gastar tokens em "thinking" sem resposta
+
 translate_backend: ollama            # ollama ou gemini
-translate_model: gemma3:27b-it-q4_K_M # modelo principal de tradução
-translate_temperature: 0.40          # temperatura para tradução
+translate_model: mistral-small3.2:24b-instruct-2506-q4_K_M # modelo principal de tradução recomendado pelo benchmark e2e
+translate_temperature: 0.55          # temperatura para tradução; mantida por qualidade em sotaque/gírias
 translate_repeat_penalty: 1.10       # penalidade de repetição (ollama)
 translate_chunk_chars: 2000          # tamanho alvo por chunk (caracteres)
 translate_num_predict: 3072          # limite de tokens gerados por chunk
@@ -16,13 +20,13 @@ translate_glossary_fallback_limit: 30 # fallback para top-N se nenhum termo caso
 
 use_desquebrar: true                 # ativa desquebrar automaticamente para PDF
 desquebrar_backend: ollama           # backend do desquebrar
-desquebrar_model: cnmoro/gemma3-gaia-ptbr-4b:q4_k_m # modelo usado no desquebrar
+desquebrar_model: gemma3:27b-it-q4_K_M # modelo usado no desquebrar
 desquebrar_mode: llm                 # safe (determinístico) | llm
 desquebrar_temperature: 0.08         # temperatura do desquebrar (baixa para não reescrever)
 desquebrar_repeat_penalty: 1.08      # penalidade de repetição no desquebrar
 desquebrar_chunk_chars: 2600         # chunk do desquebrar (pode ser um pouco maior que tradução)
-desquebrar_num_predict: 1024         # limite de tokens gerados no desquebrar
-desquebrar_num_ctx: null             # contexto máximo para desquebrar (Ollama)
+desquebrar_num_predict: 2048         # limite de tokens gerados no desquebrar
+desquebrar_num_ctx: 4096             # contexto máximo para desquebrar (Ollama)
 
 # PDF (pós-refine)
 pdf_enabled: false                   # gera PDF automaticamente após o refine (defina true para habilitar)
@@ -38,12 +42,12 @@ pdf_author: ""                        # autor opcional no PDF
 pdf_language: pt-BR                   # idioma do PDF
 
 refine_backend: ollama
-refine_model: mistral-small3.1:24b-instruct-2503-q4_K_M
+refine_model: gemma4:26b-a4b-it-q4_K_M
 refine_temperature: 0.20
 refine_repeat_penalty: 1.08
-refine_chunk_chars: 2400
-refine_num_predict: 1536
-refine_num_ctx: null
+refine_chunk_chars: 3072
+refine_num_predict: 4096
+refine_num_ctx: 6144
 refine_guardrails: strict             # strict | relaxed | off
 fail_on_chunk_error: false            # true aborta se algum chunk falhar; false mantém placeholders
 

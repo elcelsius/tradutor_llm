@@ -41,6 +41,8 @@ class LLMBackend:
         num_predict: int = 768,
         num_ctx: int | None = None,
         keep_alive: str | int | None = "30m",
+        api_mode: str = "generate",
+        think: bool | None = None,
     ) -> None:
         self.backend = backend
         self.model = model
@@ -53,6 +55,8 @@ class LLMBackend:
         self.num_predict = num_predict
         self.num_ctx = num_ctx
         self.keep_alive = keep_alive
+        self.api_mode = api_mode
+        self.think = think
 
     def generate(self, prompt: str) -> LLMResponse:
         start = time.perf_counter()
@@ -66,6 +70,11 @@ class LLMBackend:
         return LLMResponse(text=text, latency=latency)
 
     def _call_ollama(self, prompt: str) -> str:
+        if self.api_mode == "chat":
+            return self._call_ollama_chat(prompt)
+        if self.api_mode != "generate":
+            raise ValueError(f"Modo de API Ollama não suportado: {self.api_mode}")
+
         url = f"{self.base_url}/api/generate"
         payload = {
             "model": self.model,
@@ -93,6 +102,38 @@ class LLMBackend:
         if "response" not in data:
             raise ValueError(f"Resposta inválida do Ollama: {json.dumps(data)[:200]}")
         return data["response"].strip()
+
+    def _call_ollama_chat(self, prompt: str) -> str:
+        url = f"{self.base_url}/api/chat"
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": False,
+            "options": {
+                "temperature": self.temperature,
+                "num_predict": self.num_predict,
+            },
+        }
+        if self.repeat_penalty is not None:
+            payload["options"]["repeat_penalty"] = self.repeat_penalty
+        if self.num_ctx is not None:
+            payload["options"]["num_ctx"] = self.num_ctx
+        if self.keep_alive is not None:
+            payload["keep_alive"] = self.keep_alive
+        if self.think is not None:
+            payload["think"] = self.think
+        try:
+            resp = requests.post(url, json=payload, timeout=self.request_timeout)
+            resp.raise_for_status()
+            data = resp.json()
+        except requests.RequestException as exc:
+            self.logger.error("Erro ao chamar Ollama chat: %s", exc)
+            raise
+
+        message = data.get("message")
+        if not isinstance(message, dict) or "content" not in message:
+            raise ValueError(f"Resposta inválida do Ollama chat: {json.dumps(data)[:200]}")
+        return (message.get("content") or "").strip()
 
     def _call_gemini(self, prompt: str) -> str:
         if genai is None:

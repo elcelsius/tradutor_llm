@@ -17,6 +17,7 @@ import yaml
 BackendType = Literal["ollama", "gemini"]
 GuardrailsType = Literal["strict", "relaxed", "off"]
 DialogueGuardrailsType = Literal["strict", "relaxed", "off"]
+OllamaApiMode = Literal["generate", "chat"]
 DEFAULT_CONFIG_PATHS = (Path("config.yaml"), Path("config.yml"))
 log = logging.getLogger(__name__)
 
@@ -54,6 +55,8 @@ class AppConfig:
     refine_num_ctx: int | None = None
     desquebrar_num_ctx: int | None = None
     ollama_keep_alive: str | int = "30m"
+    ollama_api_mode: OllamaApiMode = "generate"
+    ollama_think: bool | None = None
     skip_front_matter: bool = True
     split_by_sections: bool = True
     translate_allow_adaptation: bool = False

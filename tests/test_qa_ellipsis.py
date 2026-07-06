@@ -11,3 +11,12 @@ def test_needs_retry_detects_excessive_ellipsis() -> None:
     ok, reason = needs_retry("Texto sem reticencias.", "Texto ... com ... omissoes.")
     assert ok is True
     assert reason in {"ellipsis_in_word", "ellipsis_suspect"}
+
+
+def test_needs_retry_allows_literary_ellipsis_in_dialogue() -> None:
+    ok, reason = needs_retry(
+        "“I am sorry...” Kayako said. A moment before, she thought it was impossible, but...",
+        "“Me desculpe…” disse Kayako. Alguns momentos antes, ela teria achado impossível, mas… deveria?",
+    )
+    assert ok is False
+    assert reason == ""

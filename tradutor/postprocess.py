@@ -36,7 +36,7 @@ def final_pt_postprocess(text: str) -> str:
     cleaned = "\n".join(lines)
 
     # remove marcadores residuais
-    cleaned = re.sub(r"###\s*TEXTO_TRADUZIDO_[A-Z_]*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"###\s*TEXTO_TRADUZ[A-Z_]*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"###\s*TEXTO_REFINADO_[A-Z_]*", "", cleaned, flags=re.IGNORECASE)
 
     # garante quebra de parágrafo (linha vazia) entre blocos narrativos

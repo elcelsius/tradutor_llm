@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *.log
+.pytest_cache/
 .venv/
 venv/
 
@@ -13,6 +14,13 @@ glossario/*.json
 !glossario/glossario_exemplo.json
 !glossario/noise_glossary_exemplo.json
 pandoc/
+
+# Benchmarks/avaliações locais gerados em runtime
+benchmark/e2e/
+benchmark/traducao/
+benchmark/refine/
+benchmark/literario/
+benchmark/*.pdf
 
 # Configuração local
 .env

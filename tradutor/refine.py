@@ -53,7 +53,7 @@ from .quote_fix import fix_unbalanced_quotes, count_curly_quotes, fix_blank_line
 from .text_postprocess import apply_structural_normalizers, apply_custom_normalizers, fix_dialogue_artifacts
 from .debug_run import DebugRunWriter
 
-REFINE_PIPELINE_VERSION = "1"
+REFINE_PIPELINE_VERSION = "6"
 
 
 def refine_prompt_fingerprint() -> str:
@@ -213,6 +213,81 @@ def has_meta_noise(text: str) -> bool:
     return any(m in lower for m in markers)
 
 
+def _count_paragraphs(text: str) -> int:
+    return len([p for p in re.split(r"\n\s*\n", text.strip()) if p.strip()])
+
+
+def _count_leading_quote_dialogues(text: str) -> int:
+    return sum(1 for line in text.splitlines() if line.strip().startswith(('"', "“", "”")))
+
+
+def _count_leading_dash_dialogues(text: str) -> int:
+    return sum(1 for line in text.splitlines() if line.strip().startswith("—"))
+
+
+def _count_nonblank_lines(text: str) -> int:
+    return sum(1 for line in text.splitlines() if line.strip())
+
+
+def _dialogue_or_paragraph_regression(original: str, cleaned: str) -> dict:
+    original_quote_lines = _count_leading_quote_dialogues(original)
+    cleaned_quote_lines = _count_leading_quote_dialogues(cleaned)
+    original_dash_lines = _count_leading_dash_dialogues(original)
+    cleaned_dash_lines = _count_leading_dash_dialogues(cleaned)
+    original_paragraphs = _count_paragraphs(original)
+    cleaned_paragraphs = _count_paragraphs(cleaned)
+    original_nonblank_lines = _count_nonblank_lines(original)
+    cleaned_nonblank_lines = _count_nonblank_lines(cleaned)
+
+    introduced_dash_dialogues = (
+        original_dash_lines == 0
+        and original_quote_lines > 0
+        and cleaned_dash_lines > 0
+    )
+    introduced_quote_dialogues = (
+        original_quote_lines == 0
+        and original_dash_lines > 0
+        and cleaned_quote_lines > 0
+    )
+    lost_dash_dialogues = (
+        original_dash_lines >= 2
+        and cleaned_dash_lines < max(1, original_dash_lines - 1)
+    )
+    lost_quote_dialogues = (
+        original_quote_lines >= 2
+        and cleaned_quote_lines < max(1, original_quote_lines - 1)
+    )
+
+    paragraph_structure_changed = False
+    if original_paragraphs >= 4:
+        max_paragraphs = max(original_paragraphs + 2, int(original_paragraphs * 1.45))
+        min_paragraphs = max(1, int(original_paragraphs * 0.65))
+        paragraph_structure_changed = cleaned_paragraphs > max_paragraphs or cleaned_paragraphs < min_paragraphs
+
+    line_structure_changed = False
+    if original_nonblank_lines >= 2:
+        max_lines = max(original_nonblank_lines + 4, int(original_nonblank_lines * 1.45))
+        min_lines = max(1, int(original_nonblank_lines * 0.65))
+        line_structure_changed = cleaned_nonblank_lines > max_lines or cleaned_nonblank_lines < min_lines
+
+    return {
+        "dialogue_style_changed": introduced_dash_dialogues
+        or introduced_quote_dialogues
+        or lost_dash_dialogues
+        or lost_quote_dialogues,
+        "paragraph_structure_changed": paragraph_structure_changed,
+        "line_structure_changed": line_structure_changed,
+        "original_quote_lines": original_quote_lines,
+        "cleaned_quote_lines": cleaned_quote_lines,
+        "original_dash_lines": original_dash_lines,
+        "cleaned_dash_lines": cleaned_dash_lines,
+        "original_paragraphs": original_paragraphs,
+        "cleaned_paragraphs": cleaned_paragraphs,
+        "original_nonblank_lines": original_nonblank_lines,
+        "cleaned_nonblank_lines": cleaned_nonblank_lines,
+    }
+
+
 def sanitize_refine_chunk_output(
     text: str,
     original: str,
@@ -240,6 +315,7 @@ def sanitize_refine_chunk_output(
     )
 
     artifacts = '"""' in cleaned
+    structure_info = _dialogue_or_paragraph_regression(original, cleaned)
     opens_curly, closes_curly = count_curly_quotes(cleaned)
     opens_q = opens_curly + cleaned.count('"')
     closes_q = closes_curly + cleaned.count('"')
@@ -247,7 +323,13 @@ def sanitize_refine_chunk_output(
     quotes_balanced = opens_q == closes_q
     soft_retry = False
     ok = True
-    if artifacts or regression_dialogue:
+    if (
+        artifacts
+        or regression_dialogue
+        or structure_info["dialogue_style_changed"]
+        or structure_info["paragraph_structure_changed"]
+        or structure_info["line_structure_changed"]
+    ):
         ok = False
     elif not quotes_balanced:
         soft_retry = True
@@ -256,6 +338,7 @@ def sanitize_refine_chunk_output(
         "quotes_balanced": quotes_balanced,
         "regression_dialogue": regression_dialogue,
         "soft_retry": soft_retry,
+        **structure_info,
         **stats,
     }
 
@@ -374,8 +457,13 @@ Não altere absolutamente nada da história, dos eventos, das falas, da linha do
 REGRAS DE PRESERVAÇÃO:
 - Preserve nomes próprios e honoríficos (-san, -kun, etc.) exatamente como no texto de entrada; não invente nem remova.
 - Preserve o estilo de marcação de diálogo do texto de entrada (aspas curvas e/ou travessões). Não converta travessões em aspas nem vice-versa.
+- Se uma fala começa com aspas, ela deve continuar começando com aspas; se começa com travessão, deve continuar com travessão.
+- Nunca misture travessão e aspas na mesma fala por reformatacao. Exemplo proibido: — Fala", disse ele.
+- Preserve a quantidade e a ordem dos parágrafos. Não transforme cada frase em um parágrafo separado.
+- Não insira quebras de linha simples dentro de um parágrafo; mantenha o parágrafo em uma linha quando ele vier em uma linha.
 - Não altere apelidos/insultos; apenas corrija gramática, pontuação e fluidez.
 - Nunca remova conteúdo; não resuma; não pule linhas; não introduza aspas triplas.
+- Se um trecho já estiver bom, mantenha-o como está. O refine deve ser mínimo e local, não uma reescrita completa.
 
 OBJETIVOS DO EDITOR:
 
@@ -405,7 +493,10 @@ PROIBIÇÕES ABSOLUTAS:
 * Não adicionar conteúdo.
 * Não mudar tom ou personalidade dos personagens.
 * Não reorganizar parágrafos.
+* Não dividir parágrafos.
+* Não inserir quebras de linha apenas por estilo.
 * Não fundir parágrafos ou alterar segmentação original.
+* Não converter o padrão de diálogo do trecho.
 
 FORMATO DE SAÍDA:
 Retorne apenas:
@@ -528,7 +619,7 @@ def refine_section(
 
         def _apply_normalizers(text: str) -> tuple[str, dict]:
             normalized, norm_stats = apply_structural_normalizers(text)
-            normalized = apply_custom_normalizers(normalized)
+            normalized = apply_custom_normalizers(normalized, convert_quote_dialogues=False)
             metrics["dialogue_splits"] = metrics.get("dialogue_splits", 0) + norm_stats.get("dialogue_splits", 0)
             metrics["triple_quotes_removed"] = metrics.get("triple_quotes_removed", 0) + norm_stats.get("triple_quotes_removed", 0)
             return normalized, norm_stats
@@ -1312,7 +1403,7 @@ def refine_markdown_file(
     final_md = sanitize_refine_output(final_md)
     final_md, dialogue_stats = fix_dialogue_artifacts(final_md)
     final_md, _ = apply_structural_normalizers(final_md)
-    final_md = apply_custom_normalizers(final_md)
+    final_md = apply_custom_normalizers(final_md, convert_quote_dialogues=False)
     if logger.isEnabledFor(logging.DEBUG):
         logger.debug("Pós-processo de diálogo (refine-final): %s", dialogue_stats)
     opens_q, closes_q = count_curly_quotes(final_md)

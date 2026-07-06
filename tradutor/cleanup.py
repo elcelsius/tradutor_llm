@@ -112,12 +112,15 @@ def dedupe_adjacent_lines(text: str) -> tuple[str, dict]:
     return "\n\n".join(final_paragraphs), {"lines_removed": lines_removed, "blocks_removed": blocks_removed}
 
 
-_GLUED_PATTERN = re.compile(r'([.!?]["\']?)\s+("?[A-Z\u00c0-\u017f])')
+_GLUED_PATTERNS = (
+    re.compile(r'([.!?…][\"\u201d])\s+(?=[\"\u201c])'),
+    re.compile(r"([.!?…])\s+(?=\u2014\s*)"),
+)
 
 
 def fix_glued_dialogues(text: str) -> tuple[str, dict]:
     """
-    Insere quebras conservadoras quando duas falas/sentencas estao coladas.
+    Insere quebras conservadoras quando duas falas estao coladas.
     """
     fixed_lines: list[str] = []
     breaks_inserted = 0
@@ -125,8 +128,10 @@ def fix_glued_dialogues(text: str) -> tuple[str, dict]:
         if ln.lstrip().startswith("#"):
             fixed_lines.append(ln)
             continue
-        new_line, count = _GLUED_PATTERN.subn(r"\1\n\2", ln)
-        breaks_inserted += count
+        new_line = ln
+        for pattern in _GLUED_PATTERNS:
+            new_line, count = pattern.subn(r"\1\n", new_line)
+            breaks_inserted += count
         fixed_lines.append(new_line)
     return "\n".join(fixed_lines), {"breaks_inserted": breaks_inserted}
 
@@ -269,4 +274,4 @@ def detect_glued_dialogues(md: str) -> bool:
     """
     Heuristica leve para detectar falas coladas.
     """
-    return bool(_GLUED_PATTERN.search(md))
+    return any(pattern.search(md) for pattern in _GLUED_PATTERNS)
