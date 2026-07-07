@@ -90,6 +90,7 @@
 - `*_pt_chunks_debug.jsonl`: debug detalhado por chunk (tradução).
 - `*_chunks_debug.jsonl`: debug por chunk (refine).
 - `saida/debug_refine*/`: arquivos `orig/raw/final` quando `--debug-refine`.
+- `saida/debug_runs/<slug>/<timestamp>/40_translate/translate_manifest.json`: inclui metadados de glossário por chunk; `debug_traducao/chunkNNN_glossary.txt` mostra o bloco enviado ao prompt.
 
 ## Debug playbook (chunks/merge/cache)
 1. **Auditar preprocess antes de tradução longa**
@@ -133,6 +134,7 @@
 - Glossário: suporte a `enforce` por termo; "Lord of the Flies" -> "Senhor das Moscas" aplicado automaticamente quando o termo aparece no chunk.
 - Baseline local atual: tradução com `mistral-small3.2:24b-instruct-2506-q4_K_M`, desquebrar com `gemma3:27b-it-q4_K_M`, refine com `gemma4:26b-a4b-it-q4_K_M`, Ollama em modo `chat` e `ollama_think: false`.
 - Glossário: loader separa `source_aliases`/`aliases` de busca, `bad_aliases` proibidos e `allowed_target_aliases`; `--use-glossary` resolve `glossario/glossario_manual.json` ou `glossario/glossario_geral.json`.
+- Glossário: `scripts/audit_glossary.py` audita duplicatas, aliases ambíguos, aliases PT-BR em busca e redundâncias; `scripts/migrate_glossary_aliases.py --write` limpa o glossário local sem versionar dados reais.
 - Revisão pós-tradução determinística: `scripts/review_translation.py` restaura headings a partir de `sections.json` e aplica correções conservadoras de glossário/resíduos sem reescrever o estilo.
 - QA objetiva: `tradutor/quality_checks.py` checa termos canônicos, aliases ruins, inglês residual, marcadores internos, aspas e sinais simples de gênero.
 - Benchmarks: `bench_llms`, `bench_refine_llms` e `bench_e2e_llms` usam o pipeline real, geram `*_qa.json` e aceitam glossário.

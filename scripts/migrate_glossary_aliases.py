@@ -2,8 +2,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from tradutor.glossary_audit import is_probably_portuguese_alias
 
 
 def _terms_doc(data: Any) -> list[dict[str, Any]]:
@@ -65,6 +72,62 @@ def _append_unique(term: dict[str, Any], field: str, values: list[str]) -> bool:
     return True
 
 
+def _remove_values(term: dict[str, Any], field: str, values: list[str]) -> bool:
+    current = _as_list(term.get(field))
+    remove = {value.casefold() for value in values}
+    kept = [value for value in current if value.casefold() not in remove]
+    if kept == current:
+        return False
+    term[field] = kept
+    return True
+
+
+def _append_bad_aliases(term: dict[str, Any], values: list[str]) -> bool:
+    changed = _remove_values(term, "allowed_target_aliases", values)
+    changed = _append_unique(term, "bad_aliases", values) or changed
+    return changed
+
+
+def _move_portuguese_source_aliases(term: dict[str, Any]) -> bool:
+    source_aliases = _as_list(term.get("source_aliases") or term.get("aliases"))
+    if not source_aliases:
+        return False
+
+    key_norm = str(term.get("key", "")).strip().casefold()
+    pt_norm = str(term.get("pt", "")).strip().casefold()
+    bad_norm = {value.casefold() for value in _as_list(term.get("bad_aliases"))}
+    kept: list[str] = []
+    moved_allowed: list[str] = []
+    changed = False
+    for alias in source_aliases:
+        alias_norm = alias.strip().casefold()
+        if not is_probably_portuguese_alias(alias):
+            kept.append(alias)
+            continue
+        changed = True
+        if alias_norm in {key_norm, pt_norm} or alias_norm in bad_norm:
+            continue
+        moved_allowed.append(alias)
+
+    changed = _set_source_aliases(term, kept) or changed
+    changed = _append_unique(term, "allowed_target_aliases", moved_allowed) or changed
+    return changed
+
+
+def _remove_redundant_source_aliases(term: dict[str, Any]) -> bool:
+    source_aliases = _as_list(term.get("source_aliases") or term.get("aliases"))
+    if not source_aliases:
+        return False
+    redundant = {
+        str(term.get("key", "")).strip().casefold(),
+        str(term.get("pt", "")).strip().casefold(),
+    }
+    kept = [alias for alias in source_aliases if alias.strip().casefold() not in redundant]
+    if kept == source_aliases:
+        return False
+    return _set_source_aliases(term, kept)
+
+
 def migrate(data: Any) -> dict[str, int]:
     terms = _terms_doc(data)
     summary: dict[str, int] = {
@@ -98,6 +161,94 @@ def migrate(data: Any) -> dict[str, int]:
     if term:
         changed = _set_source_aliases(term, ["Beautiful Wild Emperor", "Madly Beautiful Emperor"])
         changed = _append_unique(term, "allowed_target_aliases", ["Zine"]) or changed
+        mark(changed)
+
+    term = _find_term(terms, "Belzegea")
+    if term:
+        changed = _set_source_aliases(term, ["Fly Guy"])
+        changed = _append_unique(term, "allowed_target_aliases", ["Senhor das Moscas"]) or changed
+        mark(changed)
+
+    term = _find_term(terms, "Anael")
+    if term:
+        changed = _set_source_aliases(term, ["Mistress Anael"])
+        mark(changed)
+
+    term = _find_term(terms, "Erika Anaorbael")
+    if term:
+        changed = _set_source_aliases(term, ["Erika"])
+        mark(changed)
+
+    term = _find_term(terms, "Lokiella")
+    if term:
+        changed = _set_source_aliases(term, ["Loki-ella"])
+        mark(changed)
+
+    term = _find_term(terms, "Four Holy Elders")
+    if term:
+        changed = _set_source_aliases(term, ["Four Holy Elder", "Holy Elders"])
+        changed = _append_bad_aliases(
+            term,
+            [
+                "Quatro Anciãos Sagrados",
+                "Quatro Anciões Sagrados",
+                "Quatro Santos Anciãos",
+                "Quatro Anciãos Santos",
+                "Quatro Sábios",
+            ],
+        ) or changed
+        mark(changed)
+
+    term = _find_term(terms, "Monster Slayer King")
+    if term:
+        changed = _set_source_aliases(term, ["King of Monster Slayers"])
+        changed = _append_bad_aliases(term, ["Rei Matador de Monstros", "Rei Exterminador de Monstros"]) or changed
+        mark(changed)
+
+    term = _find_term(terms, "Monster Slayer King of Ulza")
+    if term:
+        changed = _set_source_aliases(term, ["King of Monster Slayers of Ulza"])
+        changed = _append_bad_aliases(
+            term,
+            ["Rei Matador de Monstros de Ulza", "Rei Exterminador de Monstros de Ulza"],
+        ) or changed
+        mark(changed)
+
+    term = _find_term(terms, "Monster Slayer Knights")
+    if term:
+        changed = _set_source_aliases(term, ["Monster Slayer Knight Order", "Knights of Monster Slaying"])
+        changed = _append_bad_aliases(
+            term,
+            ["Cavaleiros Matadores de Monstros", "Cavaleiros Exterminadores de Monstros"],
+        ) or changed
+        mark(changed)
+
+    term = _find_term(terms, "Sabre-Toothed Tigers")
+    if term:
+        changed = _set_source_aliases(
+            term,
+            ["Sabertooth Tigers", "Sabre-toothed Tigers", "Saber-Toothed Tigers", "Sabre Toothed Tigers"],
+        )
+        changed = _append_bad_aliases(
+            term,
+            [
+                "Tigres de Dente de Sabre",
+                "Tigres de Dente-de-Sabre",
+                "Tigres Dente de Sabre",
+                "Tigres-dentes-de-sabre",
+            ],
+        ) or changed
+        mark(changed)
+
+    term = _find_term(terms, "Dragon-Eye Cup")
+    if term:
+        changed = _append_bad_aliases(term, ["Cálice Olho de Dragão"])
+        mark(changed)
+
+    term = _find_term(terms, "Mils Ruins")
+    if term:
+        changed = _set_source_aliases(term, ["Ancient Dragon Ruins"])
+        changed = _append_bad_aliases(term, ["Ruínas do Dragão Antigo"]) or changed
         mark(changed)
 
     if not _find_term(terms, "Goddess-chin"):
@@ -134,6 +285,11 @@ def migrate(data: Any) -> dict[str, int]:
         if term.get("type") != "personagem":
             term["type"] = "personagem"
             changed = True
+        mark(changed)
+
+    for term in terms:
+        changed = _move_portuguese_source_aliases(term)
+        changed = _remove_redundant_source_aliases(term) or changed
         mark(changed)
 
     return summary

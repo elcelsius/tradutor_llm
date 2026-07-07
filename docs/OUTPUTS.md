@@ -27,5 +27,6 @@ Use `--clear-cache {all,translate,refine,desquebrar}` para limpar.
 
 ## Debug / estado
 - Tradução: `*_pt_chunks_debug.jsonl` (se `--debug-chunks`), `debug_traducao/` para falhas.
+- Debug completo: `saida/debug_runs/<slug>/<timestamp>/40_translate/translate_manifest.json` inclui metadados do glossário por chunk; `debug_traducao/chunkNNN_glossary.txt` guarda o bloco de glossário enviado ao prompt.
 - Refine: `*_pt_refinado_chunks_debug.jsonl` (se `--debug-chunks`), `debug_refine*` quando `--debug-refine`.
 - Estados rápidos: `saida/state_traducao.json`, `saida/state_refine.json`.

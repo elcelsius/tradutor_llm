@@ -1,7 +1,9 @@
+import json
 import logging
 from pathlib import Path
 
 from tradutor.config import AppConfig
+from tradutor.debug_run import DebugRunWriter
 from tradutor.translate import translate_document
 
 
@@ -98,3 +100,44 @@ def test_glossary_fallback_does_not_enforce_terms(tmp_path: Path) -> None:
 
     assert "Arte" not in result
     assert "Art" in result
+
+
+def test_debug_manifest_records_chunk_glossary(tmp_path: Path) -> None:
+    cfg = AppConfig(output_dir=tmp_path, split_by_sections=False)
+    backend = _PromptCaptureBackend()
+    logger = logging.getLogger("glossary-debug-manifest")
+    debug_run = DebugRunWriter.create(
+        output_dir=tmp_path,
+        slug="sample",
+        input_kind="md",
+        max_chunks=None,
+        max_chars_per_file=5000,
+        store_llm_raw=True,
+    )
+    manual_terms = [
+        {"key": "Shield", "pt": "Escudo", "enforce": True},
+        {"key": "Sword", "pt": "Espada"},
+    ]
+    input_text = ("The shield was heavy and sturdy. " * 10).strip()
+
+    translate_document(
+        pdf_text=input_text,
+        backend=backend,
+        cfg=cfg,
+        logger=logger,
+        source_slug="sample",
+        glossary_manual_terms=manual_terms,
+        debug_run=debug_run,
+    )
+
+    manifest = json.loads((debug_run.run_dir / "40_translate" / "translate_manifest.json").read_text(encoding="utf-8"))
+    chunk = manifest["chunks"][0]
+    assert manifest["glossary"]["manual_terms_total"] == 2
+    assert chunk["glossary"]["selection_mode"] == "matched"
+    assert chunk["glossary"]["matched_count"] == 1
+    assert chunk["glossary"]["terms"] == [
+        {"key": "Shield", "pt": "Escudo", "category": None, "enforce": True}
+    ]
+    glossary_path = debug_run.run_dir / chunk["outputs"]["debug_glossary"]
+    assert "Shield" in glossary_path.read_text(encoding="utf-8")
+    assert "Sword" not in glossary_path.read_text(encoding="utf-8")

@@ -134,6 +134,7 @@ Converte um `.md` em PDF com as configs de fonte/margem do `config.yaml`.
 - Glossário dinâmico salvo em `saida/glossario_dinamico.json` quando habilitado no refine.
 - Injeção por chunk: só termos que aparecem no chunk entram no prompt (`select_terms_for_chunk`, limite `translate_glossary_match_limit`; fallback de até `translate_glossary_fallback_limit` termos quando nada casa).
 - Enforcement: termos com `enforce=true` são forçados no texto traduzido (após o LLM) apenas para os termos selecionados naquele chunk (`translate.enforce_canonical_terms`). `bad_aliases` também é usado para corrigir aliases sabidamente errados sem exigir que todos os aliases legítimos sejam forçados.
+- Auditoria local: `python scripts/audit_glossary.py glossario/glossario_geral.json` reporta chaves duplicadas, aliases ambíguos, aliases PT-BR usados como busca e redundâncias.
 - Migração local de aliases conhecidos: `python scripts/migrate_glossary_aliases.py glossario/glossario_geral.json --write`.
 
 ## Cleanup antes do refine
@@ -148,6 +149,7 @@ Converte um `.md` em PDF com as configs de fonte/margem do `config.yaml`.
 ## Outputs, caches e debug (ver também docs/OUTPUTS.md)
 - Com `--debug`, também são gravados `saida/<slug>_raw_extracted.md`, `saida/<slug>_preprocessed.md` e `saida/<slug>_raw_desquebrado.md`, úteis para avaliar cada etapa do pipeline.
 - Tradução: `saida/<slug>_pt.md`, `<slug>_translate_report.json`, `<slug>_translate_metrics.json`, progress (`_pt_progress.json`), debug opcional (`debug_traducao/`, `*_pt_chunks_debug.jsonl`).
+- Debug completo da tradução: `saida/debug_runs/<slug>/<timestamp>/40_translate/translate_manifest.json` registra por chunk `glossary.matched_count`, `glossary.injected_count`, `glossary.selection_mode`, termos injetados e substituições forçadas; `debug_traducao/chunkNNN_glossary.txt` guarda o bloco de glossário enviado ao prompt.
 - Refine: `saida/<slug>_pt_refinado.md`, `<slug>_refine_report.json`, `<slug>_refine_metrics.json`, progress (`_pt_refinado_progress.json`), debug opcional (`debug_refine*/`).
 - Revisão determinística pós-tradução: `scripts/review_translation.py` gera `<slug>_pt_revisado.md` e um report JSON com headings restaurados, substituições editoriais conservadoras, correções de `bad_aliases` e ajustes de artigo/gênero para personagens femininas conhecidas no glossário.
 - Desquebrar: métricas em `<slug>_desquebrar_metrics.json` se rodar com LLM; debug raw/preprocess quando `--debug`.
@@ -156,6 +158,7 @@ Converte um `.md` em PDF com as configs de fonte/margem do `config.yaml`.
 
 ## Testes e qualidade
 - Testes locais: `pytest -q`.
+- Auditoria do glossário local: `python scripts/audit_glossary.py glossario/glossario_geral.json`.
 - Revisão determinística de um volume já traduzido:
   `python scripts/review_translation.py --input "saida/meu_livro_pt.md" --output "saida/meu_livro_pt_revisado.md" --sections "saida/debug_runs/<slug>/<run>/30_split_chunk/sections.json" --glossary "glossario/glossario_geral.json" --report "saida/meu_livro_pt_revisado_report.json"`.
 - Hooks locais: `pre-commit run --all-files` (mojibake, EOF, whitespace; usa `scripts/check_mojibake.py` que importa tokens de `tradutor/mojibake.py`).

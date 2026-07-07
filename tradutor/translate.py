@@ -338,6 +338,47 @@ def _build_chunk_glossary(
     return glossary_text or None, matched, injected, selected
 
 
+def _glossary_chunk_manifest(
+    *,
+    glossary_text: str | None,
+    matched_count: int,
+    injected_count: int,
+    selected_terms: list[dict],
+    enforced_replacements: dict[str, int] | None = None,
+) -> dict:
+    if matched_count > 0:
+        selection_mode = "matched"
+    elif selected_terms:
+        selection_mode = "fallback"
+    elif glossary_text:
+        selection_mode = "static"
+    else:
+        selection_mode = "none"
+
+    terms = []
+    for term in selected_terms:
+        terms.append(
+            {
+                "key": str(term.get("key", "")).strip(),
+                "pt": str(term.get("pt", "")).strip(),
+                "category": term.get("category"),
+                "enforce": bool(term.get("enforce")),
+            }
+        )
+
+    return {
+        "enabled": bool(glossary_text),
+        "selection_mode": selection_mode,
+        "matched_count": matched_count,
+        "injected_count": injected_count if glossary_text else 0,
+        "fallback_used": selection_mode == "fallback",
+        "terms": terms,
+        "prompt_hash": chunk_hash(glossary_text) if glossary_text else None,
+        "prompt_chars": len(glossary_text or ""),
+        "enforced_replacements": enforced_replacements or {},
+    }
+
+
 def enforce_canonical_terms(text: str, terms: list[dict]) -> tuple[str, dict]:
     """
     Substitui termos marcados com enforce=True pelos equivalentes em PT.
@@ -717,6 +758,7 @@ def translate_document(
                 outputs_payload = {
                     "debug_original": debug_run.rel_path(debug_stage_dir / f"chunk{idx:03d}_original_en.txt"),
                     "debug_context": debug_run.rel_path(debug_stage_dir / f"chunk{idx:03d}_context.txt"),
+                    "debug_glossary": debug_run.rel_path(debug_stage_dir / f"chunk{idx:03d}_glossary.txt"),
                     "debug_llm_raw": debug_run.rel_path(debug_stage_dir / f"chunk{idx:03d}_llm_raw.txt"),
                     "debug_final": debug_run.rel_path(debug_stage_dir / f"chunk{idx:03d}_final_pt.txt"),
                     "output_hash": debug_run.sha256_text(""),
@@ -749,6 +791,12 @@ def translate_document(
                         },
                         "normalizers": {"triple_quotes_removed": 0, "dialogue_splits": 0},
                         "lengths": {"chars_out": 0, "ratio_out_in": 0.0},
+                        "glossary": _glossary_chunk_manifest(
+                            glossary_text=None,
+                            matched_count=0,
+                            injected_count=0,
+                            selected_terms=[],
+                        ),
                         "outputs": outputs_payload,
                         "errors": None,
                     }
@@ -785,6 +833,7 @@ def translate_document(
         retry_reasons: list[str] = []
         context_used = previous_context
         sanitization_ratio: float | None = None
+        glossary_enforced: dict[str, int] = {}
 
         if cache_exists("translate", h):
             data = load_cache("translate", h)
@@ -1021,6 +1070,7 @@ def translate_document(
                         parsed_clean = postprocess_translation(parsed_clean, chunk)
                         terms_for_enforcement = chunk_terms if glossary_matched > 0 else []
                         parsed_clean, enforced = enforce_canonical_terms(parsed_clean, terms_for_enforcement)
+                        glossary_enforced = enforced
                         if enforced:
                             logger.info(
                                 "Glossario enforcement chunk %d/%d: %s",
@@ -1133,6 +1183,7 @@ def translate_document(
             base = f"chunk{idx:03d}"
             (debug_dir / f"{base}_original_en.txt").write_text(chunk, encoding="utf-8")
             (debug_dir / f"{base}_context.txt").write_text(previous_context or "", encoding="utf-8")
+            (debug_dir / f"{base}_glossary.txt").write_text(chunk_glossary_text or "", encoding="utf-8")
             if raw_text:
                 (debug_dir / f"{base}_llm_raw.txt").write_text(raw_text, encoding="utf-8")
             (debug_dir / f"{base}_final_pt.txt").write_text(final_output, encoding="utf-8")
@@ -1147,6 +1198,10 @@ def translate_document(
             debug_run.write_text(
                 debug_run.rel_path(debug_stage_dir / f"{base}_context.txt"),
                 context_used or "",
+            )
+            debug_run.write_text(
+                debug_run.rel_path(debug_stage_dir / f"{base}_glossary.txt"),
+                chunk_glossary_text or "",
             )
             if raw_text is not None:
                 raw_hash = debug_run.sha256_text(raw_text)
@@ -1241,6 +1296,10 @@ def translate_document(
                 "collapse_fallback": collapse_fallback,
                 "rejected_output": rejected_output,
                 "reject_reason": ";".join(reject_reasons),
+                "glossary_matched": glossary_matched,
+                "glossary_injected": glossary_injected,
+                "glossary_fallback_used": bool(chunk_terms and glossary_matched == 0),
+                "glossary_enforced_replacements": glossary_enforced,
             }
         )
 
@@ -1269,6 +1328,13 @@ def translate_document(
                 "sanitized_hash": hashlib.sha256(final_output.encode("utf-8")).hexdigest(),
                 "sanitizer_report": report_dict,
                 "normalizer_stats": normalizer_stats,
+                "glossary": _glossary_chunk_manifest(
+                    glossary_text=chunk_glossary_text,
+                    matched_count=glossary_matched,
+                    injected_count=glossary_injected,
+                    selected_terms=chunk_terms,
+                    enforced_replacements=glossary_enforced,
+                ),
                 "error": error_message,
             }
             _write_chunk_debug(entry)
@@ -1286,6 +1352,7 @@ def translate_document(
             outputs_payload = {
                 "debug_original": debug_run.rel_path(debug_stage_dir / f"chunk{idx:03d}_original_en.txt"),
                 "debug_context": debug_run.rel_path(debug_stage_dir / f"chunk{idx:03d}_context.txt"),
+                "debug_glossary": debug_run.rel_path(debug_stage_dir / f"chunk{idx:03d}_glossary.txt"),
                 "debug_llm_raw": debug_run.rel_path(debug_stage_dir / f"chunk{idx:03d}_llm_raw.txt"),
                 "debug_final": debug_run.rel_path(debug_stage_dir / f"chunk{idx:03d}_final_pt.txt"),
                 "output_hash": output_hash,
@@ -1324,6 +1391,13 @@ def translate_document(
                         "chars_out": len(final_output),
                         "ratio_out_in": round(cleaned_ratio, 3),
                     },
+                    "glossary": _glossary_chunk_manifest(
+                        glossary_text=chunk_glossary_text,
+                        matched_count=glossary_matched,
+                        injected_count=glossary_injected,
+                        selected_terms=chunk_terms,
+                        enforced_replacements=glossary_enforced,
+                    ),
                     "outputs": outputs_payload,
                     "errors": None
                     if not error_message
@@ -1484,6 +1558,14 @@ def translate_document(
                 "temperature": getattr(backend, "temperature", None),
                 "repeat_penalty": getattr(backend, "repeat_penalty", None),
                 "translate_chunk_chars": cfg.translate_chunk_chars,
+                "glossary_hash": glossary_hash,
+                "manual_glossary_hash": manual_glossary_hash,
+            },
+            "glossary": {
+                "enabled": bool(glossary_text or glossary_manual_terms),
+                "manual_terms_total": len(glossary_manual_terms or []),
+                "match_limit": glossary_match_limit,
+                "fallback_limit": glossary_fallback_limit,
                 "glossary_hash": glossary_hash,
                 "manual_glossary_hash": manual_glossary_hash,
             },
