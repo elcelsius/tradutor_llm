@@ -28,8 +28,12 @@ def test_review_translation_restores_headings_and_applies_alias_fixes() -> None:
         "Prólogo em andamento.\n\n"
         "Após o confronto letal, Sogou dormiu.\n\n"
         "Nyaki está aqui, meow! Meow de novo.\n\n"
-        "A Deusa-chin é sus AF.\n\n"
+        "A Deusa-chin é sus AF. Eu wish que ela parasse—or fugisse. Era isso—, talvez.\n\n"
+        "O Asagi acha isso estranho. Não confio no Asagi como aliado.\n\n"
         "Os Discípulos de Vicius chegaram.\n\n"
+        "O monstro bipede sonha com semi-deuses.\n\n"
+        "Não parece que a Deusa Vicius está manipulando Kashima Kobato, nem que ela está sendo arrastada.\n\n"
+        "“Loki… Ella… Th-the… y’re…”\n\n"
         "Minha consciência voltou à tona."
     )
     sections = [
@@ -41,6 +45,13 @@ def test_review_translation_restores_headings_and_applies_alias_fixes() -> None:
             "key": "Children of Vicius",
             "pt": "Filhos de Vicius",
             "bad_aliases": ["Discípulos de Vicius"],
+        },
+        {
+            "key": "Ikusaba Asagi",
+            "pt": "Ikusaba Asagi",
+            "category": "personagem",
+            "gender": "feminino",
+            "source_aliases": ["Asagi"],
         }
     ]
 
@@ -52,6 +63,15 @@ def test_review_translation_restores_headings_and_applies_alias_fixes() -> None:
     assert "Miau de novo" in reviewed
     assert "Deusazinha" in reviewed
     assert "suspeita pra caramba" in reviewed
+    assert "Quem me dera" in reviewed
+    assert "parasse — ou fugisse" in reviewed
+    assert "isso —, talvez" in reviewed
+    assert "bípede" in reviewed
+    assert "semideuses" in reviewed
+    assert "El-eles…" in reviewed
+    assert "A Asagi acha" in reviewed
+    assert "na Asagi como aliada" in reviewed
+    assert "manipulando a Asagi" in reviewed
     assert "Filhos de Vicius" in reviewed
     assert report.heading_fixes == 2
     assert report.glossary_replacements["Discípulos de Vicius->Filhos de Vicius"] == 1

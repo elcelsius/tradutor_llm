@@ -116,6 +116,26 @@ def migrate(data: Any) -> dict[str, int]:
         )
         summary["terms_added"] += 1
 
+    character_aliases = {
+        "Ikusaba Asagi": ["Asagi Ikusaba", "Asagi", "Asagi-san", "Ikusaba"],
+        "Kashima Kobato": ["Kobato Kashima", "Kashima", "Kashima-san", "Kobato"],
+        "Takao Hijiri": ["Hijiri Takao", "Hijiri", "Hijiri-san"],
+        "Sogou Ayaka": ["Ayaka Sogou", "Sogou", "Sogou-san", "Ayaka"],
+        "Takao Itsuki": ["Itsuki Takao", "Itsuki", "Itsuki-san"],
+    }
+    for key, aliases in character_aliases.items():
+        term = _find_term(terms, key)
+        if not term:
+            continue
+        changed = _set_source_aliases(term, aliases)
+        if term.get("gender") != "feminino":
+            term["gender"] = "feminino"
+            changed = True
+        if term.get("type") != "personagem":
+            term["type"] = "personagem"
+            changed = True
+        mark(changed)
+
     return summary
 
 

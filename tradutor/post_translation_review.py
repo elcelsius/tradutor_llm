@@ -51,10 +51,51 @@ def _record(counter: dict[str, int], key: str, count: int) -> None:
         counter[key] = counter.get(key, 0) + count
 
 
+def _term_string_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _term_variants_for_article_fix(term: dict) -> list[str]:
+    variants: list[str] = []
+    for field in ("pt", "key"):
+        value = str(term.get(field, "")).strip()
+        if value:
+            variants.append(value)
+            variants.extend(token for token in value.split() if token[:1].isupper() and len(token) >= 3)
+    variants.extend(_term_string_list(term.get("source_aliases")))
+    variants.extend(_term_string_list(term.get("aliases")))
+    variants.extend(_term_string_list(term.get("allowed_target_aliases")))
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in variants:
+        clean = value.strip()
+        marker = clean.casefold()
+        if not clean or marker in seen:
+            continue
+        seen.add(marker)
+        out.append(clean)
+    return sorted(out, key=len, reverse=True)
+
+
 def apply_editorial_replacements(text: str, report: ReviewReport | None = None) -> str:
     """Correcoes editoriais deterministicas e conservadoras para PT-BR."""
     rpt = report or ReviewReport()
     replacements = [
+        (r"\bEu wish\b", "Quem me dera", False),
+        (r"(?<=\w)—or\b", " — ou", False),
+        (r"(?<=\w)—,", " —,", False),
+        (r"\bbipede\b", "bípede", True),
+        (r"\bsemi-deuses\b", "semideuses", True),
+        (r"\bTh-the… y’re…", "El-eles…", False),
+        (
+            r"\bNão parece que a Deusa Vicius está manipulando Kashima Kobato, nem que ela está sendo\b",
+            "Não parece que a Deusa Vicius está manipulando a Asagi, nem que ela está sendo",
+            False,
+        ),
         (r"\bDeusa-chin\b", "Deusazinha", False),
         (r"\bsus\s+AF\b", "suspeita pra caramba", False),
         (r"\bmeow\b", "miau", True),
@@ -64,6 +105,34 @@ def apply_editorial_replacements(text: str, report: ReviewReport | None = None) 
     for pattern, repl, preserve_case in replacements:
         text, count = _sub_word(text, pattern, repl, preserve_case=preserve_case)
         _record(rpt.text_replacements, f"{pattern}->{repl}", count)
+    return text
+
+
+def apply_gendered_article_fixes(text: str, glossary_terms: list[dict], report: ReviewReport | None = None) -> str:
+    """Corrige artigos masculinos antes de personagens femininas conhecidas."""
+    rpt = report or ReviewReport()
+    for term in glossary_terms:
+        gender = str(term.get("gender", "")).strip().casefold()
+        category = str(term.get("category") or term.get("type") or term.get("term_type") or "").strip().casefold()
+        if not gender.startswith("femin") or "person" not in category and "personagem" not in category:
+            continue
+        for variant in _term_variants_for_article_fix(term):
+            escaped = re.escape(variant)
+            article_pairs = [
+                (rf"\bo\s+{escaped}\b", f"a {variant}"),
+                (rf"\bO\s+{escaped}\b", f"A {variant}"),
+                (rf"\bdo\s+{escaped}\b", f"da {variant}"),
+                (rf"\bDo\s+{escaped}\b", f"Da {variant}"),
+                (rf"\bno\s+{escaped}\b", f"na {variant}"),
+                (rf"\bNo\s+{escaped}\b", f"Na {variant}"),
+                (rf"\bao\s+{escaped}\b", f"à {variant}"),
+                (rf"\bAo\s+{escaped}\b", f"À {variant}"),
+            ]
+            for pattern, repl in article_pairs:
+                text, count = re.subn(pattern, repl, text)
+                _record(rpt.text_replacements, f"{pattern}->{repl}", count)
+            text, count = re.subn(rf"\b({escaped}) como aliado\b", r"\1 como aliada", text)
+            _record(rpt.text_replacements, f"{variant} como aliado->{variant} como aliada", count)
     return text
 
 
@@ -143,6 +212,7 @@ def review_translation_text(
     reviewed = restore_headings_from_sections(text, sections or [], report)
     reviewed = apply_editorial_replacements(reviewed, report)
     reviewed = apply_glossary_bad_aliases(reviewed, glossary_terms or [], report)
+    reviewed = apply_gendered_article_fixes(reviewed, glossary_terms or [], report)
     return reviewed, report
 
 

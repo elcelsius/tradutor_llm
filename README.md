@@ -149,7 +149,7 @@ Converte um `.md` em PDF com as configs de fonte/margem do `config.yaml`.
 - Com `--debug`, também são gravados `saida/<slug>_raw_extracted.md`, `saida/<slug>_preprocessed.md` e `saida/<slug>_raw_desquebrado.md`, úteis para avaliar cada etapa do pipeline.
 - Tradução: `saida/<slug>_pt.md`, `<slug>_translate_report.json`, `<slug>_translate_metrics.json`, progress (`_pt_progress.json`), debug opcional (`debug_traducao/`, `*_pt_chunks_debug.jsonl`).
 - Refine: `saida/<slug>_pt_refinado.md`, `<slug>_refine_report.json`, `<slug>_refine_metrics.json`, progress (`_pt_refinado_progress.json`), debug opcional (`debug_refine*/`).
-- Revisão determinística pós-tradução: `scripts/review_translation.py` gera `<slug>_pt_revisado.md` e um report JSON com headings restaurados, substituições editoriais conservadoras e correções de `bad_aliases`.
+- Revisão determinística pós-tradução: `scripts/review_translation.py` gera `<slug>_pt_revisado.md` e um report JSON com headings restaurados, substituições editoriais conservadoras, correções de `bad_aliases` e ajustes de artigo/gênero para personagens femininas conhecidas no glossário.
 - Desquebrar: métricas em `<slug>_desquebrar_metrics.json` se rodar com LLM; debug raw/preprocess quando `--debug`.
 - PDF: `saida/pdf/<slug>_pt_refinado.pdf` se `--pdf-enabled`.
 - Caches: `saida/cache_traducao`, `saida/cache_refine`, `saida/cache_desquebrar` (`tradutor/cache_utils.py`).
