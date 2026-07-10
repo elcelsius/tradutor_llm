@@ -43,6 +43,8 @@ from .qa import needs_retry, count_quotes, count_quote_lines
 from .postprocess_translation import postprocess_translation
 from .quote_fix import fix_unbalanced_quotes, count_curly_quotes
 from .text_postprocess import apply_structural_normalizers, apply_custom_normalizers
+from .language_guardrails import detect_residual_english, english_leak_segments as _english_leak_segments
+from .repair import repair_translation_chunk, repair_prompt_fingerprint, REPAIR_PIPELINE_VERSION
 
 STUB_HEADER_RE = re.compile(
     r"^#?\s*(prologue|chapter\s+\d+(?::[^\n]+)?|epilogue|afterword)\s*$",
@@ -52,10 +54,11 @@ PT_HEADING_RE = re.compile(
     r"^#?\s*(pr[oó]logo|cap[ií]tulo\s+\d+(?::[^\n]*)?|ep[ií]logo|p[oó]s[- ]?escrito|posf[aá]cio)\s*$",
     re.IGNORECASE,
 )
-TRANSLATE_PIPELINE_VERSION = "5"
+TRANSLATE_PIPELINE_VERSION = "8"
 TRANSLATE_START_MARKER_RE = r"###\s*TEXTO_TRADUZ(?:IDO|DO)?_INICIO"
 TRANSLATE_END_MARKER_RE = r"###\s*TEXTO_TRADUZ(?:IDO|DO)?_FIM"
 TRANSLATE_ANY_MARKER_RE = r"###\s*TEXTO_TRADUZ[A-Z_]*"
+SCENE_SEPARATOR_RE = re.compile(r"^\s*(?:\*\s*){3,}\s*$|^\s*[—–-]{3,}\s*$", re.MULTILINE)
 
 
 def translation_prompt_fingerprint(*, allow_adaptation: bool) -> str:
@@ -64,6 +67,7 @@ def translation_prompt_fingerprint(*, allow_adaptation: bool) -> str:
         context="{context}",
         glossary_text="{glossary}",
         allow_adaptation=allow_adaptation,
+        chunk_profile="mixed",
     )
     return hashlib.sha256(template.encode("utf-8")).hexdigest()
 
@@ -80,17 +84,105 @@ def _extract_last_sentence(text: str) -> str:
     return ""
 
 
+def _split_context_paragraphs(text: str) -> list[str]:
+    return [part.strip() for part in re.split(r"\n\s*\n+", text or "") if part.strip()]
+
+
+def _tail_paragraphs_from_entries(entries: list[dict[str, str]], key: str, max_paragraphs: int, max_chars: int) -> list[str]:
+    if max_paragraphs <= 0 or max_chars <= 0:
+        return []
+    selected: list[str] = []
+    remaining = max_chars
+    for entry in reversed(entries):
+        paragraphs = _split_context_paragraphs(entry.get(key, ""))
+        for paragraph in reversed(paragraphs):
+            if len(selected) >= max_paragraphs or remaining <= 0:
+                break
+            clean = re.sub(r"\s+", " ", paragraph).strip()
+            if not clean:
+                continue
+            if len(clean) > remaining:
+                clean = clean[-remaining:].lstrip()
+            selected.append(clean)
+            remaining -= len(clean)
+        if len(selected) >= max_paragraphs or remaining <= 0:
+            break
+    return list(reversed(selected))
+
+
+def build_recent_translation_context(
+    entries: list[dict[str, str]],
+    *,
+    max_paragraphs: int = 3,
+    max_chars: int = 1200,
+    include_pt: bool = True,
+) -> str:
+    source_paragraphs = _tail_paragraphs_from_entries(entries, "source", max_paragraphs, max_chars)
+    target_paragraphs = _tail_paragraphs_from_entries(entries, "target", max_paragraphs, max_chars) if include_pt else []
+    if not source_paragraphs and not target_paragraphs:
+        return ""
+    parts: list[str] = []
+    if source_paragraphs:
+        parts.append("ORIGINAL ANTERIOR (somente contexto, nao traduzir):")
+        parts.append("\n\n".join(source_paragraphs))
+    if target_paragraphs:
+        parts.append("TRADUCAO PT-BR ANTERIOR (somente consistencia de tom/termos; nao reescrever):")
+        parts.append("\n\n".join(target_paragraphs))
+    return "\n\n".join(parts).strip()
+
+
+def classify_translation_chunk(text: str) -> str:
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    if not lines:
+        return "narration"
+    dialogue_lines = 0
+    dialogue_chars = 0
+    for line in lines:
+        is_dialogue = bool(re.match(r'^(?:["“”]|[—–-]\s)', line))
+        is_dialogue = is_dialogue or bool(re.search(r'["“][^"”]{2,}["”]', line))
+        if is_dialogue:
+            dialogue_lines += 1
+            dialogue_chars += len(line)
+    total_chars = sum(len(line) for line in lines) or 1
+    line_ratio = dialogue_lines / max(len(lines), 1)
+    char_ratio = dialogue_chars / total_chars
+    if line_ratio >= 0.40 or char_ratio >= 0.45:
+        return "dialogue"
+    if line_ratio <= 0.15 and char_ratio <= 0.20:
+        return "narration"
+    return "mixed"
+
+
+def starts_with_scene_boundary(text: str) -> bool:
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        return bool(SCENE_SEPARATOR_RE.fullmatch(stripped))
+    return False
+
+
+def ends_with_scene_boundary(text: str) -> bool:
+    for line in reversed((text or "").splitlines()):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        return bool(SCENE_SEPARATOR_RE.fullmatch(stripped))
+    return False
+
+
 def build_translation_prompt(
     chunk: str,
     context: str | None = None,
     glossary_text: str | None = None,
     allow_adaptation: bool = False,
+    chunk_profile: str = "mixed",
 ) -> str:
     """Prompt minimalista para traducao EN -> PT-BR com delimitadores, contexto e glossario manual opcional."""
     context_block = ""
     if context:
         context_block = (
-            "CONTEXT (DO NOT TRANSLATE OR REWRITE):\n"
+            "CONTEXTO RECENTE (NAO TRADUZIR, NAO REESCREVER; use apenas para coerencia):\n"
             f"\"{context.strip()}\"\n\n"
         )
 
@@ -112,6 +204,29 @@ def build_translation_prompt(
    * "Captain Mammaries" → "Capitã Peituda"
 """
 
+    profile = (chunk_profile or "mixed").strip().lower()
+    if profile == "dialogue":
+        profile_block = """
+FOCO DO TRECHO: DIÁLOGO.
+- Priorize fala natural em PT-BR, preservando intenção, tensão, hesitações e personalidade.
+- Não deixe a fala excessivamente formal se o original for casual.
+- Não suavize insultos, medo, humor ou gírias quando forem relevantes para a voz do personagem.
+- Preserve o estilo de marcação de diálogo do trecho de entrada.
+"""
+    elif profile == "narration":
+        profile_block = """
+FOCO DO TRECHO: NARRAÇÃO/DESCRIÇÃO.
+- Priorize fluidez literária, clareza espacial, continuidade de ação e tempo verbal consistente.
+- Evite calques do inglês e excesso de oralidade na narração.
+- Preserve o tom emocional da cena sem embelezar além do original.
+"""
+    else:
+        profile_block = """
+FOCO DO TRECHO: MISTO.
+- Diferencie naturalmente narração e falas: narração fluida, diálogos vivos.
+- Preserve transições entre ação, pensamento e fala sem reorganizar parágrafos.
+"""
+
     return f"""
 Você é um TRADUTOR PROFISSIONAL DE LIGHT NOVELS, especializado em inglês → português brasileiro.
 Sua tarefa é traduzir fielmente, com naturalidade e fluidez, sem alterar absolutamente nenhum evento, ordem narrativa, personalidade dos personagens ou conteúdo do original.
@@ -126,6 +241,8 @@ REGRAS PRINCIPAIS:
 6. Manter nomes exatos conforme glossário.
 7. Manter número/pessoa corretos: não inverter singular/plural; não use "vocês" quando o original está no singular.
 8. NÃO use "..." ou "…" para omitir trechos; só use reticências quando elas já existirem no original.
+
+{profile_block}
 
 MELHORIAS OBRIGATÓRIAS:
 
@@ -394,20 +511,29 @@ def enforce_canonical_terms(text: str, terms: list[dict]) -> tuple[str, dict]:
         if not pt:
             continue
         variants: list[str] = []
+        key = str(term.get("key", "")).strip()
+        canonical_same_as_source = key.casefold() == pt.casefold()
         if term.get("enforce"):
-            variants.append(str(term.get("key", "")).strip())
-            aliases = term.get("source_aliases") or term.get("aliases") or []
-            if isinstance(aliases, list):
-                variants.extend(str(a).strip() for a in aliases if str(a).strip())
+            if key and not canonical_same_as_source:
+                variants.append(key)
+                aliases = term.get("source_aliases") or term.get("aliases") or []
+                if isinstance(aliases, list):
+                    variants.extend(str(a).strip() for a in aliases if str(a).strip())
         bad_aliases = term.get("bad_aliases") or term.get("forbidden_aliases") or []
         if isinstance(bad_aliases, str):
             bad_aliases = [bad_aliases]
         if isinstance(bad_aliases, list):
             variants.extend(str(a).strip() for a in bad_aliases if str(a).strip())
-        for variant in variants:
-            if not variant:
+        ordered_variants: list[str] = []
+        seen_variants: set[str] = set()
+        for variant in sorted(variants, key=len, reverse=True):
+            marker = variant.casefold()
+            if not variant or marker == pt.casefold() or marker in seen_variants:
                 continue
-            pattern = re.compile(rf"\b{re.escape(variant)}\b", flags=re.IGNORECASE)
+            seen_variants.add(marker)
+            ordered_variants.append(variant)
+        for variant in ordered_variants:
+            pattern = re.compile(rf"(?<!\w){re.escape(variant)}(?!\w)", flags=re.IGNORECASE)
             text, count = pattern.subn(pt, text)
             if count:
                 replacements[variant] = replacements.get(variant, 0) + count
@@ -430,6 +556,7 @@ def translate_document(
     already_preprocessed: bool = False,
     split_by_sections: bool | None = None,
     allow_adaptation: bool | None = None,
+    translation_repair: bool | None = None,
     fail_on_chunk_error: bool | None = None,
     debug_run: DebugRunWriter | None = None,
 ) -> str:
@@ -439,6 +566,7 @@ def translate_document(
     set_cache_base_dir(cfg.output_dir)
     split_flag = cfg.split_by_sections if split_by_sections is None else split_by_sections
     allow_adapt_flag = cfg.translate_allow_adaptation if allow_adaptation is None else allow_adaptation
+    repair_enabled = getattr(cfg, "use_translation_repair", True) if translation_repair is None else translation_repair
     fail_on_error = cfg.fail_on_chunk_error if fail_on_chunk_error is None else fail_on_chunk_error
     if not hasattr(backend, "temperature"):
         backend.temperature = cfg.translate_temperature
@@ -564,6 +692,9 @@ def translate_document(
         0.25,
         0.10,
     ]
+    context_paragraphs = max(0, int(getattr(cfg, "translate_context_paragraphs", 3) or 0))
+    context_chars = max(0, int(getattr(cfg, "translate_context_chars", 1200) or 0))
+    context_include_pt = bool(getattr(cfg, "translate_context_include_pt", True))
     glossary_match_limit = getattr(cfg, "translate_glossary_match_limit", 80)
     glossary_fallback_limit = getattr(cfg, "translate_glossary_fallback_limit", 30)
     try:
@@ -608,6 +739,12 @@ def translate_document(
     normalization_totals = {"dialogue_splits": 0, "triple_quotes_removed": 0}
     paragraph_mismatch: dict[str, int] | None = None
     chunk_metrics: list[dict] = []
+    repair_metrics: list[dict] = []
+    repair_attempted_total = 0
+    repair_changed_total = 0
+    repair_cache_hits_total = 0
+    repair_suspect_total = 0
+    repair_elapsed_total = 0.0
 
     glossary_hash = chunk_hash(glossary_text) if glossary_text else None
     manual_glossary_hash = (
@@ -629,6 +766,12 @@ def translate_document(
         "doc_hash": doc_hash,
         "source": source_slug or "",
         "allow_adaptation": allow_adapt_flag,
+        "translation_repair": bool(repair_enabled),
+        "repair_prompt_hash": repair_prompt_fingerprint() if repair_enabled else None,
+        "repair_pipeline_version": REPAIR_PIPELINE_VERSION if repair_enabled else None,
+        "translate_context_paragraphs": context_paragraphs,
+        "translate_context_chars": context_chars,
+        "translate_context_include_pt": context_include_pt,
         "split_by_sections": split_flag,
         "dialogue_guardrails_mode": dialogue_guardrails_mode,
         "prompt_hash": prompt_hash,
@@ -718,6 +861,7 @@ def translate_document(
 
     previous_context: str | None = None
     current_section: int | None = None
+    context_entries: list[dict[str, str]] = []
     debug_dir = Path(cfg.output_dir) / "debug_traducao"
     translate_manifest_chunks: list[dict] = []
 
@@ -814,8 +958,16 @@ def translate_document(
             chunk_glossary_text = glossary_text
         section_id = chunk_info.get("section")
         if current_section is None or section_id != current_section:
-            previous_context = None
+            context_entries = []
             current_section = section_id
+        if starts_with_scene_boundary(chunk):
+            context_entries = []
+        previous_context = build_recent_translation_context(
+            context_entries,
+            max_paragraphs=context_paragraphs,
+            max_chars=context_chars,
+            include_pt=context_include_pt,
+        )
         h = chunk_hash(chunk)
         start_offset = chunk_info.get("start_offset")
         end_offset = chunk_info.get("end_offset")
@@ -832,8 +984,19 @@ def translate_document(
         collapse_fallback = False
         retry_reasons: list[str] = []
         context_used = previous_context
+        chunk_profile = classify_translation_chunk(chunk)
         sanitization_ratio: float | None = None
         glossary_enforced: dict[str, int] = {}
+        repair_attempted = False
+        repair_changed = False
+        repair_used_cache = False
+        repair_llm_attempts = 0
+        repair_issues: list[dict[str, str]] = []
+        repair_retry_reasons: list[str] = []
+        repair_suspect = False
+        repair_suspect_reason = ""
+        repair_elapsed_seconds = 0.0
+        pre_repair_text = ""
 
         if cache_exists("translate", h):
             data = load_cache("translate", h)
@@ -851,7 +1014,6 @@ def translate_document(
                     processed_indices.add(idx)
                     cache_hits += 1
                     from_cache = True
-                    previous_context = _extract_last_sentence(chunk)
                     _write_progress()
 
         if parsed_clean is None:
@@ -860,7 +1022,6 @@ def translate_document(
                 parsed_clean = chunk_outputs[idx]
                 translated_chunks.append(chunk_outputs[idx])
                 processed_indices.add(idx)
-                previous_context = _extract_last_sentence(chunk)
                 _write_progress()
             else:
                 reused_dup = False
@@ -874,7 +1035,6 @@ def translate_document(
                         processed_indices.add(idx)
                         duplicate_reuse += 1
                         from_duplicate = True
-                        previous_context = _extract_last_sentence(chunk)
                         _write_progress()
                         reused_dup = True
                         break
@@ -884,6 +1044,7 @@ def translate_document(
                         context=previous_context,
                         glossary_text=chunk_glossary_text,
                         allow_adaptation=allow_adapt_flag,
+                        chunk_profile=chunk_profile,
                     )
                     prompt = base_prompt
                     try:
@@ -941,6 +1102,10 @@ def translate_document(
                             if not clean_retry and iq == 0 and narrative_ratio < 0.7:
                                 clean_retry = True
                                 clean_reason = "narrative_ratio_low"
+                            residual_english, residual_english_reason = detect_residual_english(parsed_clean)
+                            if not clean_retry and residual_english:
+                                clean_retry = True
+                                clean_reason = residual_english_reason
                             raw_retry, _ = needs_retry(chunk, raw_candidate, input_quotes=iq, output_quotes=_count_quotes(raw_candidate), input_quote_lines=iql, output_quote_lines=count_quote_lines(raw_candidate), contamination_detected=False, sanitization_ratio=1.0)
                             prefer_raw = report.contamination_detected and not raw_retry and (sanitized_ratio < 0.95 or "omissao_dialogo" in clean_reason)
                             retry = clean_retry or (report.contamination_detected and sanitized_ratio < 0.95) or (report.contamination_detected and "omissao_dialogo" in clean_reason)
@@ -1003,6 +1168,7 @@ def translate_document(
                                         context=None,
                                         glossary_text=block_glossary,
                                         allow_adaptation=allow_adapt_flag,
+                                        chunk_profile=classify_translation_chunk(block),
                                     )
                                     block_prompt += "\n\nATENÇÃO: NENHUMA fala pode ser omitida. Traduza exatamente este bloco preservando todas as aspas e travessões. Não resuma."
                                     prev_temp_block = backend.temperature
@@ -1062,6 +1228,8 @@ def translate_document(
                             )
                             if "omissao_dialogo" in retry_reason:
                                 prompt = base_prompt + "\n\nATENÇÃO: Você omitiu falas. Refaça traduzindo TODAS as frases e mantendo cada fala entre aspas exatamente uma vez. Não resuma. Não remova risos/interjeições."
+                            elif "residual_english" in retry_reason:
+                                prompt = base_prompt + "\n\nATENÇÃO: Sua saída manteve frases em inglês. Refaça traduzindo 100% do conteúdo para português brasileiro. Não deixe nenhuma frase narrativa ou fala em inglês; mantenha apenas nomes próprios do glossário."
                             elif "truncado" in retry_reason:
                                 prompt = base_prompt + "\n\nATENÇÃO: Sua saída foi truncada. Refaça incluindo TODO o conteúdo."
                             else:
@@ -1116,6 +1284,53 @@ def translate_document(
                             collapse_detected += 1
                             parsed_clean = chunk
                             collapse_fallback = True
+                        if repair_enabled and not collapse_fallback:
+                            pre_repair_text = parsed_clean
+                            repair_result = repair_translation_chunk(
+                                source_text=chunk,
+                                translated_text=parsed_clean,
+                                backend=backend,
+                                logger=logger,
+                                glossary_text=chunk_glossary_text,
+                                glossary_terms=chunk_terms,
+                                max_attempts=max(1, min(cfg.max_retries, 2)),
+                                cache_metadata={
+                                    "chunk_index": idx,
+                                    "source": source_slug or "",
+                                    "doc_hash": doc_hash,
+                                    "manual_glossary_hash": manual_glossary_hash,
+                                },
+                            )
+                            repair_attempted = repair_result.attempted
+                            repair_changed = repair_result.changed
+                            repair_used_cache = repair_result.used_cache
+                            repair_llm_attempts = repair_result.llm_attempts
+                            repair_issues = repair_result.issues
+                            repair_retry_reasons = repair_result.retry_reasons
+                            repair_suspect = repair_result.suspect_output
+                            repair_suspect_reason = repair_result.suspect_reason
+                            repair_elapsed_seconds = repair_result.elapsed_seconds
+                            if repair_suspect:
+                                suspect_output = True
+                                if not suspect_reason:
+                                    suspect_reason = repair_suspect_reason
+                            if repair_attempted:
+                                logger.info(
+                                    "Repair traducao chunk %d/%d: changed=%s issues=%s",
+                                    idx,
+                                    len(chunks),
+                                    repair_changed,
+                                    ",".join(issue.get("type", "") for issue in repair_issues[:5]),
+                                )
+                                parsed_clean = repair_result.text
+                                parsed_clean = postprocess_translation(parsed_clean, chunk)
+                                parsed_clean, repair_enforced = enforce_canonical_terms(parsed_clean, terms_for_enforcement)
+                                if repair_enforced:
+                                    for key, value in repair_enforced.items():
+                                        glossary_enforced[key] = glossary_enforced.get(key, 0) + value
+                                opens_q, closes_q = count_curly_quotes(parsed_clean)
+                                if opens_q != closes_q:
+                                    parsed_clean, _ = fix_unbalanced_quotes(parsed_clean, logger=logger, label=f"trad-repair-{idx}")
                         translated_chunks.append(parsed_clean)
                         translated_ok.add(idx)
                         failed_chunks.discard(idx)
@@ -1137,6 +1352,12 @@ def translate_document(
                             "glossary_hash": glossary_hash,
                             "manual_glossary_hash": manual_glossary_hash,
                             "allow_adaptation": allow_adapt_flag,
+                            "translation_repair": bool(repair_enabled),
+                            "repair_prompt_hash": repair_prompt_fingerprint() if repair_enabled else None,
+                            "repair_pipeline_version": REPAIR_PIPELINE_VERSION if repair_enabled else None,
+                            "translate_context_paragraphs": context_paragraphs,
+                            "translate_context_chars": context_chars,
+                            "translate_context_include_pt": context_include_pt,
                             "split_by_sections": split_flag,
                             "dialogue_guardrails_mode": dialogue_guardrails_mode,
                             "prompt_hash": prompt_hash,
@@ -1151,7 +1372,7 @@ def translate_document(
                             if raw_text:
                                 (fail_dir / f"chunk{idx:03d}_attempt{attempt_tag}_raw.txt").write_text(raw_text, encoding="utf-8")
                             (fail_dir / f"chunk{idx:03d}_prompt.txt").write_text(prompt, encoding="utf-8")
-                            (fail_dir / f"chunk{idx:03d}_context.txt").write_text(previous_context or "", encoding="utf-8")
+                            (fail_dir / f"chunk{idx:03d}_context.txt").write_text(context_used or "", encoding="utf-8")
                             error_payload = {
                                 "chunk_index": idx,
                                 "label": f"trad-{idx}/{len(chunks)}",
@@ -1168,7 +1389,6 @@ def translate_document(
                             sanitizer_report = getattr(exc, "last_report")
                         raise RuntimeError(f"Falha ao traduzir chunk {idx}/{len(chunks)}: {exc}") from exc
                     finally:
-                        previous_context = _extract_last_sentence(chunk)
                         _write_progress()
 
         final_output = parsed_clean if parsed_clean is not None else chunk_outputs.get(idx, "")
@@ -1178,11 +1398,20 @@ def translate_document(
         normalization_totals["triple_quotes_removed"] += normalizer_stats.get("triple_quotes_removed", 0)
         chunk_outputs[idx] = final_output
         _write_progress()
+        final_stripped = final_output.strip()
+        is_unusable_placeholder = final_stripped.startswith(("[CHUNK_NAO_PROCESSADO", "[CHUNK_TRANSLATION_REJECTED"))
+        if ends_with_scene_boundary(chunk) or is_unusable_placeholder:
+            context_entries = []
+        elif final_stripped:
+            context_entries.append({"source": chunk, "target": final_output})
+            max_entries = max(context_paragraphs + 2, 3)
+            if len(context_entries) > max_entries:
+                context_entries = context_entries[-max_entries:]
         if debug_translation and idx <= 5:
             debug_dir.mkdir(parents=True, exist_ok=True)
             base = f"chunk{idx:03d}"
             (debug_dir / f"{base}_original_en.txt").write_text(chunk, encoding="utf-8")
-            (debug_dir / f"{base}_context.txt").write_text(previous_context or "", encoding="utf-8")
+            (debug_dir / f"{base}_context.txt").write_text(context_used or "", encoding="utf-8")
             (debug_dir / f"{base}_glossary.txt").write_text(chunk_glossary_text or "", encoding="utf-8")
             if raw_text:
                 (debug_dir / f"{base}_llm_raw.txt").write_text(raw_text, encoding="utf-8")
@@ -1241,6 +1470,11 @@ def translate_document(
         too_short = cleaned_ratio < 0.60
         too_long = cleaned_ratio > 1.80
         suspicious = has_suspicious_repetition(final_output)
+        residual_english, residual_english_reason = detect_residual_english(final_output)
+        if residual_english:
+            suspect_output = True
+            if not suspect_reason:
+                suspect_reason = residual_english_reason
         orig_quotes = _count_quotes(chunk)
         translated_quotes = _count_quotes(final_output)
         possible_omission = False
@@ -1285,10 +1519,24 @@ def translate_document(
                 "from_cache": from_cache,
                 "from_duplicate": from_duplicate,
                 "llm_attempts": llm_attempts,
+                "chunk_profile": chunk_profile,
+                "context_chars": len(context_used or ""),
                 "too_short": too_short,
-                                "too_long": too_long,
-                                "suspicious_repetition": suspicious,
-                                "possible_omission": possible_omission,
+                "too_long": too_long,
+                "suspicious_repetition": suspicious,
+                "residual_english": residual_english,
+                "residual_english_reason": residual_english_reason,
+                "possible_omission": possible_omission,
+                "repair_attempted": repair_attempted,
+                "repair_changed": repair_changed,
+                "repair_used_cache": repair_used_cache,
+                "repair_llm_attempts": repair_llm_attempts,
+                "repair_issues": repair_issues,
+                "repair_retry_reasons": repair_retry_reasons,
+                "repair_suspect": repair_suspect,
+                "repair_suspect_reason": repair_suspect_reason,
+                "repair_elapsed_seconds": round(repair_elapsed_seconds, 3),
+                "pre_repair_hash": chunk_hash(pre_repair_text) if pre_repair_text else None,
                 "dialogue_splits": normalizer_stats.get("dialogue_splits", 0),
                 "triple_quotes_removed": normalizer_stats.get("triple_quotes_removed", 0),
                 "suspect_output": suspect_output,
@@ -1302,6 +1550,30 @@ def translate_document(
                 "glossary_enforced_replacements": glossary_enforced,
             }
         )
+        repair_metrics.append(
+            {
+                "chunk_index": idx,
+                "enabled": bool(repair_enabled),
+                "attempted": repair_attempted,
+                "changed": repair_changed,
+                "used_cache": repair_used_cache,
+                "llm_attempts": repair_llm_attempts,
+                "issues": repair_issues,
+                "retry_reasons": repair_retry_reasons,
+                "suspect_output": repair_suspect,
+                "suspect_reason": repair_suspect_reason,
+                "elapsed_seconds": round(repair_elapsed_seconds, 3),
+            }
+        )
+        if repair_attempted:
+            repair_attempted_total += 1
+        if repair_changed:
+            repair_changed_total += 1
+        if repair_used_cache:
+            repair_cache_hits_total += 1
+        if repair_suspect:
+            repair_suspect_total += 1
+        repair_elapsed_total += repair_elapsed_seconds
 
         report_dict = {
             "contamination_detected": bool(sanitizer_report.contamination_detected) if sanitizer_report else False,
@@ -1357,6 +1629,21 @@ def translate_document(
                 "debug_final": debug_run.rel_path(debug_stage_dir / f"chunk{idx:03d}_final_pt.txt"),
                 "output_hash": output_hash,
             }
+            if repair_attempted:
+                repair_stage_dir = debug_run.stage_dir("45_repair") / "debug_repair"
+                repair_stage_dir.mkdir(parents=True, exist_ok=True)
+                debug_run.write_text(
+                    debug_run.rel_path(repair_stage_dir / f"chunk{idx:03d}_original_en.txt"),
+                    chunk,
+                )
+                debug_run.write_text(
+                    debug_run.rel_path(repair_stage_dir / f"chunk{idx:03d}_before_pt.txt"),
+                    pre_repair_text or final_output,
+                )
+                debug_run.write_text(
+                    debug_run.rel_path(repair_stage_dir / f"chunk{idx:03d}_after_pt.txt"),
+                    final_output,
+                )
             translate_manifest_chunks.append(
                 {
                     "chunk_index": idx,
@@ -1370,6 +1657,7 @@ def translate_document(
                     "from_cache": from_cache,
                     "from_duplicate": from_duplicate,
                     "llm_attempts": llm_attempts,
+                    "chunk_profile": chunk_profile,
                     "retry_reasons": retry_reasons,
                     "suspect_output": suspect_output,
                     "suspect_reason": suspect_reason,
@@ -1398,6 +1686,18 @@ def translate_document(
                         selected_terms=chunk_terms,
                         enforced_replacements=glossary_enforced,
                     ),
+                    "repair": {
+                        "enabled": bool(repair_enabled),
+                        "attempted": repair_attempted,
+                        "changed": repair_changed,
+                        "used_cache": repair_used_cache,
+                        "llm_attempts": repair_llm_attempts,
+                        "issues": repair_issues,
+                        "retry_reasons": repair_retry_reasons,
+                        "suspect_output": repair_suspect,
+                        "suspect_reason": repair_suspect_reason,
+                        "pre_repair_hash": debug_run.sha256_text(pre_repair_text) if pre_repair_text else None,
+                    },
                     "outputs": outputs_payload,
                     "errors": None
                     if not error_message
@@ -1505,6 +1805,15 @@ def translate_document(
         "dialogue_splits": normalization_totals.get("dialogue_splits", 0),
         "triple_quotes_removed": normalization_totals.get("triple_quotes_removed", 0),
         "section_heading_fixes": heading_fixes,
+        "translation_repair_enabled": bool(repair_enabled),
+        "repair_attempted_chunks": repair_attempted_total,
+        "repair_changed_chunks": repair_changed_total,
+        "repair_cache_hits": repair_cache_hits_total,
+        "repair_suspect_chunks": repair_suspect_total,
+        "repair_elapsed_seconds": round(repair_elapsed_total, 3),
+        "translate_context_paragraphs": context_paragraphs,
+        "translate_context_chars": context_chars,
+        "translate_context_include_pt": context_include_pt,
     }
     if paragraph_mismatch:
         report["paragraph_mismatch"] = paragraph_mismatch
@@ -1526,9 +1835,46 @@ def translate_document(
             "dialogue_splits": normalization_totals.get("dialogue_splits", 0),
             "triple_quotes_removed": normalization_totals.get("triple_quotes_removed", 0),
             "section_heading_fixes": heading_fixes,
+            "translation_repair_enabled": bool(repair_enabled),
+            "repair_attempted_chunks": repair_attempted_total,
+            "repair_changed_chunks": repair_changed_total,
+            "repair_cache_hits": repair_cache_hits_total,
+            "repair_suspect_chunks": repair_suspect_total,
+            "repair_elapsed_seconds": round(repair_elapsed_total, 3),
+            "translate_context_paragraphs": context_paragraphs,
+            "translate_context_chars": context_chars,
+            "translate_context_include_pt": context_include_pt,
         }
         metrics_path = Path(cfg.output_dir) / f"{slug}_translate_metrics.json"
         metrics_path.write_text(json.dumps(metrics_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        repair_report = {
+            "mode": "translation_repair",
+            "enabled": bool(repair_enabled),
+            "input": source_slug or "",
+            "total_chunks": total_chunks,
+            "attempted_chunks": repair_attempted_total,
+            "changed_chunks": repair_changed_total,
+            "cache_hits": repair_cache_hits_total,
+            "suspect_chunks": repair_suspect_total,
+            "elapsed_seconds": round(repair_elapsed_total, 3),
+            "pipeline_version": REPAIR_PIPELINE_VERSION,
+            "prompt_hash": repair_prompt_fingerprint() if repair_enabled else None,
+            "timestamp": datetime.now().isoformat(),
+        }
+        repair_report_path = Path(cfg.output_dir) / f"{slug}_repair_report.json"
+        repair_report_path.write_text(json.dumps(repair_report, ensure_ascii=False, indent=2), encoding="utf-8")
+        repair_metrics_path = Path(cfg.output_dir) / f"{slug}_repair_metrics.json"
+        repair_metrics_path.write_text(
+            json.dumps(
+                {
+                    **repair_report,
+                    "chunks": repair_metrics,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
     except Exception:
         pass
     if debug_file:
@@ -1558,6 +1904,9 @@ def translate_document(
                 "temperature": getattr(backend, "temperature", None),
                 "repeat_penalty": getattr(backend, "repeat_penalty", None),
                 "translate_chunk_chars": cfg.translate_chunk_chars,
+                "translate_context_paragraphs": context_paragraphs,
+                "translate_context_chars": context_chars,
+                "translate_context_include_pt": context_include_pt,
                 "glossary_hash": glossary_hash,
                 "manual_glossary_hash": manual_glossary_hash,
             },
@@ -1583,6 +1932,24 @@ def translate_document(
             },
         }
         debug_run.write_manifest("translate", translate_manifest)
+        repair_manifest = {
+            "run_id": debug_run.run_id,
+            "stage": "repair",
+            "source_slug": source_slug or "",
+            "enabled": bool(repair_enabled),
+            "pipeline_version": REPAIR_PIPELINE_VERSION,
+            "prompt_hash": repair_prompt_fingerprint() if repair_enabled else None,
+            "chunks": repair_metrics,
+            "totals": {
+                "total_chunks": total_chunks,
+                "attempted_chunks": repair_attempted_total,
+                "changed_chunks": repair_changed_total,
+                "cache_hits": repair_cache_hits_total,
+                "suspect_chunks": repair_suspect_total,
+                "elapsed_seconds": round(repair_elapsed_total, 3),
+            },
+        }
+        debug_run.write_manifest("repair", repair_manifest)
     if failed_chunks:
         msg = (
             f"Traducao finalizada com falhas: {len(failed_chunks)}/{total_chunks} chunks nao foram traduzidos. "

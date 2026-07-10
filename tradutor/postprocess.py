@@ -22,9 +22,26 @@ def final_pt_postprocess(text: str) -> str:
     cleaned = text
     cleaned = re.sub(r"\.{3,}", "…", cleaned)
     cleaned = cleaned.replace("--", "—")
+    cleaned = re.sub(r"([”\"])\1+", r"\1", cleaned)
     cleaned = re.sub(r"\s+([.!?])", r"\1", cleaned)
     cleaned = re.sub(r"[ ]{2,}", " ", cleaned)
     cleaned = cleaned.replace(' "', '"').replace(" '", "'")
+    replacements = [
+        (r"\bO criatura\b", "A criatura"),
+        (r"\beu ter sido mandada para as Ruínas do Descarte\b", "eu ter sido mandado para as Ruínas do Descarte"),
+        (r"\benterrar o machado\b", "deixar isso para trás"),
+        (r"\breestrear contato\b", "retomar contato"),
+        (r"\blavada no cérebro\b", "submetida a lavagem cerebral"),
+        (r"\bmultidão de estratégias\b", "muitas estratégias"),
+        (r"\bvenceu o dia\b", "decidiu a batalha"),
+        (r"\bSeu primeiro socorro e na luta\b", "Seu primeiro socorro e sua ajuda na luta"),
+        (r"\bSeu socorro e no combate\b", "Seu socorro e sua ajuda no combate"),
+        (r"\bColocar sua vida em jogo pode ter sido um pouco demais, embora\.", "Colocar sua vida em jogo pode ter sido um pouco demais."),
+        (r"\bparede de cortina\b", "cortina da tenda"),
+        (r"\btenda de cortina\b", "tenda"),
+    ]
+    for pattern, repl in replacements:
+        cleaned = re.sub(pattern, repl, cleaned, flags=re.IGNORECASE)
 
     # padroniza travessão em diálogos no início da linha
     lines: List[str] = []

@@ -75,3 +75,40 @@ def test_review_translation_restores_headings_and_applies_alias_fixes() -> None:
     assert "Filhos de Vicius" in reviewed
     assert report.heading_fixes == 2
     assert report.glossary_replacements["Discípulos de Vicius->Filhos de Vicius"] == 1
+
+
+def test_review_collapses_duplicate_canonical_character_names() -> None:
+    text = (
+        "Sogou Sogou Ayaka falou com Takao Takao Hijiri.\n\n"
+        "Ikusaba Asagi Asagi respondeu. Sogou Ayaka Sogou Ayaka voltou."
+    )
+    terms = [
+        {
+            "key": "Sogou Ayaka",
+            "pt": "Sogou Ayaka",
+            "category": "personagem",
+            "source_aliases": ["Sogou", "Ayaka"],
+        },
+        {
+            "key": "Takao Hijiri",
+            "pt": "Takao Hijiri",
+            "category": "personagem",
+            "source_aliases": ["Hijiri"],
+        },
+        {
+            "key": "Ikusaba Asagi",
+            "pt": "Ikusaba Asagi",
+            "category": "personagem",
+            "source_aliases": ["Asagi"],
+        },
+    ]
+
+    reviewed, report = review_translation_text(text, glossary_terms=terms)
+
+    assert "Sogou Sogou Ayaka" not in reviewed
+    assert "Takao Takao Hijiri" not in reviewed
+    assert "Ikusaba Asagi Asagi" not in reviewed
+    assert "Sogou Ayaka Sogou Ayaka" not in reviewed
+    assert "Sogou Ayaka falou com Takao Hijiri" in reviewed
+    assert "Ikusaba Asagi respondeu. Sogou Ayaka voltou." in reviewed
+    assert report.text_replacements

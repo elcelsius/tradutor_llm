@@ -60,6 +60,10 @@ class AppConfig:
     skip_front_matter: bool = True
     split_by_sections: bool = True
     translate_allow_adaptation: bool = False
+    use_translation_repair: bool = True
+    translate_context_paragraphs: int = 3
+    translate_context_chars: int = 1200
+    translate_context_include_pt: bool = True
     translate_dialogue_guardrails: DialogueGuardrailsType = "strict"
     translate_dialogue_retry_temps: list[float] = field(default_factory=list)
     translate_dialogue_split_fallback: bool = True

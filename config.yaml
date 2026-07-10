@@ -26,6 +26,10 @@ translate_temperature: 0.55          # se quiser mais fidelidade, teste 0.30
 translate_repeat_penalty: 1.10
 translate_chunk_chars: 2048          # alvo por chunk (caracteres)
 translate_num_predict: 3072          # limite de tokens gerados por chunk
+use_translation_repair: true         # QA/repair seletivo antes do refine
+translate_context_paragraphs: 3      # janela deslizante de parágrafos anteriores
+translate_context_chars: 1200        # limite de contexto recente injetado no prompt
+translate_context_include_pt: true   # inclui PT já traduzido como âncora de tom/termos
 
 # ============================================================================
 # Desquebrar (normaliza quebras antes de traduzir)

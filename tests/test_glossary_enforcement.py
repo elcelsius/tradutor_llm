@@ -36,3 +36,20 @@ def test_enforce_bad_alias_without_expanding_valid_aliases():
     assert "Bane-san" in normalized
     assert "Banamente" not in normalized
     assert replacements == {"Banamente": 1}
+
+
+def test_enforce_does_not_expand_name_alias_when_canonical_is_same_as_source():
+    terms = [
+        {
+            "key": "Sogou Ayaka",
+            "pt": "Sogou Ayaka",
+            "source_aliases": ["Sogou", "Ayaka"],
+            "enforce": True,
+        }
+    ]
+    text = "Sogou Ayaka falou com Sogou."
+
+    normalized, replacements = enforce_canonical_terms(text, terms)
+
+    assert normalized == text
+    assert replacements == {}

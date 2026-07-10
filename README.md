@@ -1,6 +1,6 @@
 # Tradutor de Light Novels (EN → PT-BR)
 
-Pipeline em Python 3.12 para converter PDFs/Markdown em PT-BR com LLM (Ollama ou Gemini): extrai, limpa, desquebra linhas, traduz em chunks, refina e gera relatórios/PDF. Tudo roda local, priorizando Windows (mas funciona em Linux).
+Pipeline em Python 3.12 para converter PDFs/Markdown em PT-BR com LLM (Ollama ou Gemini): extrai, limpa, desquebra linhas, traduz em chunks, repara falhas objetivas da tradução, refina e gera relatórios/PDF. Tudo roda local, priorizando Windows (mas funciona em Linux).
 
 ## Requisitos e instalação
 - Python 3.12.
@@ -28,6 +28,7 @@ O `config.yaml` versionado está ajustado para a baseline local mais forte encon
 - Desquebrar: `gemma3:27b-it-q4_K_M`
 - Refine: `gemma4:26b-a4b-it-q4_K_M`
 - Ollama API: `chat`, com `ollama_think: false`
+- Repair seletivo da tradução: ligado por padrão (`use_translation_repair: true`)
 - Cleanup antes do refine: `auto`
 
 Para produzir todos os arquivos úteis para inspeção (extraído, preprocessado, desquebrado, traduzido e refinado), rode com `--debug`:
@@ -63,7 +64,9 @@ python -m tradutor.main refina --input "saida/meu_livro_pt.md"
 python -m tradutor.main pdf --input "saida/meu_livro_pt_refinado.md"
 ```
 
-## Pipeline v2 (como o código executa)
+## Pipeline v3 (como o código executa)
+Diagrama e regra completa: [docs/PIPELINE.md](docs/PIPELINE.md).
+
 1) **Extração e pré-processo** (`tradutor/preprocess.py::extract_text_from_pdf`, `preprocess_text`):
    - Normaliza quebras, remove rodapés/ruído e front-matter/TOC se `skip_front_matter` estiver ativo (padrão vindo do config).
 2) **Desquebrar** (`tradutor/desquebrar.py::desquebrar_text`):
@@ -71,13 +74,19 @@ python -m tradutor.main pdf --input "saida/meu_livro_pt_refinado.md"
    - Controlado por `--use-desquebrar/--no-use-desquebrar` e `--desquebrar-mode llm|safe`.
 3) **Chunking e tradução** (`tradutor/translate.py::translate_document`):
    - Divide por seções se `split_by_sections` ativo (usa `tradutor/section_splitter.py`).
-   - Tradução chunk a chunk com glossário manual por chunk, guardrails de diálogo, retries e sanitização.
+   - Tradução chunk a chunk com glossário manual por chunk, contexto deslizante, perfil automático diálogo/narração, guardrails de diálogo, retries e sanitização.
    - Saídas: `_pt.md`, métricas/relatórios JSON, progress para resume.
-4) **Cleanup opcional pré-refine** (`tradutor/cleanup.py::cleanup_before_refine`), controlado por `--cleanup-before-refine {off,auto,on}`.
-5) **Refine** (`tradutor/refine.py::refine_markdown_file`):
+4) **QA/repair seletivo da tradução** (`tradutor/repair.py`):
+   - Roda por chunk antes do refine, usando original EN, tradução PT-BR e glossário do chunk.
+   - Só chama LLM quando detecta problema objetivo: inglês residual, possível omissão de diálogo, saída curta demais, termo fonte vazado ou `bad_alias`.
+   - Controlado por `--translation-repair/--no-translation-repair` e `use_translation_repair` no config.
+5) **Cleanup opcional pré-refine** (`tradutor/cleanup.py::cleanup_before_refine`), controlado por `--cleanup-before-refine {off,auto,on}`.
+6) **Refine** (`tradutor/refine.py::refine_markdown_file`):
    - Chunking do PT, guardrails, glossário manual/dinâmico, normalizadores estruturais, anti-colapso.
    - Saídas: `_pt_refinado.md`, métricas/relatórios JSON, progress.
-6) **PDF** (`tradutor/pdf.py::convert_markdown_to_pdf` via CLI) se `--pdf-enabled` ou configuração.
+7) **Revisão determinística final** (`tradutor/post_translation_review.py` via script):
+   - Corrige aliases proibidos, duplicações de nomes canônicos e ajustes conservadores de artigo/gênero.
+8) **PDF** (`tradutor/pdf.py::convert_markdown_to_pdf` via CLI) se `--pdf-enabled` ou configuração.
 
 Resumos, métricas e progress são escritos em `saida/` (ver Outputs).
 
@@ -89,15 +98,17 @@ Resumos, métricas e progress são escritos em `saida/` (ver Outputs).
 - `--desquebrar-mode {llm,safe}` e `--use-desquebrar/--no-use-desquebrar`.
 - `--resume`: usa `<slug>_pt_progress.json` para retomar.
 - `--use-glossary` / `--manual-glossary <json>`: glossário manual (apenas termos presentes no chunk são injetados; limite configurável).
+- `--translation-repair` / `--no-translation-repair`: liga/desliga QA/repair seletivo antes do refine.
+- Contexto deslizante: `translate_context_paragraphs`, `translate_context_chars` e `translate_context_include_pt` no `config.yaml`.
 - `--translate-allow-adaptation`: habilita bloco de adaptação no prompt.
 - `--split-by-sections` / `--skip-front-matter`: controle de headings/TOC.
 - `--cleanup-before-refine {off,auto,on}`: limpeza determinística antes do refine.
 - `--preprocess-noise-glossary <json>`: denylist opcional de linhas de lixo (watermarks/URLs); se ausente usa lista embutida.
-- `--debug`: ativa debug completo e grava artefatos/manifests por etapa em `saida/debug_runs/<slug>/<timestamp>/` (inputs, preprocess, desquebrar, chunking, translate, refine).
+- `--debug`: ativa debug completo e grava artefatos/manifests por etapa em `saida/debug_runs/<slug>/<timestamp>/` (inputs, preprocess, desquebrar, chunking, translate, repair, refine).
 - `--debug-chunks`: JSONL detalhado por chunk (tradução/refine).
 - `--fail-on-chunk-error`: aborta na primeira falha (senão marca placeholders).
 - `--pdf-enabled`: gera PDF após refine.
-- `--clear-cache {all,translate,refine,desquebrar}`: limpa caches em `saida/cache_*`.
+- `--clear-cache {all,translate,repair,refine,desquebrar}`: limpa caches em `saida/cache_*`.
 
 ### Subcomando `traduz-md` (MD → PT)
 Mesmas opções de tradução/refine relevantes; inclui `--normalize-paragraphs` para normalizar o Markdown antes de traduzir.
@@ -150,11 +161,13 @@ Converte um `.md` em PDF com as configs de fonte/margem do `config.yaml`.
 - Com `--debug`, também são gravados `saida/<slug>_raw_extracted.md`, `saida/<slug>_preprocessed.md` e `saida/<slug>_raw_desquebrado.md`, úteis para avaliar cada etapa do pipeline.
 - Tradução: `saida/<slug>_pt.md`, `<slug>_translate_report.json`, `<slug>_translate_metrics.json`, progress (`_pt_progress.json`), debug opcional (`debug_traducao/`, `*_pt_chunks_debug.jsonl`).
 - Debug completo da tradução: `saida/debug_runs/<slug>/<timestamp>/40_translate/translate_manifest.json` registra por chunk `glossary.matched_count`, `glossary.injected_count`, `glossary.selection_mode`, termos injetados e substituições forçadas; `debug_traducao/chunkNNN_glossary.txt` guarda o bloco de glossário enviado ao prompt.
+- Repair: `saida/<slug>_repair_report.json`, `<slug>_repair_metrics.json` e, com `--debug`, `saida/debug_runs/<slug>/<timestamp>/45_repair/repair_manifest.json` + arquivos antes/depois dos chunks reparados.
 - Refine: `saida/<slug>_pt_refinado.md`, `<slug>_refine_report.json`, `<slug>_refine_metrics.json`, progress (`_pt_refinado_progress.json`), debug opcional (`debug_refine*/`).
 - Revisão determinística pós-tradução: `scripts/review_translation.py` gera `<slug>_pt_revisado.md` e um report JSON com headings restaurados, substituições editoriais conservadoras, correções de `bad_aliases` e ajustes de artigo/gênero para personagens femininas conhecidas no glossário.
+- Tempos: `saida/<slug>_timings.json` é gerado sempre no fim de `traduz`/`traduz-md`, com duração por etapa e total real. Com `--debug`, uma cópia fica em `debug_runs/<slug>/<timestamp>/99_reports/timings.json`. O tempo de `translate` inclui o repair; quando houver repair, ele aparece também em `nested_stages.translation_repair`.
 - Desquebrar: métricas em `<slug>_desquebrar_metrics.json` se rodar com LLM; debug raw/preprocess quando `--debug`.
 - PDF: `saida/pdf/<slug>_pt_refinado.pdf` se `--pdf-enabled`.
-- Caches: `saida/cache_traducao`, `saida/cache_refine`, `saida/cache_desquebrar` (`tradutor/cache_utils.py`).
+- Caches: `saida/cache_traducao`, `saida/cache_repair`, `saida/cache_refine`, `saida/cache_desquebrar` (`tradutor/cache_utils.py`).
 
 ## Testes e qualidade
 - Testes locais: `pytest -q`.

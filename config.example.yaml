@@ -12,6 +12,10 @@ translate_repeat_penalty: 1.10       # penalidade de repetição (ollama)
 translate_chunk_chars: 2000          # tamanho alvo por chunk (caracteres)
 translate_num_predict: 3072          # limite de tokens gerados por chunk
 translate_num_ctx: null              # contexto máximo (opcional, Ollama)
+use_translation_repair: true         # QA/repair seletivo antes do refine
+translate_context_paragraphs: 3      # janela deslizante de parágrafos anteriores
+translate_context_chars: 1200        # limite de contexto recente injetado no prompt
+translate_context_include_pt: true   # inclui PT já traduzido como âncora de tom/termos
 translate_dialogue_guardrails: strict # strict | relaxed | off
 translate_dialogue_retry_temps: [0.40, 0.25, 0.10] # temperaturas usadas em retries de diálogo
 translate_dialogue_split_fallback: true # ativa fallback de split quando omitir falas

@@ -83,6 +83,32 @@ class _QuotedDialogueBackend:
         return type("Resp", (), {"text": text})
 
 
+class _ResidualEnglishBackend:
+    def __init__(self) -> None:
+        self.backend = "stub"
+        self.model = "stub"
+        self.num_predict = 10
+        self.temperature = 0.1
+        self.repeat_penalty = 1.0
+        self.calls = 0
+
+    def generate(self, prompt: str):
+        self.calls += 1
+        if self.calls == 1:
+            text = (
+                "### TEXTO_TRADUZIDO_INICIO\n"
+                "\"I have no desire to die,\" replied Seras calmly, choosing not to answer directly.\n"
+                "### TEXTO_TRADUZIDO_FIM"
+            )
+        else:
+            text = (
+                "### TEXTO_TRADUZIDO_INICIO\n"
+                "\"Não tenho vontade de morrer\", respondeu Seras com calma, sem responder diretamente.\n"
+                "### TEXTO_TRADUZIDO_FIM"
+            )
+        return type("Resp", (), {"text": text})
+
+
 def test_translate_retries_on_truncated_output(tmp_path: Path) -> None:
     cfg = AppConfig(output_dir=tmp_path, max_retries=2, split_by_sections=False)
     backend = _RetryBackend()
@@ -204,3 +230,29 @@ def test_translate_preserves_quoted_dialogue_lines(tmp_path: Path) -> None:
     assert '"Sim."' in result
     assert "— Oi." not in result
     assert "— Sim." not in result
+
+
+def test_translate_retries_on_residual_english_sentence(tmp_path: Path) -> None:
+    cfg = AppConfig(output_dir=tmp_path, max_retries=2, split_by_sections=False)
+    backend = _ResidualEnglishBackend()
+    logger = logging.getLogger("residual-english")
+    input_text = '"I have no desire to die," replied Seras calmly, choosing not to answer directly.'
+
+    result = translate_document(
+        pdf_text=input_text,
+        backend=backend,
+        cfg=cfg,
+        logger=logger,
+        source_slug="sample",
+        progress_path=None,
+        resume_manifest=None,
+        glossary_text=None,
+        debug_translation=False,
+        parallel_workers=1,
+        debug_chunks=False,
+        already_preprocessed=True,
+    )
+
+    assert "Não tenho vontade de morrer" in result
+    assert "I have no desire" not in result
+    assert backend.calls >= 2

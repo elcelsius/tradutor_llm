@@ -17,6 +17,7 @@ DEBUG_SUBDIRS = (
     "20_desquebrar",
     "30_split_chunk",
     "40_translate",
+    "45_repair",
     "50_cleanup_pre_refine",
     "60_refine",
     "99_reports",
@@ -141,7 +142,12 @@ class DebugRunWriter:
     def write_backend(self, payload: dict) -> None:
         self.write_json("00_inputs/backend.json", payload)
 
-    def write_versions(self, translate_prompt_hash: str | None, refine_prompt_hash: str | None) -> None:
+    def write_versions(
+        self,
+        translate_prompt_hash: str | None,
+        refine_prompt_hash: str | None,
+        repair_prompt_hash: str | None = None,
+    ) -> None:
         version_path = Path(__file__).parent / "VERSION"
         try:
             pipeline_version = version_path.read_text(encoding="utf-8").strip()
@@ -151,6 +157,7 @@ class DebugRunWriter:
             "pipeline_version": pipeline_version,
             "prompt_hashes": {
                 "translate": translate_prompt_hash,
+                "repair": repair_prompt_hash,
                 "refine": refine_prompt_hash,
             },
             "git_sha": _git_sha(),
@@ -181,10 +188,20 @@ class DebugRunWriter:
     def write_manifest(self, stage: str, payload: dict) -> None:
         if stage == "translate":
             self.write_json("40_translate/translate_manifest.json", payload)
+        elif stage == "repair":
+            self.write_json("45_repair/repair_manifest.json", payload)
         elif stage == "refine":
             self.write_json("60_refine/refine_manifest.json", payload)
 
-    def write_run_metadata(self, *, args: dict, cfg: AppConfig, translate_prompt_hash: str | None, refine_prompt_hash: str | None) -> None:
+    def write_run_metadata(
+        self,
+        *,
+        args: dict,
+        cfg: AppConfig,
+        translate_prompt_hash: str | None,
+        refine_prompt_hash: str | None,
+        repair_prompt_hash: str | None = None,
+    ) -> None:
         self.write_args(args, cfg)
-        self.write_versions(translate_prompt_hash, refine_prompt_hash)
+        self.write_versions(translate_prompt_hash, refine_prompt_hash, repair_prompt_hash)
 

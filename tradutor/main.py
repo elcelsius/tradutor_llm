@@ -24,6 +24,7 @@ from .preprocess import preprocess_text, strip_front_matter
 from .refine import refine_markdown_file, refine_prompt_fingerprint
 from .postprocess import final_pt_postprocess
 from .translate import translate_document, translation_prompt_fingerprint
+from .repair import repair_prompt_fingerprint
 from .desquebrar import desquebrar_text, desquebrar_stats_to_dict, normalize_md_paragraphs
 from .desquebrar_safe import desquebrar_safe
 from .utils import setup_logging, write_text, read_text
@@ -31,6 +32,128 @@ from .structure_normalizer import normalize_structure
 from .editor import editor_pipeline
 from .pdf import convert_markdown_to_pdf
 from .cache_utils import clear_cache, set_cache_base_dir
+
+
+def _format_elapsed(seconds: float) -> str:
+    """Formata duracao em HH:MM:SS.mmm para leitura humana."""
+    seconds = max(0.0, float(seconds))
+    hours, remainder = divmod(seconds, 3600)
+    minutes, remainder = divmod(remainder, 60)
+    return f"{int(hours):02d}:{int(minutes):02d}:{remainder:06.3f}"
+
+
+def _build_timing_payload(
+    *,
+    source_slug: str,
+    command: str,
+    input_kind: str,
+    status: str,
+    started_at: datetime,
+    run_started: float,
+    timings: dict[str, float],
+    failed_stage: str | None = None,
+    nested_timings: dict | None = None,
+) -> dict:
+    finished_at = datetime.now(timezone.utc)
+    total_elapsed = time.perf_counter() - run_started
+    stage_items = [(name, float(seconds)) for name, seconds in timings.items() if name != "total"]
+    measured_stage_seconds = sum(seconds for _, seconds in stage_items)
+    payload = {
+        "source_slug": source_slug,
+        "command": command,
+        "input_kind": input_kind,
+        "status": status,
+        "failed_stage": failed_stage,
+        "started_at": started_at.isoformat(),
+        "finished_at": finished_at.isoformat(),
+        "total_elapsed_seconds": round(total_elapsed, 3),
+        "total_elapsed_human": _format_elapsed(total_elapsed),
+        "measured_stage_seconds": round(measured_stage_seconds, 3),
+        "measured_stage_human": _format_elapsed(measured_stage_seconds),
+        "stages": {
+            name: {
+                "elapsed_seconds": round(seconds, 3),
+                "elapsed_human": _format_elapsed(seconds),
+            }
+            for name, seconds in stage_items
+        },
+        "nested_stages": {},
+    }
+    for name, detail in (nested_timings or {}).items():
+        if isinstance(detail, dict):
+            seconds = float(detail.get("elapsed_seconds", 0.0) or 0.0)
+            nested_payload = {
+                "elapsed_seconds": round(seconds, 3),
+                "elapsed_human": _format_elapsed(seconds),
+            }
+            if detail.get("included_in"):
+                nested_payload["included_in"] = detail["included_in"]
+            if detail.get("note"):
+                nested_payload["note"] = detail["note"]
+        else:
+            seconds = float(detail or 0.0)
+            nested_payload = {
+                "elapsed_seconds": round(seconds, 3),
+                "elapsed_human": _format_elapsed(seconds),
+            }
+        payload["nested_stages"][name] = nested_payload
+    return payload
+
+
+def _write_timing_report(
+    *,
+    cfg: AppConfig,
+    source_slug: str,
+    command: str,
+    input_kind: str,
+    status: str,
+    started_at: datetime,
+    run_started: float,
+    timings: dict[str, float],
+    logger: logging.Logger,
+    failed_stage: str | None = None,
+    debug_run: DebugRunWriter | None = None,
+    nested_timings: dict | None = None,
+) -> dict | None:
+    try:
+        payload = _build_timing_payload(
+            source_slug=source_slug,
+            command=command,
+            input_kind=input_kind,
+            status=status,
+            started_at=started_at,
+            run_started=run_started,
+            timings=timings,
+            failed_stage=failed_stage,
+            nested_timings=nested_timings,
+        )
+        report_path = cfg.output_dir / f"{source_slug}_timings.json"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        if debug_run:
+            debug_run.write_timing(payload)
+        logger.info("Relatório de tempos salvo em %s (total=%s)", report_path, payload["total_elapsed_human"])
+        return payload
+    except Exception as exc:
+        logger.warning("Falha ao gravar relatório de tempos: %s", exc)
+        return None
+
+
+def _load_repair_timing_detail(output_dir: Path, source_slug: str) -> dict:
+    try:
+        repair_metrics_path = output_dir / f"{source_slug}_repair_metrics.json"
+        payload = json.loads(repair_metrics_path.read_text(encoding="utf-8"))
+        elapsed = float(payload.get("elapsed_seconds", 0.0) or 0.0)
+    except Exception:
+        return {}
+    if elapsed <= 0:
+        return {}
+    return {
+        "translation_repair": {
+            "elapsed_seconds": elapsed,
+            "included_in": "translate",
+        }
+    }
 
 
 def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
@@ -69,6 +192,12 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
         help="Limite de tokens gerados por chunk (Ollama).",
     )
     t.add_argument("--no-refine", action="store_true", help="Não executar refine após traduzir.")
+    t.add_argument(
+        "--translation-repair",
+        action=argparse.BooleanOptionalAction,
+        default=cfg.use_translation_repair,
+        help="Executa QA/repair seletivo da tradução antes do refine (padrão: config).",
+    )
     t.add_argument(
         "--desquebrar-mode",
         dest="desquebrar_mode",
@@ -124,7 +253,7 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
     )
     t.add_argument(
         "--clear-cache",
-        choices=["all", "translate", "refine", "desquebrar"],
+        choices=["all", "translate", "repair", "refine", "desquebrar"],
         help="Limpa caches antes de traduzir (respeita output_dir da config).",
     )
     t.add_argument(
@@ -223,6 +352,12 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
     )
     tm.add_argument("--no-refine", action="store_true", help="Não executar refine após traduzir.")
     tm.add_argument(
+        "--translation-repair",
+        action=argparse.BooleanOptionalAction,
+        default=cfg.use_translation_repair,
+        help="Executa QA/repair seletivo da tradução antes do refine (padrão: config).",
+    )
+    tm.add_argument(
         "--resume",
         action="store_true",
         help="Retoma tradução usando manifesto de progresso existente (se houver).",
@@ -255,7 +390,7 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
     )
     tm.add_argument(
         "--clear-cache",
-        choices=["all", "translate", "refine", "desquebrar"],
+        choices=["all", "translate", "repair", "refine", "desquebrar"],
         help="Limpa caches antes de traduzir (respeita output_dir da config).",
     )
     tm.add_argument(
@@ -330,7 +465,7 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
     )
     r.add_argument(
         "--clear-cache",
-        choices=["all", "translate", "refine", "desquebrar"],
+        choices=["all", "translate", "repair", "refine", "desquebrar"],
         help="Limpa caches antes de refinar (respeita output_dir da config).",
     )
     r.add_argument(
@@ -477,6 +612,9 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
     for pdf in pdfs:
         debug_run = None
         timings: dict[str, float] = {}
+        nested_timings: dict = {}
+        run_started = time.perf_counter()
+        run_started_at = datetime.now(timezone.utc)
         current_stage = "init"
         output_refined: Path | None = None
         pre_text = ""
@@ -500,6 +638,7 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                 cfg=cfg,
                 translate_prompt_hash=translate_prompt_hash,
                 refine_prompt_hash=refine_prompt_fingerprint(),
+                repair_prompt_hash=repair_prompt_fingerprint(),
             )
             backend_payload = {
                 "translate": {
@@ -584,7 +723,9 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                 if desquebrar_mode == "safe":
                     current_stage = "desquebrar_safe"
                     logger.info("Modo safe: aplicando desquebrar_safe (sem LLM), preservando layout.")
+                    start_stage = time.perf_counter()
                     working_text = desquebrar_safe(working_text)
+                    timings["desquebrar"] = time.perf_counter() - start_stage
                     if args.debug:
                         desq_out = cfg.output_dir / f"{pdf.stem}_raw_desquebrado.md"
                         write_text(desq_out, working_text)
@@ -662,6 +803,7 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
             else:
                 current_stage = "desquebrar_off"
                 logger.info("Desquebrar desativado; seguindo direto para tradução.")
+                timings["desquebrar"] = 0.0
                 if debug_run:
                     debug_run.desquebrado_rel = f"20_desquebrar/{pdf.stem}_raw_desquebrado.md"
                     debug_run.write_text(debug_run.desquebrado_rel, working_text)
@@ -715,10 +857,13 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                 already_preprocessed=True,
                 split_by_sections=getattr(args, "split_by_sections", cfg.split_by_sections),
                 allow_adaptation=getattr(args, "translate_allow_adaptation", cfg.translate_allow_adaptation),
+                translation_repair=getattr(args, "translation_repair", cfg.use_translation_repair),
                 fail_on_chunk_error=fail_on_chunk_error,
                 debug_run=debug_run,
             )
             timings["translate"] = time.perf_counter() - start_stage
+            nested_timings.update(_load_repair_timing_detail(cfg.output_dir, pdf.stem))
+            translated_md = final_pt_postprocess(translated_md)
 
             md_path = cfg.output_dir / f"{pdf.stem}_pt.md"
             write_text(md_path, translated_md)
@@ -799,16 +944,21 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                 )
                 timings["refine"] = time.perf_counter() - start_stage
                 logger.info("Conversão para PDF desativada temporariamente; saída principal é o arquivo .md refinado.")
+                start_stage = time.perf_counter()
                 try:
                     refined_text = read_text(output_refined)
+                    refined_text = final_pt_postprocess(refined_text)
                     refined_text = normalize_structure(refined_text)
                     write_text(output_refined, refined_text)
                 except Exception as exc:
-                    logger.warning("Falha ao normalizar estrutura do refinado: %s", exc)
+                    logger.warning("Falha ao aplicar pós-processamento final do refinado: %s", exc)
+                finally:
+                    timings["post_refine_normalize"] = time.perf_counter() - start_stage
                 if debug_run:
                     debug_run.pt_refined_rel = output_refined.relative_to(cfg.output_dir).as_posix()
                 pdf_enabled = bool(getattr(args, "pdf_enabled", cfg.pdf_enabled))
                 if pdf_enabled:
+                    start_stage = time.perf_counter()
                     try:
                         pdf_dir = cfg.output_dir / "pdf"
                         pdf_output = pdf_dir / f"{output_refined.stem}.pdf"
@@ -822,6 +972,21 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                         logger.info("PDF gerado em %s", pdf_output)
                     except Exception as exc:
                         logger.error("Falha ao gerar PDF automaticamente: %s", exc)
+                    finally:
+                        timings["pdf_export"] = time.perf_counter() - start_stage
+            _write_timing_report(
+                cfg=cfg,
+                source_slug=pdf.stem,
+                command="traduz",
+                input_kind="pdf",
+                status="success",
+                started_at=run_started_at,
+                run_started=run_started,
+                timings=timings,
+                logger=logger,
+                debug_run=debug_run,
+                nested_timings=nested_timings,
+            )
             if debug_run:
                 run_dir_rel = debug_run.run_dir.relative_to(cfg.output_dir).as_posix()
                 summary = {
@@ -836,6 +1001,7 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                         "chunks": "30_split_chunk/chunks.jsonl",
                         "sections": "30_split_chunk/sections.json",
                         "translate_manifest": "40_translate/translate_manifest.json",
+                        "repair_manifest": "45_repair/repair_manifest.json",
                         "refine_manifest": "60_refine/refine_manifest.json",
                         "timings": "99_reports/timings.json",
                         "errors": "99_reports/errors.jsonl",
@@ -853,8 +1019,6 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                     "notes": [],
                 }
                 debug_run.write_run_summary(summary)
-                timings["total"] = sum(timings.values())
-                debug_run.write_timing(timings)
         except Exception as exc:
             if debug_run:
                 debug_run.write_error(
@@ -865,12 +1029,6 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     }
                 )
-                try:
-                    if timings and "total" not in timings:
-                        timings["total"] = sum(timings.values())
-                    debug_run.write_timing(timings)
-                except Exception:
-                    pass
                 try:
                     run_dir_rel = debug_run.run_dir.relative_to(cfg.output_dir).as_posix()
                     pre_rel = debug_run.preprocessed_rel or f"10_preprocess/{pdf.stem}_preprocessed.md"
@@ -899,6 +1057,7 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                             "chunks": "30_split_chunk/chunks.jsonl",
                             "sections": "30_split_chunk/sections.json",
                             "translate_manifest": "40_translate/translate_manifest.json",
+                            "repair_manifest": "45_repair/repair_manifest.json",
                             "refine_manifest": "60_refine/refine_manifest.json",
                             "timings": "99_reports/timings.json",
                             "errors": "99_reports/errors.jsonl",
@@ -918,6 +1077,20 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                     debug_run.write_run_summary(summary)
                 except Exception:
                     pass
+            _write_timing_report(
+                cfg=cfg,
+                source_slug=pdf.stem,
+                command="traduz",
+                input_kind="pdf",
+                status="failed",
+                failed_stage=current_stage,
+                started_at=run_started_at,
+                run_started=run_started,
+                timings=timings,
+                logger=logger,
+                debug_run=debug_run,
+                nested_timings=nested_timings,
+            )
             raise
 
 
@@ -935,6 +1108,9 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
 
     debug_run = None
     timings: dict[str, float] = {}
+    nested_timings: dict = {}
+    run_started = time.perf_counter()
+    run_started_at = datetime.now(timezone.utc)
     current_stage = "init"
     output_refined: Path | None = None
     pre_text = ""
@@ -957,6 +1133,7 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
             cfg=cfg,
             translate_prompt_hash=translate_prompt_hash,
             refine_prompt_hash=refine_prompt_fingerprint(),
+            repair_prompt_hash=repair_prompt_fingerprint(),
         )
         backend_payload = {
             "translate": {
@@ -981,10 +1158,12 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
             raise SystemExit(f"Arquivo {text_path} vazio.")
 
         current_stage = "preprocess"
+        start_stage = time.perf_counter()
         if getattr(args, "preprocess_advanced", False):
             raw_text = advanced_clean(raw_text)
         if getattr(args, "normalize_paragraphs", False):
             raw_text = normalize_md_paragraphs(raw_text)
+        timings["preprocess"] = time.perf_counter() - start_stage
         if debug_run:
             debug_run.preprocessed_rel = f"10_preprocess/{text_path.stem}_preprocessed.md"
             debug_run.write_text(debug_run.preprocessed_rel, raw_text)
@@ -1089,10 +1268,13 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
             already_preprocessed=True,
             split_by_sections=getattr(args, "split_by_sections", cfg.split_by_sections),
             allow_adaptation=getattr(args, "translate_allow_adaptation", cfg.translate_allow_adaptation),
+            translation_repair=getattr(args, "translation_repair", cfg.use_translation_repair),
             fail_on_chunk_error=fail_on_chunk_error,
             debug_run=debug_run,
         )
         timings["translate"] = time.perf_counter() - start_stage
+        nested_timings.update(_load_repair_timing_detail(cfg.output_dir, text_path.stem))
+        translated_md = final_pt_postprocess(translated_md)
 
         md_path = cfg.output_dir / f"{text_path.stem}_pt.md"
         write_text(md_path, translated_md)
@@ -1116,6 +1298,7 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
                         "chunks": "30_split_chunk/chunks.jsonl",
                         "sections": "30_split_chunk/sections.json",
                         "translate_manifest": "40_translate/translate_manifest.json",
+                        "repair_manifest": "45_repair/repair_manifest.json",
                         "refine_manifest": "60_refine/refine_manifest.json",
                         "timings": "99_reports/timings.json",
                         "errors": "99_reports/errors.jsonl",
@@ -1133,8 +1316,19 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
                     "notes": [],
                 }
                 debug_run.write_run_summary(summary)
-                timings["total"] = sum(timings.values())
-                debug_run.write_timing(timings)
+            _write_timing_report(
+                cfg=cfg,
+                source_slug=text_path.stem,
+                command="traduz-md",
+                input_kind="md",
+                status="success",
+                started_at=run_started_at,
+                run_started=run_started,
+                timings=timings,
+                logger=logger,
+                debug_run=debug_run,
+                nested_timings=nested_timings,
+            )
             return
 
         current_stage = "refine"
@@ -1199,14 +1393,19 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
         )
         timings["refine"] = time.perf_counter() - start_stage
         logger.info("ConversÆo para PDF desativada temporariamente; sa¡da principal ‚ o arquivo .md refinado.")
+        start_stage = time.perf_counter()
         try:
             refined_text = read_text(output_refined)
+            refined_text = final_pt_postprocess(refined_text)
             refined_text = normalize_structure(refined_text)
             write_text(output_refined, refined_text)
         except Exception as exc:
-            logger.warning("Falha ao normalizar estrutura do refinado: %s", exc)
+            logger.warning("Falha ao aplicar pós-processamento final do refinado: %s", exc)
+        finally:
+            timings["post_refine_normalize"] = time.perf_counter() - start_stage
         pdf_enabled = bool(getattr(args, "pdf_enabled", cfg.pdf_enabled))
         if pdf_enabled:
+            start_stage = time.perf_counter()
             try:
                 pdf_dir = cfg.output_dir / "pdf"
                 pdf_output = pdf_dir / f"{output_refined.stem}.pdf"
@@ -1220,6 +1419,8 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
                 logger.info("PDF gerado em %s", pdf_output)
             except Exception as exc:
                 logger.error("Falha ao gerar PDF automaticamente: %s", exc)
+            finally:
+                timings["pdf_export"] = time.perf_counter() - start_stage
         if debug_run:
             debug_run.pt_refined_rel = output_refined.relative_to(cfg.output_dir).as_posix()
             run_dir_rel = debug_run.run_dir.relative_to(cfg.output_dir).as_posix()
@@ -1235,6 +1436,7 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
                     "chunks": "30_split_chunk/chunks.jsonl",
                     "sections": "30_split_chunk/sections.json",
                     "translate_manifest": "40_translate/translate_manifest.json",
+                    "repair_manifest": "45_repair/repair_manifest.json",
                     "refine_manifest": "60_refine/refine_manifest.json",
                     "timings": "99_reports/timings.json",
                     "errors": "99_reports/errors.jsonl",
@@ -1252,8 +1454,19 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
                 "notes": [],
             }
             debug_run.write_run_summary(summary)
-            timings["total"] = sum(timings.values())
-            debug_run.write_timing(timings)
+        _write_timing_report(
+            cfg=cfg,
+            source_slug=text_path.stem,
+            command="traduz-md",
+            input_kind="md",
+            status="success",
+            started_at=run_started_at,
+            run_started=run_started,
+            timings=timings,
+            logger=logger,
+            debug_run=debug_run,
+            nested_timings=nested_timings,
+        )
     except Exception as exc:
         if debug_run:
             debug_run.write_error(
@@ -1264,12 +1477,6 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 }
             )
-            try:
-                if timings and "total" not in timings:
-                    timings["total"] = sum(timings.values())
-                debug_run.write_timing(timings)
-            except Exception:
-                pass
             try:
                 run_dir_rel = debug_run.run_dir.relative_to(cfg.output_dir).as_posix()
                 pre_rel = debug_run.preprocessed_rel or f"10_preprocess/{text_path.stem}_preprocessed.md"
@@ -1298,6 +1505,7 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
                         "chunks": "30_split_chunk/chunks.jsonl",
                         "sections": "30_split_chunk/sections.json",
                         "translate_manifest": "40_translate/translate_manifest.json",
+                        "repair_manifest": "45_repair/repair_manifest.json",
                         "refine_manifest": "60_refine/refine_manifest.json",
                         "timings": "99_reports/timings.json",
                         "errors": "99_reports/errors.jsonl",
@@ -1317,6 +1525,20 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
                 debug_run.write_run_summary(summary)
             except Exception:
                 pass
+        _write_timing_report(
+            cfg=cfg,
+            source_slug=text_path.stem,
+            command="traduz-md",
+            input_kind="md",
+            status="failed",
+            failed_stage=current_stage,
+            started_at=run_started_at,
+            run_started=run_started,
+            timings=timings,
+            logger=logger,
+            debug_run=debug_run,
+            nested_timings=nested_timings,
+        )
         raise
 
 

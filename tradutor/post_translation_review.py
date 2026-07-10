@@ -158,6 +158,39 @@ def apply_glossary_bad_aliases(text: str, glossary_terms: list[dict], report: Re
     return text
 
 
+def apply_duplicate_canonical_name_fixes(text: str, glossary_terms: list[dict], report: ReviewReport | None = None) -> str:
+    """Colapsa duplicatas causadas por expansao indevida de nomes canonicos."""
+    rpt = report or ReviewReport()
+    for term in glossary_terms:
+        pt = str(term.get("pt", "")).strip()
+        if not pt or len(pt.split()) < 2:
+            continue
+        key = str(term.get("key", "")).strip()
+        if key.casefold() != pt.casefold():
+            continue
+        category = str(term.get("category") or term.get("type") or term.get("term_type") or "").strip().casefold()
+        if "person" not in category and "personagem" not in category:
+            continue
+        parts = pt.split()
+        first = parts[0]
+        last = parts[-1]
+        patterns = [
+            (rf"(?<!\w){re.escape(first)}\s+{re.escape(pt)}(?!\w)", pt),
+            (rf"(?<!\w){re.escape(pt)}\s+{re.escape(last)}(?!\w)", pt),
+            (rf"(?<!\w){re.escape(pt)}\s+{re.escape(pt)}(?!\w)", pt),
+        ]
+        for _ in range(3):
+            changed = False
+            for pattern, repl in patterns:
+                text, count = re.subn(pattern, repl, text, flags=re.IGNORECASE)
+                if count:
+                    changed = True
+                    _record(rpt.text_replacements, f"{pattern}->{repl}", count)
+            if not changed:
+                break
+    return text
+
+
 def restore_headings_from_sections(text: str, sections: list[dict], report: ReviewReport | None = None) -> str:
     """Reinsere headings que existem no `sections.json` mas sumiram no texto traduzido."""
     rpt = report or ReviewReport()
@@ -212,6 +245,7 @@ def review_translation_text(
     reviewed = restore_headings_from_sections(text, sections or [], report)
     reviewed = apply_editorial_replacements(reviewed, report)
     reviewed = apply_glossary_bad_aliases(reviewed, glossary_terms or [], report)
+    reviewed = apply_duplicate_canonical_name_fixes(reviewed, glossary_terms or [], report)
     reviewed = apply_gendered_article_fixes(reviewed, glossary_terms or [], report)
     return reviewed, report
 

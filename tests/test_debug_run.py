@@ -184,6 +184,12 @@ def test_debug_mode_end_to_end_artifacts(monkeypatch, tmp_path: Path) -> None:
 
     main.run_translate_md(base_args, base_cfg, logger)
     base_output = read_text(base_cfg.output_dir / "sample_pt_refinado.md")
+    base_timings = json.loads(read_text(base_cfg.output_dir / "sample_timings.json"))
+    assert base_timings["status"] == "success"
+    assert base_timings["command"] == "traduz-md"
+    assert base_timings["total_elapsed_seconds"] >= 0
+    assert "translate" in base_timings["stages"]
+    assert "refine" in base_timings["stages"]
 
     main.run_translate_md(debug_args, debug_cfg, logger)
     debug_output_path = debug_cfg.output_dir / "sample_pt_refinado.md"
@@ -251,6 +257,9 @@ def test_debug_mode_end_to_end_artifacts(monkeypatch, tmp_path: Path) -> None:
     assert (run_dir / "30_split_chunk" / "sections.json").exists()
     assert (run_dir / "30_split_chunk" / "chunks.jsonl").exists()
     assert (run_dir / "99_reports" / "errors.jsonl").exists()
+    debug_timings = json.loads(read_text(run_dir / "99_reports" / "timings.json"))
+    assert debug_timings["status"] == "success"
+    assert debug_timings["total_elapsed_human"]
     assert run_summary["final_outputs"]["pt"] == "sample_pt.md"
     assert run_summary["final_outputs"]["pt_refinado"] == "sample_pt_refinado.md"
 
@@ -303,6 +312,9 @@ def test_debug_run_writes_summary_on_failure(monkeypatch, tmp_path: Path) -> Non
     run_dir = runs[0]
     assert (run_dir / "99_reports" / "errors.jsonl").exists()
     assert (run_dir / "99_reports" / "timings.json").exists()
+    top_level_timings = json.loads(read_text(cfg.output_dir / "sample_timings.json"))
+    assert top_level_timings["status"] == "failed"
+    assert top_level_timings["failed_stage"] == "translate"
     summary_path = run_dir / "99_reports" / "run_summary.json"
     assert summary_path.exists()
     summary = json.loads(read_text(summary_path))

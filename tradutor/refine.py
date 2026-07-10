@@ -52,8 +52,9 @@ from .cleanup import cleanup_before_refine, detect_obvious_dupes, detect_glued_d
 from .quote_fix import fix_unbalanced_quotes, count_curly_quotes, fix_blank_lines_inside_quotes
 from .text_postprocess import apply_structural_normalizers, apply_custom_normalizers, fix_dialogue_artifacts
 from .debug_run import DebugRunWriter
+from .language_guardrails import detect_residual_english
 
-REFINE_PIPELINE_VERSION = "7"
+REFINE_PIPELINE_VERSION = "8"
 
 
 def refine_prompt_fingerprint() -> str:
@@ -500,6 +501,7 @@ OBJETIVOS DO EDITOR:
 8. Remover repetições consecutivas ou quase idênticas geradas na tradução/refine (falas ou narrativas), mantendo apenas uma ocorrência completa e bem formatada.
 9. Reunir trechos que foram colados na mesma linha por erro (ex.: “Mmm?” “Por que você…”) devolvendo fluxo natural de diálogo, sem alterar sentido.
 10. Manter consistência de gênero/narrador (masculino/feminino) conforme o original; não inverter narrador masculino.
+11. Se alguma frase, fala ou trecho narrativo ainda estiver em inglês, traduza esse trecho para português brasileiro natural, preservando apenas nomes próprios, honoríficos e termos canônicos do glossário.
 
 PROIBIÇÕES ABSOLUTAS:
 
@@ -513,6 +515,7 @@ PROIBIÇÕES ABSOLUTAS:
 * Não inserir quebras de linha apenas por estilo.
 * Não fundir parágrafos ou alterar segmentação original.
 * Não converter o padrão de diálogo do trecho.
+* Não deixar frases em inglês quando o restante do trecho está em português.
 
 FORMATO DE SAÍDA:
 Retorne apenas:
@@ -651,6 +654,7 @@ def refine_section(
             guardrail_reasons: list[str] | None = None,
         ) -> None:
             ratio = (len(final_text.strip()) / max(len(chunk.strip()), 1)) if chunk.strip() else 0.0
+            residual_english, residual_english_reason = detect_residual_english(final_text)
             block_metrics.append(
                 {
                     "block_index": block_idx,
@@ -660,6 +664,8 @@ def refine_section(
                     "used_fallback": used_fallback,
                     "guardrails_mode": guard_mode,
                     "suspicious_repetition": has_suspicious_repetition(final_text),
+                    "residual_english": residual_english,
+                    "residual_english_reason": residual_english_reason,
                     "from_cache": from_cache,
                     "from_duplicate": from_duplicate,
                     "collapse_detected": collapse,
@@ -991,6 +997,10 @@ def refine_section(
                         refined_text = sanitized_refined
 
                 retry, retry_reason = needs_retry(chunk, refined_text)
+                residual_english, residual_english_reason = detect_residual_english(refined_text)
+                if not used_fallback and residual_english:
+                    retry = True
+                    retry_reason = residual_english_reason
                 if fmt_soft_retry:
                     retry = True
                     retry_reason = retry_reason or "soft_quote_balance"
@@ -1017,6 +1027,8 @@ def refine_section(
                     )
                     if "omissao_dialogo" in retry_reason:
                         prompt = prompt + "\n\nATENÇÃO: Você omitiu falas. Refaça traduzindo TODAS as frases e mantendo cada fala entre aspas exatamente uma vez. Não resuma. Não remova risos/interjeições."
+                    elif "residual_english" in retry_reason:
+                        prompt = prompt + "\n\nATENÇÃO: Ainda há frases em inglês. Refaça mantendo a mesma estrutura de parágrafos e traduzindo essas frases para português brasileiro natural. Preserve apenas nomes próprios, honoríficos e termos do glossário."
                     elif "truncado" in retry_reason:
                         prompt = prompt + "\n\nATENÇÃO: Sua saída foi truncada. Refaça incluindo TODO o conteúdo."
                     else:
@@ -1050,10 +1062,22 @@ def refine_section(
                         title or f"#{index}",
                     )
             refined_text, norm_stats = _apply_normalizers(refined_text)
+            final_residual_english, final_residual_english_reason = detect_residual_english(refined_text)
+            if final_residual_english:
+                logger.warning(
+                    "Refine chunk %d/%d-%d/%d ainda contem possivel ingles residual: %s",
+                    index,
+                    total,
+                    c_idx,
+                    len(chunks),
+                    final_residual_english_reason,
+                )
             if used_fallback or collapse_flag:
                 reasons_payload = fallback_reasons
                 if collapse_reasons:
                     reasons_payload = reasons_payload + [f"collapse:{r}" for r in collapse_reasons]
+                if final_residual_english:
+                    reasons_payload = reasons_payload + [final_residual_english_reason]
                 _write_guardrail_debug_file(
                     cfg.output_dir,
                     section_index=index,
@@ -1125,12 +1149,14 @@ def refine_section(
                     }
                 )
             if record_chunk:
-                suspect_output = bool(used_fallback or collapse_flag)
+                suspect_output = bool(used_fallback or collapse_flag or final_residual_english)
                 suspect_reason = ""
                 if used_fallback and fallback_reasons:
                     suspect_reason = ";".join(fallback_reasons)
                 elif collapse_flag:
                     suspect_reason = "collapse_detector"
+                elif final_residual_english:
+                    suspect_reason = final_residual_english_reason
                 debug_stage_dir = debug_run.stage_dir("60_refine") / "debug_refine"
                 _maybe_write_debug_files(chunk, llm_raw, refined_text)
                 outputs_payload = {
@@ -1154,6 +1180,8 @@ def refine_section(
                         "retry_reasons": retry_reasons,
                         "suspect_output": suspect_output,
                         "suspect_reason": suspect_reason,
+                        "residual_english": final_residual_english,
+                        "residual_english_reason": final_residual_english_reason,
                         "contamination_detected": False,
                         "sanitization_ratio": None,
                         "normalizers": {

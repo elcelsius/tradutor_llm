@@ -11,7 +11,9 @@
   - Define defaults e carrega `config.yaml`.
   - Define `data_dir`, `output_dir`, modelos/temperaturas/ctx, PDF settings.
 - **Tradução**: `tradutor/translate.py`
-  - Pré-processamento, chunking, glossário por chunk, chamadas LLM, sanitização, métricas/report e manifesto de progresso.
+  - Pré-processamento, chunking, contexto deslizante, perfil diálogo/narração, glossário por chunk, chamadas LLM, sanitização, métricas/report e manifesto de progresso.
+- **Repair seletivo**: `tradutor/repair.py`
+  - QA/repair por chunk antes do refine, usando original EN, tradução PT-BR e glossário do chunk.
 - **Desquebrar**: `tradutor/desquebrar.py`, `tradutor/desquebrar_safe.py`
   - Une linhas quebradas (LLM ou heurística "safe").
 - **Refine**: `tradutor/refine.py`
@@ -26,11 +28,12 @@
 1. **Extração**: PDF -> texto (`tradutor/pdf_reader.py`).
 2. **Pré-processamento**: limpeza básica + remoção de front-matter/TOC (`tradutor/preprocess.py`).
 3. **Desquebrar** (opcional): une linhas quebradas (LLM ou safe).
-4. **Tradução**: chunking + LLM + sanitização + recomposição (`tradutor/translate.py`).
-5. **Cleanup antes do refine** (opcional): heurísticas determinísticas.
-6. **Refine**: revisão por chunk com guardrails (`tradutor/refine.py`).
-7. **Pós-processamento**: correções finais e normalizadores.
-8. **PDF** (opcional): exporta `*_pt_refinado.md` para PDF.
+4. **Tradução**: chunking + contexto deslizante + perfil diálogo/narração + LLM + sanitização + recomposição (`tradutor/translate.py`).
+5. **QA/repair da tradução**: corrige apenas chunks com problema objetivo (`tradutor/repair.py`).
+6. **Cleanup antes do refine** (opcional): heurísticas determinísticas.
+7. **Refine**: revisão por chunk com guardrails (`tradutor/refine.py`).
+8. **Pós-processamento**: correções finais e normalizadores.
+9. **PDF** (opcional): exporta `*_pt_refinado.md` para PDF.
 
 ## Artefatos/JSONs principais (schemas resumidos)
 > Campos listados abaixo foram coletados dos writers no código. Outros campos podem aparecer.
@@ -44,12 +47,24 @@
 - `effective_translate_chunk_chars`, `max_chunk_chars_observed`
 - `dialogue_splits`, `triple_quotes_removed`
 - `paragraph_mismatch` (opcional)
+- `translation_repair_enabled`, `repair_attempted_chunks`, `repair_changed_chunks`, `repair_cache_hits`, `repair_suspect_chunks`
 
 ### `*_translate_metrics.json` (em `saida/`)
 - `total_chunks`, `cache_hits`, `duplicates_reused`, `fallbacks`, `failed_chunks`, `collapse_detected`
 - `chunks`: métricas por chunk (ver `tradutor/translate.py`)
 - `effective_translate_chunk_chars`, `max_chunk_chars_observed`
 - `dialogue_splits`, `triple_quotes_removed`
+- `repair_attempted_chunks`, `repair_changed_chunks`, `repair_suspect_chunks`
+
+### `*_repair_report.json` (em `saida/`)
+- `mode`: "translation_repair"
+- `enabled`
+- `total_chunks`, `attempted_chunks`, `changed_chunks`, `cache_hits`, `suspect_chunks`
+- `pipeline_version`, `prompt_hash`, `timestamp`
+
+### `*_repair_metrics.json` (em `saida/`)
+- Campos do report
+- `chunks`: métricas por chunk com `attempted`, `changed`, `issues`, `retry_reasons`, `suspect_output`
 
 ### `*_progress.json` (tradução)
 - `total_chunks`
@@ -91,6 +106,7 @@
 - `*_chunks_debug.jsonl`: debug por chunk (refine).
 - `saida/debug_refine*/`: arquivos `orig/raw/final` quando `--debug-refine`.
 - `saida/debug_runs/<slug>/<timestamp>/40_translate/translate_manifest.json`: inclui metadados de glossário por chunk; `debug_traducao/chunkNNN_glossary.txt` mostra o bloco enviado ao prompt.
+- `saida/debug_runs/<slug>/<timestamp>/45_repair/repair_manifest.json`: inclui problemas detectados e chunks alterados pelo repair.
 
 ## Debug playbook (chunks/merge/cache)
 1. **Auditar preprocess antes de tradução longa**

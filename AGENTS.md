@@ -2,7 +2,7 @@
 
 ## Objetivo do projeto (5–10 linhas)
 - Pipeline completo para traduzir Light Novels de **EN → PT-BR** usando LLMs (Ollama ou Gemini).
-- Fluxo cobre extração de PDF/MD, limpeza, “desquebrar” linhas, tradução em chunks, refine/revisão e geração de PDF.
+- Fluxo cobre extração de PDF/MD, limpeza, “desquebrar” linhas, tradução em chunks com contexto deslizante, QA/repair seletivo, refine/revisão e geração de PDF.
 - Configuração central em `config.yaml`, com overrides por flags de CLI.
 - Saídas e auditoria gravadas em `saida/` (markdown final, métricas, manifests e PDFs).
 - Glossários manuais/dinâmicos são suportados e injetados por chunk.
@@ -10,7 +10,7 @@
 - Não commitamos dados reais (glossários, PDFs, chaves); use arquivos de exemplo.
 
 ## Mapa de pastas (o que é o quê)
-- `tradutor/` — código principal do pipeline (CLI, tradução, refine, PDF, utils).
+- `tradutor/` — código principal do pipeline (CLI, tradução, repair, refine, PDF, utils).
 - `data/` — PDFs de entrada (não versionar conteúdo real).
 - `saida/` — saídas, caches e artefatos de debug (gerado em runtime).
 - `glossario/` — glossários manuais (mantém só exemplos no Git).
@@ -50,12 +50,12 @@ python -m tradutor.main traduz \
   --request-timeout 180 \
   --num-predict 3072
 ```
-- Flags comuns: `--skip-front-matter`, `--split-by-sections`, `--debug`, `--debug-chunks`, `--clear-cache {all,translate,refine,desquebrar}`.
+- Flags comuns: `--skip-front-matter`, `--split-by-sections`, `--translation-repair/--no-translation-repair`, `--debug`, `--debug-chunks`, `--clear-cache {all,translate,repair,refine,desquebrar}`.
 - Modelos/ctx/num_predict podem ser configurados no `config.yaml` ou sobrescritos por flags.
 
 ## Caches, progresso, estado (e como limpar)
 - Caches por chunk (em `saida/` por padrão):
-  - `saida/cache_traducao`, `saida/cache_refine`, `saida/cache_desquebrar` (ver `tradutor/cache_utils.py`).
+  - `saida/cache_traducao`, `saida/cache_repair`, `saida/cache_refine`, `saida/cache_desquebrar` (ver `tradutor/cache_utils.py`).
 - Progress/state:
   - `*_progress.json` (tradução/refine), `state_refine.json` (refine).
   - Debug: `*_pt_chunks_debug.jsonl`, `*_chunks_debug.jsonl`.
