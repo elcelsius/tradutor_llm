@@ -32,7 +32,7 @@
 5. **QA/repair da tradução**: corrige apenas chunks com problema objetivo (`tradutor/repair.py`).
 6. **Cleanup antes do refine** (opcional): heurísticas determinísticas.
 7. **Refine**: revisão por chunk com guardrails (`tradutor/refine.py`).
-8. **Pós-processamento**: correções finais e normalizadores.
+8. **Revisão final determinística**: estrutura, aliases, caixa de entidades conhecidas, aspas e QA por relatório.
 9. **PDF** (opcional): exporta `*_pt_refinado.md` para PDF.
 
 ## Artefatos/JSONs principais (schemas resumidos)
@@ -143,15 +143,15 @@
 - Use flags: `--no-refine`, `--use-desquebrar/--no-use-desquebrar`, `--pdf-enabled`.
 - Para desquebrar "safe" (sem LLM): `--desquebrar-mode safe`.
 
-## Atualizações recentes (pipeline v2)
+## Atualizações recentes (pipeline v4)
 - Desquebrar: pós-processo determinístico junta hard-wraps seguros, corrige hífen silábico quando a forma sem hífen domina no texto e isola `***`; métricas extras nos stats.
 - Cleanup pré-refine: dedupe não remove falas/onomatopeias curtas (Crack!, "— ?", "— …") a menos que haja glitch claro (>=4 repetições consecutivas).
 - Tradução/QA: retries para aspas desbalanceadas ou repetições extras de linhas curtas; pós-processo remove aspas curvas sobrando em falas iniciadas por travessão.
 - Glossário: suporte a `enforce` por termo; "Lord of the Flies" -> "Senhor das Moscas" aplicado automaticamente quando o termo aparece no chunk.
 - Baseline local atual: tradução com `mistral-small3.2:24b-instruct-2506-q4_K_M`, desquebrar com `gemma3:27b-it-q4_K_M`, refine com `gemma4:26b-a4b-it-q4_K_M`, Ollama em modo `chat` e `ollama_think: false`.
-- Glossário: loader separa `source_aliases`/`aliases` de busca, `bad_aliases` proibidos e `allowed_target_aliases`; `--use-glossary` resolve `glossario/glossario_manual.json` ou `glossario/glossario_geral.json`.
+- Glossário: loader separa `source_aliases`/`aliases` de busca, `source_case_sensitive` para nomes técnicos ambíguos, `bad_aliases` proibidos, `allowed_target_aliases` aceitos e `target_replacements` contextuais; o refine seleciona apenas formas PT-BR presentes no chunk; `--use-glossary` resolve `glossario/glossario_manual.json` ou `glossario/glossario_geral.json`.
 - Glossário: `scripts/audit_glossary.py` audita duplicatas, aliases ambíguos, aliases PT-BR em busca e redundâncias; `scripts/migrate_glossary_aliases.py --write` limpa o glossário local sem versionar dados reais.
-- Revisão pós-tradução determinística: `scripts/review_translation.py` restaura headings a partir de `sections.json` e aplica correções conservadoras de glossário/resíduos sem reescrever o estilo.
+- Revisão final automática: roda após tradução e refine, usa `<slug>_source_sections.json`, normaliza headings/CAPS/aspas e grava `<slug>_pt_review_report.json` e `<slug>_pt_refinado_review_report.json`. O script `review_translation.py --finalize` reaplica a etapa sem LLM.
 - QA objetiva: `tradutor/quality_checks.py` checa termos canônicos, aliases ruins, inglês residual, marcadores internos, aspas e sinais simples de gênero.
 - Benchmarks: `bench_llms`, `bench_refine_llms` e `bench_e2e_llms` usam o pipeline real, geram `*_qa.json` e aceitam glossário.
 - Normalizadores: interjeições comuns (`Phew`, `Geez`, `Huh`, `Ugh`) são normalizadas para PT-BR; atribuições quebradas em travessão (`— perguntou...`) são reunidas ao diálogo anterior.

@@ -45,6 +45,16 @@ def test_quality_checks_flag_bad_name_alias() -> None:
     assert report["issues_by_type"]["bad_alias_in_target"] == 1
 
 
+def test_quality_checks_handles_case_only_bad_alias_without_flagging_canonical() -> None:
+    terms = [{"key": "Kyokugen", "pt": "Kyokugen", "bad_aliases": ["kyokugen"]}]
+
+    canonical = run_translation_quality_checks("Kyokugen", "A técnica Kyokugen funciona.", terms)
+    lowercase = run_translation_quality_checks("Kyokugen", "A técnica kyokugen funciona.", terms)
+
+    assert canonical["issues_by_type"].get("bad_alias_in_target") is None
+    assert lowercase["issues_by_type"]["bad_alias_in_target"] == 1
+
+
 def test_quality_checks_flag_possible_gender_mismatch() -> None:
     source = "Abis Angun was taller than her brother."
     translated = "Abis Angun era mais alto que seu irmão."
@@ -60,6 +70,25 @@ def test_quality_checks_flag_possible_gender_mismatch() -> None:
     report = run_translation_quality_checks(source, translated, terms)
 
     assert report["issues_by_type"]["possible_gender_mismatch"] == 1
+
+
+def test_quality_checks_does_not_bind_object_name_to_speaker_adjective() -> None:
+    terms = [
+        {
+            "key": "Kirihara Takuto",
+            "pt": "Kirihara Takuto",
+            "category": "personagem",
+            "gender": "masculino",
+        }
+    ]
+
+    report = run_translation_quality_checks(
+        "Seras could not have defeated Kirihara alone.",
+        "Eu não teria derrotado o Kirihara Takuto sozinha.",
+        terms,
+    )
+
+    assert report["issues_by_type"].get("possible_gender_mismatch") is None
 
 
 def test_quality_checks_flag_mixed_gender_adjectives_without_name() -> None:
@@ -120,6 +149,24 @@ def test_quality_checks_allows_explicit_target_alias() -> None:
     report = run_translation_quality_checks(source, translated, terms)
 
     assert report["issues_by_type"].get("source_term_in_target") is None
+    assert report["issues_by_type"].get("missing_canonical_term") is None
+
+
+def test_quality_checks_allows_contextual_noun_form_for_skill() -> None:
+    report = run_translation_quality_checks(
+        "Touka used Paralyze.",
+        "O alcance é igual ao da Paralisia.",
+        [
+            {
+                "key": "Paralyze",
+                "pt": "Paralisar",
+                "source_case_sensitive": True,
+                "allowed_target_aliases": ["Paralisia"],
+            }
+        ],
+    )
+
+    assert report["issues_by_type"].get("missing_canonical_term") is None
 
 
 def test_quality_checks_flags_bad_alias_separately_from_source_alias() -> None:
@@ -137,6 +184,73 @@ def test_quality_checks_flags_bad_alias_separately_from_source_alias() -> None:
     report = run_translation_quality_checks(source, translated, terms)
 
     assert report["issues_by_type"]["bad_alias_in_target"] == 1
+
+
+def test_quality_checks_flags_contextual_target_replacement_alias() -> None:
+    report = run_translation_quality_checks(
+        "After the Deathmatch",
+        "Após a Batalha de Morte.",
+        [
+            {
+                "key": "Deathmatch",
+                "pt": "Combate Mortal",
+                "target_replacements": {"Após a Batalha de Morte": "Após o Combate Mortal"},
+            }
+        ],
+    )
+
+    assert report["issues_by_type"]["bad_alias_in_target"] == 1
+
+
+def test_quality_checks_respects_case_sensitive_source_term() -> None:
+    terms = [{"key": "Freeze", "pt": "Congelar", "source_case_sensitive": True}]
+
+    common_word_report = run_translation_quality_checks(
+        "After she watched his body freeze, she lost consciousness.",
+        "Depois que ela viu o corpo dele ficar imóvel, perdeu a consciência.",
+        terms,
+    )
+    skill_report = run_translation_quality_checks(
+        "Touka cast Freeze on the undead enemy.",
+        "Touka lançou a habilidade no inimigo morto-vivo.",
+        terms,
+    )
+
+    assert common_word_report["issues_by_type"].get("missing_canonical_term") is None
+    assert skill_report["issues_by_type"]["missing_canonical_term"] == 1
+
+
+def test_quality_checks_does_not_require_full_canonical_form_for_source_alias() -> None:
+    report = run_translation_quality_checks(
+        "The refugees are headed to Yonato.",
+        "Os refugiados estão indo para Yonato.",
+        [
+            {
+                "key": "State of Yonato",
+                "pt": "Estado de Yonato",
+                "source_aliases": ["Yonato"],
+            }
+        ],
+    )
+
+    assert report["issues_by_type"].get("missing_canonical_term") is None
+
+
+def test_quality_checks_requires_canonical_form_for_enforced_source_alias() -> None:
+    report = run_translation_quality_checks(
+        "The Kurosaga Clan arrived.",
+        "O grupo da Munin chegou.",
+        [
+            {
+                "key": "Forbidden Words Clan",
+                "pt": "Clã das Palavras Proibidas",
+                "source_aliases": ["Kurosaga Clan"],
+                "enforce": True,
+            }
+        ],
+    )
+
+    assert report["issues_by_type"]["missing_canonical_term"] == 1
 
 
 def test_quality_checks_does_not_flag_fixed_expression_de_surpresa() -> None:
@@ -182,3 +296,33 @@ def test_quality_checks_flag_common_english_interjection() -> None:
     report = run_translation_quality_checks("Phew, I am thirsty.", "Phew, fiquei com sede. Huh?", [])
 
     assert report["issues_by_type"]["residual_english"] == 2
+
+
+def test_quality_checks_flags_known_game_jargon_left_in_english() -> None:
+    report = run_translation_quality_checks("The buffs faded.", "Os buffs desapareceram.", [])
+
+    assert report["issues_by_type"]["residual_english"] == 1
+
+
+def test_quality_checks_flag_malformed_quote_boundary() -> None:
+    report = run_translation_quality_checks("Source", "”“Ah, tudo bem.”", [])
+
+    assert report["issues_by_type"]["malformed_quote_boundary"] == 1
+
+
+def test_quality_checks_allows_dialogues_separated_by_newlines() -> None:
+    report = run_translation_quality_checks("Source", "“Oi.”\n\n“Tudo bem.”", [])
+
+    assert report["issues_by_type"].get("malformed_quote_boundary") is None
+
+
+def test_quality_checks_flags_missing_quote_spacing() -> None:
+    report = run_translation_quality_checks("Source", '"Uma fala.""Outra fala."', [])
+
+    assert report["issues_by_type"]["missing_quote_spacing"] == 1
+
+
+def test_quality_checks_flags_stray_format_marker_after_dialogue() -> None:
+    report = run_translation_quality_checks("Source", "“Tudo bem.”*", [])
+
+    assert report["issues_by_type"]["stray_format_marker"] == 1

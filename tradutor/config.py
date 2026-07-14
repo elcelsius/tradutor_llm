@@ -40,6 +40,7 @@ class AppConfig:
     desquebrar_model: str = "cnmoro/gemma3-gaia-ptbr-4b:q4_k_m"
     dump_chunks: bool = False
     refine_guardrails: GuardrailsType = "strict"
+    refine_after_translate: bool = False
     use_desquebrar: bool = True
     desquebrar_mode: Literal["safe", "llm"] = "llm"
     fail_on_chunk_error: bool = False

@@ -204,4 +204,3 @@ class DebugRunWriter:
     ) -> None:
         self.write_args(args, cfg)
         self.write_versions(translate_prompt_hash, refine_prompt_hash, repair_prompt_hash)
-

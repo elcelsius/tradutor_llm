@@ -43,6 +43,73 @@ META_PATTERNS_STRICT = [
     r"^\s*resumo[: ].*$",
 ]
 
+REFINE_MARKER_BLOCK_RE = re.compile(
+    r"###\s*TEXTO_REFINADO_INICIO\s*(.*?)\s*###\s*TEXTO_REFINADO_FIM",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+REFINE_DELIMITER_RE = re.compile(r"(?m)^\s*(?:\*{3,}|-{3,})\s*$")
+REFINE_META_PREAMBLE_RE = re.compile(
+    r"(?:aqui\s+est[áa]|segue\s+(?:a\s+)?revis[ãa]o|revis[ãa]o\s+(?:do|deste)|"
+    r"here\s+is|below\s+is).{0,180}(?:texto|revis[ãa]o|ajuste)|"
+    r"(?:principais\s+)?(?:ajustes|altera[çc][õo]es|mudan[çc]as)\s+(?:feitos|realizadas|e\s+notas)",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+REFINE_BODY_HEADING_RE = re.compile(
+    r"(?im)^\s*(?:#{1,6}\s*)?(?:\*{1,2}\s*)?"
+    r"(?:texto\s+(?:revisado|refinado)|revis[ãa]o\s+do\s+texto)"
+    r"(?:\s*\([^\n)]*\))?\s*:?[\s*]*$"
+)
+REFINE_META_SECTION_RE = re.compile(
+    r"(?im)^\s*(?:#{1,6}\s*)?(?:\*{1,2}\s*)?"
+    r"(?:(?:principais\s+)?(?:ajustes|altera[çc][õo]es|mudan[çc]as|notas|observa[çc][õo]es)"
+    r"(?:\s+(?:feitos|realizadas|da\s+revis[ãa]o))?)\s*:?[\s*]*$"
+)
+
+
+def _extract_delimited_refine_text(text: str) -> str:
+    """Extrai apenas o texto quando o modelo cerca a revisão com meta-comentários.
+
+    Alguns modelos locais ignoram os marcadores pedidos e respondem com uma
+    introdução, `***`, o texto revisado, outro `***` e uma lista de mudanças.
+    O recorte só é aplicado quando a moldura contém metatexto inequívoco; um
+    separador de cena legítimo da obra, isoladamente, permanece intacto.
+    """
+    marker_match = REFINE_MARKER_BLOCK_RE.search(text)
+    if marker_match:
+        candidate = marker_match.group(1).strip()
+        if candidate:
+            prefix = text[: marker_match.start()].strip()
+            # Um título Markdown pode ficar fora dos marcadores sem ser
+            # metacomentário do modelo. Preserve apenas esse prefixo estrito.
+            prefix_lines = [line.strip() for line in prefix.splitlines() if line.strip()]
+            if prefix_lines and all(re.fullmatch(r"#{1,6}\s+.+", line) for line in prefix_lines):
+                return f"{prefix}\n\n{candidate}"
+            return candidate
+
+    body_heading = REFINE_BODY_HEADING_RE.search(text)
+    if body_heading:
+        candidate = text[body_heading.end() :]
+        meta_section = REFINE_META_SECTION_RE.search(candidate)
+        if meta_section:
+            candidate = candidate[: meta_section.start()]
+        # Separadores introduzidos antes de uma seção de notas também não são
+        # conteúdo da novel.
+        candidate = re.sub(r"(?:\n\s*(?:\*{3,}|-{3,})\s*)+$", "", candidate).strip()
+        if candidate:
+            return candidate
+
+    delimiters = list(REFINE_DELIMITER_RE.finditer(text))
+    if len(delimiters) < 2:
+        return text
+
+    preamble = text[: delimiters[0].start()]
+    postamble = text[delimiters[1].end() :]
+    if not (REFINE_META_PREAMBLE_RE.search(preamble) or REFINE_META_PREAMBLE_RE.search(postamble)):
+        return text
+
+    candidate = text[delimiters[0].end() : delimiters[1].start()].strip()
+    return candidate or text
+
 
 @dataclass
 class SanitizationReport:
@@ -258,7 +325,8 @@ def sanitize_refine_output(text: str) -> str:
     - remove espacos extras nas extremidades
     Nao aplica regras agressivas nem corta paragrafos.
     """
-    cleaned = text.replace("<think>", "").replace("</think>", "")
+    cleaned = _extract_delimited_refine_text(text)
+    cleaned = cleaned.replace("<think>", "").replace("</think>", "")
     filtered_lines = []
     for line in cleaned.splitlines():
         lowered = line.strip().lower()

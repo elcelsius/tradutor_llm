@@ -17,3 +17,23 @@ def test_needs_retry_detects_truncated_ellipsis_token() -> None:
     ok, reason = needs_retry("Contexto", "Voc...")
     assert ok is True
     assert reason == "truncated_token_ellipsis"
+
+
+def test_needs_retry_detects_merged_or_missing_paragraph() -> None:
+    source = "“First line.”\n\nNarration between the lines.\n\n“Last line.”"
+    translated = "“Primeira linha.” Narração entre as falas.\n\n“Última linha.”"
+
+    retry, reason = needs_retry(source, translated)
+
+    assert retry is True
+    assert reason == "omissao_paragrafos (2/3)"
+
+
+def test_needs_retry_allows_paragraphs_preserved_as_nonempty_lines() -> None:
+    source = "First.\n\nSecond.\n\nThird."
+    translated = "Primeiro.\nSegundo.\nTerceiro."
+
+    retry, reason = needs_retry(source, translated)
+
+    assert retry is False
+    assert reason == ""

@@ -53,3 +53,18 @@ def test_enforce_does_not_expand_name_alias_when_canonical_is_same_as_source():
 
     assert normalized == text
     assert replacements == {}
+
+
+def test_enforce_explicit_target_replacement_for_selected_term():
+    terms = [
+        {
+            "key": "Paralyze",
+            "pt": "Paralisar",
+            "target_replacements": {"Paralizar": "Paralisar"},
+        }
+    ]
+
+    normalized, replacements = enforce_canonical_terms("Usei Paralizar.", terms)
+
+    assert normalized == "Usei Paralisar."
+    assert replacements == {"Paralizar": 1}

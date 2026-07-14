@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 
+from .quote_fix import collapse_repeated_curly_quotes
+
 _BIRTH_CONTEXT = re.compile(
     r"\b(bebe|bebes|bebê|bebês|filh[oa]s?|gravidez|gr[aá]vida|gesta[cç][aã]o|matern|parto)\b",
     re.IGNORECASE,
@@ -22,6 +24,31 @@ def postprocess_translation(pt_text: str, en_text: str | None = None) -> str:
     """
     if not pt_text:
         return pt_text
+
+    pt_text, _ = collapse_repeated_curly_quotes(pt_text)
+
+    # Corrige resíduos híbridos do inglês antes da QA por chunk. Se forem
+    # deixados para a revisão final, o guardrail os rejeita repetidamente.
+    pt_text = re.sub(r"(?<![A-Za-zÀ-ÿ])I-isso\b", "S-sim", pt_text, flags=re.IGNORECASE)
+    pt_text = re.sub(
+        r"(?<![A-Za-zÀ-ÿ])I\s+(?=[a-zà-ÿ])",
+        "Eu ",
+        pt_text,
+        flags=re.IGNORECASE,
+    )
+    pt_text = re.sub(r"\buh+\b", "Ah", pt_text, flags=re.IGNORECASE)
+    pt_text = re.sub(r"\barright\b", "Beleza", pt_text, flags=re.IGNORECASE)
+    pt_text = re.sub(r"\bboost\b", "impulso", pt_text, flags=re.IGNORECASE)
+    pt_text = re.sub(r"\bthey\s+todos\b", "todos", pt_text, flags=re.IGNORECASE)
+    pt_text = re.sub(r"\bY-you\s+divindades\s+podem\b", "V-vocês, divindades, podem", pt_text, flags=re.IGNORECASE)
+    pt_text = re.sub(r"\bY-you\b", "V-você", pt_text, flags=re.IGNORECASE)
+    pt_text = re.sub(
+        r"\b(super\s+)?desconfiad([ao])\s+AF\b",
+        r"\1desconfiad\2 pra caramba",
+        pt_text,
+        flags=re.IGNORECASE,
+    )
+    pt_text = re.sub(r"\bthough\b", "porém", pt_text, flags=re.IGNORECASE)
 
     # Parry/parried/parrying -> aparar (somente quando presente no EN e fora de contexto de parto)
     if en_text is not None and re.search(r"\bparr(?:y|ied|ying)\b", en_text, flags=re.IGNORECASE) and not _BIRTH_CONTEXT.search(pt_text):

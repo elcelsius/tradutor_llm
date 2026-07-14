@@ -32,3 +32,36 @@ def test_missing_chapter_heading_for_deathmatch_opening_is_restored():
 
     assert result.startswith("# Capítulo 1: Após o Combate Mortal")
     assert "Após Sogou ter visto o corpo do Kirihara congelar" in result
+
+
+def test_chapter_subtitle_is_merged_into_markdown_heading():
+    text = "# Capítulo 1:\n\nApós o Combate Mortal\n\nDepois que Sogou acordou."
+
+    result = normalize_structure(text)
+
+    assert result.startswith("# Capítulo 1: Após o Combate Mortal")
+    assert "Depois que Sogou acordou." in result
+
+
+def test_duplicate_generic_heading_is_removed_after_a_titled_heading():
+    text = "# Capítulo 1: Após a Batalha de Morte\n\n# Capítulo 1:\n\nDEPOIS QUE SOGOU viu Seras."
+
+    result = normalize_structure(text)
+
+    assert result.count("# Capítulo 1:") == 1
+    assert "# Capítulo 1: Após a Batalha de Morte" in result
+    assert "Depois que Sogou viu Seras." in result
+
+
+def test_character_time_label_is_split_into_structure():
+    text = "Yasu Tomohiro ALGUM TEMPO ANTES, há um tempo…"
+
+    result = normalize_structure(text)
+
+    assert result == "## Yasu Tomohiro\n\nAlgum tempo antes…"
+
+
+def test_scene_separator_glued_to_narration_is_isolated():
+    result = normalize_structure("*** A cena continua.")
+
+    assert result == "***\n\nA cena continua."

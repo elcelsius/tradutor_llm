@@ -226,8 +226,8 @@ def test_translate_preserves_quoted_dialogue_lines(tmp_path: Path) -> None:
         already_preprocessed=True,
     )
 
-    assert '"Oi."' in result
-    assert '"Sim."' in result
+    assert "“Oi.”" in result
+    assert "“Sim.”" in result
     assert "— Oi." not in result
     assert "— Sim." not in result
 

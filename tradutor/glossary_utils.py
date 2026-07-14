@@ -83,6 +83,13 @@ def _string_list(value: Any) -> list[str]:
     return [str(item).strip() for item in value if str(item).strip()]
 
 
+def _as_bool(value: Any) -> bool:
+    """Interpreta flags booleanas vindas de JSON sem tratar 'false' como verdadeiro."""
+    if isinstance(value, str):
+        return value.strip().casefold() in {"1", "true", "yes", "sim"}
+    return bool(value)
+
+
 def _merge_indexes(manual_index: GlossaryIndex, dynamic_index: GlossaryIndex) -> GlossaryIndex:
     merged = dict(manual_index)
     for key, entry in dynamic_index.items():
@@ -116,6 +123,16 @@ def _load_terms(path: Path, source: str, logger: logging.Logger) -> List[Glossar
         source_aliases = _string_list(entry.get("source_aliases") or entry.get("aliases") or [])
         bad_aliases = _string_list(entry.get("bad_aliases") or entry.get("forbidden_aliases") or [])
         allowed_target_aliases = _string_list(entry.get("allowed_target_aliases") or entry.get("target_aliases") or [])
+        raw_target_replacements = entry.get("target_replacements") or {}
+        target_replacements = (
+            {
+                str(alias).strip(): str(replacement).strip()
+                for alias, replacement in raw_target_replacements.items()
+                if str(alias).strip() and str(replacement).strip()
+            }
+            if isinstance(raw_target_replacements, dict)
+            else {}
+        )
         normalized: GlossaryEntry = {
             "key": key,
             "pt": pt,
@@ -130,6 +147,12 @@ def _load_terms(path: Path, source: str, logger: logging.Logger) -> List[Glossar
             "source_aliases_norm": [normalize_key(a) for a in source_aliases],
             "bad_aliases": bad_aliases,
             "allowed_target_aliases": allowed_target_aliases,
+            "target_replacements": target_replacements,
+            # Algumas habilidades têm nomes que também são palavras comuns em
+            # inglês. Esta flag mantém a busca no original restrita ao uso
+            # grafado como nome de habilidade, por exemplo `Freeze` e não
+            # `body freeze`.
+            "source_case_sensitive": _as_bool(entry.get("source_case_sensitive", False)),
         }
         for field in ("enforce", "gender", "type", "term_type"):
             if field in entry:
@@ -291,30 +314,40 @@ def select_terms_for_chunk(
     fallback_limit: int = 30,
 ) -> tuple[list[GlossaryEntry], int]:
     """
-    Seleciona termos cujo `key` ou `alias` aparece no chunk (case-insensitive).
+    Seleciona termos cujo `key` ou `alias` aparece no chunk.
+    Por padrão a busca é case-insensitive; `source_case_sensitive=true` no
+    termo mantém a distinção entre um nome canônico e uma palavra comum.
     Retorna (termos_para_prompt, matched_count).
     """
     if not manual_terms:
         return [], 0
-    chunk_norm = re.sub(r"\s+", " ", chunk_text.lower())
+    chunk_compact = re.sub(r"\s+", " ", chunk_text)
+    chunk_norm = chunk_compact.lower()
 
-    def _matches_term(term_norm: str) -> bool:
-        if not term_norm:
+    def _matches_term(term_value: str, *, case_sensitive: bool) -> bool:
+        term_value = term_value.strip()
+        if not term_value:
             return False
-        if re.search(r"[A-Za-zÀ-ÿ0-9]", term_norm):
-            return bool(re.search(rf"\b{re.escape(term_norm)}\b", chunk_norm))
-        return term_norm in chunk_norm
+        needle = term_value if case_sensitive else normalize_key(term_value)
+        haystack = chunk_compact if case_sensitive else chunk_norm
+        if re.search(r"[A-Za-zÀ-ÿ0-9]", needle):
+            return bool(re.search(rf"\b{re.escape(needle)}\b", haystack))
+        return needle in haystack
+
     matches: list[GlossaryEntry] = []
     seen: set[str] = set()
     for term in manual_terms:
-        key_norm = normalize_key(str(term.get("key", "")))
+        key = str(term.get("key", "")).strip()
+        key_norm = normalize_key(key)
         if not key_norm or key_norm in seen:
             continue
-        aliases_norm: list[str] = []
-        raw_aliases = term.get("source_aliases_norm") or term.get("aliases_norm") or term.get("source_aliases") or term.get("aliases") or []
-        if isinstance(raw_aliases, list):
-            aliases_norm = [normalize_key(str(a)) for a in raw_aliases if str(a).strip()]
-        matched = _matches_term(key_norm) or any(_matches_term(a) for a in aliases_norm)
+        aliases = _string_list(term.get("source_aliases") or term.get("aliases") or [])
+        if not aliases:
+            aliases = _string_list(term.get("source_aliases_norm") or term.get("aliases_norm") or [])
+        case_sensitive = _as_bool(term.get("source_case_sensitive", False))
+        matched = _matches_term(key, case_sensitive=case_sensitive) or any(
+            _matches_term(alias, case_sensitive=case_sensitive) for alias in aliases
+        )
         if matched:
             matches.append(term)
             seen.add(key_norm)
@@ -323,6 +356,51 @@ def select_terms_for_chunk(
         return matches, len(matches)
     fallback = sorted(manual_terms, key=lambda e: normalize_key(str(e.get("key", ""))))[:fallback_limit]
     return fallback, 0
+
+
+def select_terms_for_target_text(
+    terms: list[GlossaryEntry],
+    target_text: str,
+    match_limit: int = 80,
+) -> tuple[list[GlossaryEntry], int]:
+    """Seleciona termos relevantes para uma etapa que recebe PT-BR.
+
+    O refinador não deve receber o glossário inteiro: isso ocupa contexto e
+    incentiva mudanças em termos que não estão no trecho. A busca considera a
+    forma canônica em português e aliases de saída, inclusive formas proibidas
+    que precisam ser corrigidas. Não há fallback deliberado quando nada casa.
+    """
+    if not terms or not target_text:
+        return [], 0
+
+    compact = re.sub(r"\s+", " ", target_text.lower())
+
+    def _contains(value: str) -> bool:
+        value_norm = normalize_key(value)
+        if not value_norm:
+            return False
+        if re.search(r"[A-Za-zÀ-ÿ0-9]", value_norm):
+            return bool(re.search(rf"\b{re.escape(value_norm)}\b", compact))
+        return value_norm in compact
+
+    selected: list[GlossaryEntry] = []
+    seen: set[str] = set()
+    for term in terms:
+        key_norm = normalize_key(str(term.get("key", "")))
+        if not key_norm or key_norm in seen:
+            continue
+        variants = [str(term.get("pt", "")).strip()]
+        variants.extend(_string_list(term.get("allowed_target_aliases")))
+        variants.extend(_string_list(term.get("bad_aliases") or term.get("forbidden_aliases")))
+        replacements = term.get("target_replacements") or {}
+        if isinstance(replacements, dict):
+            variants.extend(str(alias).strip() for alias in replacements if str(alias).strip())
+        if any(_contains(variant) for variant in variants):
+            selected.append(term)
+            seen.add(key_norm)
+
+    selected = sorted(selected, key=lambda entry: normalize_key(str(entry.get("key", ""))))[:match_limit]
+    return selected, len(selected)
 
 
 def parse_glossary_suggestions(block: str) -> List[GlossaryEntry]:

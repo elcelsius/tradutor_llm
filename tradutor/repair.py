@@ -23,7 +23,7 @@ from .postprocess_translation import postprocess_translation
 from .qa import count_quote_lines, count_quotes
 from .sanitizer import sanitize_refine_output
 
-REPAIR_PIPELINE_VERSION = "2"
+REPAIR_PIPELINE_VERSION = "7"
 REPAIR_START_MARKER_RE = r"###\s*TEXTO_REPARADO_INICIO"
 REPAIR_END_MARKER_RE = r"###\s*TEXTO_REPARADO_FIM"
 

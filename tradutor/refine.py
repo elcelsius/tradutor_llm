@@ -27,8 +27,10 @@ from .glossary_utils import (
     apply_suggestions_to_state,
     build_glossary_state,
     format_glossary_for_prompt,
+    normalize_key,
     parse_glossary_suggestions,
     save_dynamic_glossary,
+    select_terms_for_target_text,
     split_refined_and_suggestions,
 )
 from .llm_backend import LLMBackend
@@ -45,16 +47,21 @@ from .cache_utils import (
     is_duplicate_reuse_safe,
     set_cache_base_dir,
 )
-from .qa import needs_retry
+from .qa import (
+    has_curly_quote_balance_regression,
+    has_curly_quote_count_regression,
+    has_malformed_quote_boundary,
+    needs_retry,
+)
 from .advanced_preprocess import clean_text as advanced_clean
 from .anti_hallucination import anti_hallucination_filter
 from .cleanup import cleanup_before_refine, detect_obvious_dupes, detect_glued_dialogues
-from .quote_fix import fix_unbalanced_quotes, count_curly_quotes, fix_blank_lines_inside_quotes
+from .quote_fix import collapse_repeated_curly_quotes, fix_unbalanced_quotes, count_curly_quotes, fix_blank_lines_inside_quotes
 from .text_postprocess import apply_structural_normalizers, apply_custom_normalizers, fix_dialogue_artifacts
 from .debug_run import DebugRunWriter
 from .language_guardrails import detect_residual_english
 
-REFINE_PIPELINE_VERSION = "8"
+REFINE_PIPELINE_VERSION = "16"
 
 
 def refine_prompt_fingerprint() -> str:
@@ -310,8 +317,10 @@ def sanitize_refine_chunk_output(
     - descola falas consecutivas (" " -> "\\n\\n")
     - evita quebra entre fala e tag de fala ("", perguntou")
     """
-    stats = {"blank_lines_fixed": 0, "dialogue_splits": 0}
+    stats = {"blank_lines_fixed": 0, "dialogue_splits": 0, "repeated_curly_quotes_fixed": 0}
     cleaned = re.sub(r'"""+\s*$', "", text, flags=re.MULTILINE)
+    cleaned, repeated_curly_quotes_fixed = collapse_repeated_curly_quotes(cleaned)
+    stats["repeated_curly_quotes_fixed"] = repeated_curly_quotes_fixed
     cleaned, fixes = fix_blank_lines_inside_quotes(cleaned, logger=logger, label=label)
     stats["blank_lines_fixed"] = fixes
     cleaned, count_split = re.subn(r"”\s+“", "”\n\n“", cleaned)
@@ -325,19 +334,21 @@ def sanitize_refine_chunk_output(
     stats["dialogue_tag_joins"] = tag_joins
 
     artifacts = '"""' in cleaned
+    input_malformed_quote_boundary = has_malformed_quote_boundary(original)
+    malformed_quote_boundary = has_malformed_quote_boundary(cleaned)
+    introduced_malformed_quote_boundary = malformed_quote_boundary and not input_malformed_quote_boundary
     structure_info = _dialogue_or_paragraph_regression(
         original,
         cleaned,
         allowed_paragraph_increase=count_split,
-        allowed_paragraph_decrease=tag_joins,
+        allowed_paragraph_decrease=tag_joins + fixes,
         allowed_line_increase=count_split,
-        allowed_line_decrease=tag_joins,
+        allowed_line_decrease=tag_joins + fixes,
     )
     opens_curly, closes_curly = count_curly_quotes(cleaned)
-    opens_q = opens_curly + cleaned.count('"')
-    closes_q = closes_curly + cleaned.count('"')
     regression_dialogue = ("”\n\n“" in original) and ("” “" in cleaned)
-    quotes_balanced = opens_q == closes_q
+    quotes_balanced = not has_curly_quote_balance_regression(original, cleaned)
+    introduced_extra_curly_quotes = has_curly_quote_count_regression(original, cleaned)
     soft_retry = False
     ok = True
     if (
@@ -348,11 +359,19 @@ def sanitize_refine_chunk_output(
         or structure_info["line_structure_changed"]
     ):
         ok = False
-    elif not quotes_balanced:
+    elif not quotes_balanced or introduced_extra_curly_quotes:
+        soft_retry = True
+    elif introduced_malformed_quote_boundary:
+        # O modelo pode equilibrar a contagem global de aspas e ainda iniciar
+        # uma fala com um fechamento espúrio (”“Fala). Refaça uma vez antes
+        # de recorrer ao chunk original.
         soft_retry = True
     return cleaned, ok, {
         "artifacts": artifacts,
         "quotes_balanced": quotes_balanced,
+        "introduced_extra_curly_quotes": introduced_extra_curly_quotes,
+        "malformed_quote_boundary": malformed_quote_boundary,
+        "introduced_malformed_quote_boundary": introduced_malformed_quote_boundary,
         "regression_dialogue": regression_dialogue,
         "soft_retry": soft_retry,
         **structure_info,
@@ -468,6 +487,9 @@ def build_refine_prompt(section: str, glossary_enabled: bool = False, glossary_b
         )
 
     prompt = f"""
+FORMATO CRÍTICO: preserve exatamente o marcador de diálogo do texto de entrada. Se ele usa aspas curvas, mantenha aspas curvas em todas as falas; não use travessões. Uma resposta que troque aspas por travessões será descartada.
+Comece a resposta diretamente com `### TEXTO_REFINADO_INICIO` e termine com `### TEXTO_REFINADO_FIM`. Não escreva introdução, explicações, notas, separadores `***` nem lista de ajustes.
+
 Você é um EDITOR PROFISSIONAL DE LIGHT NOVELS, responsável por transformar um texto traduzido para o português brasileiro em uma versão natural, fluida, coerente, com tom literário e qualidade de publicação.
 Não altere absolutamente nada da história, dos eventos, das falas, da linha do tempo ou do conteúdo original. Apenas melhore a escrita.
 
@@ -500,8 +522,13 @@ OBJETIVOS DO EDITOR:
 7. Padronizar fluidez narrativa.
 8. Remover repetições consecutivas ou quase idênticas geradas na tradução/refine (falas ou narrativas), mantendo apenas uma ocorrência completa e bem formatada.
 9. Reunir trechos que foram colados na mesma linha por erro (ex.: “Mmm?” “Por que você…”) devolvendo fluxo natural de diálogo, sem alterar sentido.
-10. Manter consistência de gênero/narrador (masculino/feminino) conforme o original; não inverter narrador masculino.
-11. Se alguma frase, fala ou trecho narrativo ainda estiver em inglês, traduza esse trecho para português brasileiro natural, preservando apenas nomes próprios, honoríficos e termos canônicos do glossário.
+  10. Manter consistência de gênero/narrador (masculino/feminino) conforme o original; não inverter narrador masculino.
+  11. Se alguma frase, fala ou trecho narrativo ainda estiver em inglês, traduza esse trecho para português brasileiro natural, preservando apenas nomes próprios, honoríficos e termos canônicos do glossário.
+  12. Corrigir concordância verbal e nominal, possessivos literais e frases sem verbo principal. Cada período deve permanecer gramatical e compreensível sozinho, sem inventar informação para completar lacunas.
+  13. Quando a tradução trouxer duas aspas curvas coladas ou um fechamento de aspa sem abertura na mesma fala, restaure apenas a pontuação necessária e preserve o conteúdo.
+  14. Preserve o tempo verbal narrativo do trecho: uma cena narrada no passado deve continuar no passado (por exemplo, "I kept" não pode virar "mantenho").
+ 15. Traduza vocabulário comum em inglês, inclusive jargão genérico de jogo como "buff"/"buffs", salvo quando o glossário o marcar explicitamente como termo canônico.
+  16. Corrija regência e complementos calcados do inglês. Exemplos: "convencer alguém a me acreditar" deve virar "convencer alguém a acreditar em mim"; "tem X para considerar" deve virar "também é preciso considerar X".
 
 PROIBIÇÕES ABSOLUTAS:
 
@@ -513,9 +540,10 @@ PROIBIÇÕES ABSOLUTAS:
 * Não reorganizar parágrafos.
 * Não dividir parágrafos.
 * Não inserir quebras de linha apenas por estilo.
-* Não fundir parágrafos ou alterar segmentação original.
-* Não converter o padrão de diálogo do trecho.
-* Não deixar frases em inglês quando o restante do trecho está em português.
+  * Não fundir parágrafos ou alterar segmentação original.
+  * Não converter o padrão de diálogo do trecho.
+  * Não deixar frases em inglês quando o restante do trecho está em português.
+  * Não conservar um erro gramatical apenas por estar presente na tradução de entrada.
 
 FORMATO DE SAÍDA:
 Retorne apenas:
@@ -526,6 +554,7 @@ Retorne apenas:
 ### TEXTO_REFINADO_FIM
 
 Nada antes ou depois dos marcadores.
+Comece a resposta exatamente com `### TEXTO_REFINADO_INICIO`; não escreva introdução, separadores `***`, explicações, lista de ajustes ou notas.
 
 {glossary_section}Texto para revisao (PT-BR):
 \"\"\"{section}\"\"\"
@@ -883,13 +912,22 @@ def refine_section(
                 )
             continue
         if glossary_state:
-            glossary_block = format_glossary_for_prompt(
-                glossary_state.combined_index,
-                glossary_prompt_limit,
+            selected_terms, _ = select_terms_for_target_text(
+                list(glossary_state.combined_index.values()),
+                chunk,
+                match_limit=glossary_prompt_limit,
             )
+            selected_index = {
+                normalize_key(str(term.get("key", ""))): term
+                for term in selected_terms
+                if str(term.get("key", "")).strip()
+            }
+            glossary_block = format_glossary_for_prompt(selected_index, glossary_prompt_limit)
+        else:
+            glossary_block = None
         prompt = build_refine_prompt(
             chunk,
-            glossary_enabled=bool(glossary_state),
+            glossary_enabled=bool(glossary_block),
             glossary_block=glossary_block,
         )
         logger.debug("Refinando seção com %d caracteres...", len(chunk))
@@ -907,16 +945,14 @@ def refine_section(
                 llm_attempts += 1
                 refined_candidate = response_text
                 if glossary_state:
-                    refined_candidate, suggestion_block = split_refined_and_suggestions(llm_raw)
+                    raw_without_suggestions, suggestion_block = split_refined_and_suggestions(llm_raw)
+                    if suggestion_block is not None:
+                        refined_candidate = sanitize_refine_output(raw_without_suggestions)
                     suggestions = parse_glossary_suggestions(suggestion_block or "")
                     if suggestions:
                         updated = apply_suggestions_to_state(glossary_state, suggestions, logger)
                         if updated:
                             save_dynamic_glossary(glossary_state, logger)
-                            glossary_block = format_glossary_for_prompt(
-                                glossary_state.combined_index,
-                                glossary_prompt_limit,
-                            )
 
                 collapse_flag = False
                 collapse_reasons = None
@@ -959,6 +995,9 @@ def refine_section(
                         used_fallback = True
                 else:  # strict
                     refined_text = anti_hallucination_filter(orig=chunk, llm_raw=llm_raw, cleaned=refined_candidate, mode="refine")
+                    if refined_text == chunk and refined_candidate.strip() != chunk.strip():
+                        used_fallback = True
+                        fallback_reasons.append("anti_hallucination_filter")
                     if not refined_text.strip():
                         used_fallback = True
                         fallback_reasons.append("empty_after_guardrail")
@@ -1031,11 +1070,17 @@ def refine_section(
                         prompt = prompt + "\n\nATENÇÃO: Ainda há frases em inglês. Refaça mantendo a mesma estrutura de parágrafos e traduzindo essas frases para português brasileiro natural. Preserve apenas nomes próprios, honoríficos e termos do glossário."
                     elif "truncado" in retry_reason:
                         prompt = prompt + "\n\nATENÇÃO: Sua saída foi truncada. Refaça incluindo TODO o conteúdo."
+                    elif "malformed_quote_boundary" in retry_reason:
+                        prompt = prompt + "\n\nATENÇÃO: Há uma fala iniciada por fechamento e abertura de aspas colados. Refaça preservando cada fala com aspas corretas, sem `”“` e sem alterar parágrafos."
                     else:
                         prompt = prompt + "\n\nATENÇÃO: sua saída anterior veio truncada ou repetitiva. Refaça mantendo TODO o conteúdo. Não resuma."
                     continue
                 # fim do loop de retry
                 break
+
+            if fmt_soft_retry and not used_fallback:
+                used_fallback = True
+                fallback_reasons.append("format_validation_unresolved")
 
             if used_fallback:
                 refined_text = chunk

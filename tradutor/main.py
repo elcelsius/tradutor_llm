@@ -22,13 +22,13 @@ from .pdf_reader import extract_pdf_text
 from .advanced_preprocess import clean_text as advanced_clean
 from .preprocess import preprocess_text, strip_front_matter
 from .refine import refine_markdown_file, refine_prompt_fingerprint
-from .postprocess import final_pt_postprocess
+from .post_translation_review import finalize_translation_text, load_sections
 from .translate import translate_document, translation_prompt_fingerprint
 from .repair import repair_prompt_fingerprint
 from .desquebrar import desquebrar_text, desquebrar_stats_to_dict, normalize_md_paragraphs
 from .desquebrar_safe import desquebrar_safe
 from .utils import setup_logging, write_text, read_text
-from .structure_normalizer import normalize_structure
+from .section_splitter import split_into_sections
 from .editor import editor_pipeline
 from .pdf import convert_markdown_to_pdf
 from .cache_utils import clear_cache, set_cache_base_dir
@@ -156,6 +156,130 @@ def _load_repair_timing_detail(output_dir: Path, source_slug: str) -> dict:
     }
 
 
+def _glossary_terms(glossary_state) -> list[dict]:
+    if not glossary_state:
+        return []
+    return list(glossary_state.combined_index.values())
+
+
+def _dynamic_glossary_path(args, cfg: AppConfig, source_slug: str) -> Path:
+    explicit_path = getattr(args, "dynamic_glossary", None)
+    if explicit_path:
+        return Path(explicit_path)
+    # Um arquivo por obra evita que termos temporários vazem para outro livro.
+    return cfg.output_dir / f"{source_slug}_glossario_dinamico.json"
+
+
+def _source_sections_payload(source_text: str) -> list[dict]:
+    payload: list[dict] = []
+    for section in split_into_sections(source_text):
+        body = str(section.get("body", ""))
+        payload.append(
+            {
+                "title": str(section.get("title", "")),
+                "start_idx": section.get("start_idx", 0),
+                "end_idx": section.get("end_idx", 0),
+                "chars": len(body),
+            }
+        )
+    return payload
+
+
+def _write_source_sections(cfg: AppConfig, source_slug: str, source_text: str, logger: logging.Logger) -> list[dict]:
+    sections = _source_sections_payload(source_text)
+    path = cfg.output_dir / f"{source_slug}_source_sections.json"
+    path.write_text(json.dumps(sections, ensure_ascii=False, indent=2), encoding="utf-8")
+    logger.info("Metadados de seções salvos em %s (%d seções).", path, len(sections))
+    return sections
+
+
+def _load_source_sections(cfg: AppConfig, source_slug: str) -> list[dict]:
+    return load_sections(cfg.output_dir / f"{source_slug}_source_sections.json")
+
+
+def _apply_final_review(
+    *,
+    text: str,
+    source_text: str,
+    source_sections: list[dict],
+    glossary_state,
+    output_path: Path,
+    logger: logging.Logger,
+) -> tuple[str, dict]:
+    reviewed, report = finalize_translation_text(
+        text,
+        source_text=source_text,
+        sections=source_sections,
+        glossary_terms=_glossary_terms(glossary_state),
+    )
+    report_path = output_path.with_name(f"{output_path.stem}_review_report.json")
+    report_payload = {
+        "output": output_path.name,
+        "source_sections": len(source_sections),
+        **report,
+    }
+    report_path.write_text(json.dumps(report_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    quality = report.get("quality", {})
+    logger.info(
+        "Revisão final salva em %s (QA %s/100; problemas=%s).",
+        report_path,
+        quality.get("score", "?"),
+        quality.get("issue_count", "?"),
+    )
+    return reviewed, report_payload
+
+
+def _should_run_refine_after_translate(args, cfg: AppConfig) -> bool:
+    """Decide se o refine LLM entra no fluxo automático de tradução."""
+    if getattr(args, "no_refine", False):
+        return False
+    return bool(getattr(args, "refine", False) or getattr(cfg, "refine_after_translate", False))
+
+
+def _quality_score(review_report: dict) -> int | None:
+    try:
+        return int(review_report.get("quality", {}).get("score"))
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _refine_review_is_acceptable(base_report: dict, refined_report: dict) -> bool:
+    """Não aceita uma revisão LLM que reduza a pontuação objetiva final."""
+    base_score = _quality_score(base_report)
+    refined_score = _quality_score(refined_report)
+    return base_score is None or refined_score is None or refined_score >= base_score
+
+
+def _maybe_export_pdf(
+    *,
+    args,
+    cfg: AppConfig,
+    md_path: Path,
+    timings: dict[str, float],
+    logger: logging.Logger,
+) -> None:
+    """Exporta a melhor saída disponível quando a opção de PDF estiver ativa."""
+    if not bool(getattr(args, "pdf_enabled", cfg.pdf_enabled)):
+        return
+
+    start_stage = time.perf_counter()
+    try:
+        pdf_dir = cfg.output_dir / "pdf"
+        pdf_output = pdf_dir / f"{md_path.stem}.pdf"
+        convert_markdown_to_pdf(
+            md_path=md_path,
+            output_path=pdf_output,
+            cfg=cfg,
+            logger=logger,
+            title=md_path.stem,
+        )
+        logger.info("PDF gerado em %s", pdf_output)
+    except Exception as exc:
+        logger.error("Falha ao gerar PDF automaticamente: %s", exc)
+    finally:
+        timings["pdf_export"] = time.perf_counter() - start_stage
+
+
 def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
     """Constroi o parser de argumentos com subcomandos traduz/refina."""
     common = argparse.ArgumentParser(add_help=False)
@@ -191,6 +315,7 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
         default=cfg.translate_num_predict,
         help="Limite de tokens gerados por chunk (Ollama).",
     )
+    t.add_argument("--refine", action="store_true", help="Executa o refine LLM opcional após traduzir.")
     t.add_argument("--no-refine", action="store_true", help="Não executar refine após traduzir.")
     t.add_argument(
         "--translation-repair",
@@ -226,6 +351,11 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
         "--manual-glossary",
         type=str,
         help="Arquivo JSON de glossario manual para a traducao (padrao: glossario/glossario_manual.json ou glossario/glossario_geral.json).",
+    )
+    t.add_argument(
+        "--dynamic-glossary",
+        type=str,
+        help="Arquivo JSON de glossário dinâmico; sem flag, usa um arquivo separado por obra em saida/.",
     )
     t.add_argument(
         "--parallel",
@@ -350,6 +480,7 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
         default=cfg.translate_num_predict,
         help="Limite de tokens gerados por chunk (Ollama).",
     )
+    tm.add_argument("--refine", action="store_true", help="Executa o refine LLM opcional após traduzir.")
     tm.add_argument("--no-refine", action="store_true", help="Não executar refine após traduzir.")
     tm.add_argument(
         "--translation-repair",
@@ -371,6 +502,11 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
         "--manual-glossary",
         type=str,
         help="Arquivo JSON de glossario manual para a traducao (padrao: glossario/glossario_manual.json ou glossario/glossario_geral.json).",
+    )
+    tm.add_argument(
+        "--dynamic-glossary",
+        type=str,
+        help="Arquivo JSON de glossário dinâmico; sem flag, usa um arquivo separado por obra em saida/.",
     )
     tm.add_argument(
         "--parallel",
@@ -591,23 +727,12 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
         args.num_predict,
     )
 
-    glossary_text = None
-    glossary_state = None
+    manual_glossary_path: Path | None = None
     fail_on_chunk_error = getattr(args, "fail_on_chunk_error", None)
     if fail_on_chunk_error is None:
         fail_on_chunk_error = getattr(cfg, "fail_on_chunk_error", False)
     if getattr(args, "use_glossary", False):
-        manual_path = resolve_manual_glossary_path(args.manual_glossary)
-        glossary_state = build_glossary_state(manual_path=manual_path, dynamic_path=None, logger=logger, manual_dir=None)
-        if glossary_state:
-            glossary_text = format_manual_pairs_for_translation(glossary_state.manual_terms, limit=30)
-            logger.info(
-                "Glossário manual carregado para tradução: %d termos de %s (usando até 30 no prompt).",
-                len(glossary_state.manual_terms),
-                manual_path,
-            )
-        else:
-            logger.warning("Uso de glossário solicitado, mas nenhum glossário manual carregado.")
+        manual_glossary_path = resolve_manual_glossary_path(args.manual_glossary)
 
     for pdf in pdfs:
         debug_run = None
@@ -621,6 +746,26 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
         working_text = ""
         translated_md = ""
         md_path: Path | None = None
+        source_sections: list[dict] = []
+        glossary_text = None
+        glossary_state = None
+        if manual_glossary_path:
+            dynamic_path = _dynamic_glossary_path(args, cfg, pdf.stem)
+            glossary_state = build_glossary_state(
+                manual_path=manual_glossary_path,
+                dynamic_path=dynamic_path,
+                logger=logger,
+                manual_dir=None,
+            )
+            if glossary_state:
+                translation_terms = _glossary_terms(glossary_state)
+                glossary_text = format_manual_pairs_for_translation(translation_terms, limit=30)
+                logger.info(
+                    "Glossário carregado para %s: manual=%d dinâmico=%d (até 30 termos por prompt).",
+                    pdf.name,
+                    len(glossary_state.manual_terms),
+                    len(glossary_state.dynamic_terms),
+                )
         if args.debug:
             debug_run = DebugRunWriter.create(
                 output_dir=cfg.output_dir,
@@ -839,6 +984,7 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                         exc,
                     )
 
+            source_sections = _write_source_sections(cfg, pdf.stem, working_text, logger)
             current_stage = "translate"
             start_stage = time.perf_counter()
             translated_md = translate_document(
@@ -850,7 +996,7 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                 progress_path=progress_path,
                 resume_manifest=resume_manifest,
                 glossary_text=glossary_text,
-                glossary_manual_terms=glossary_state.manual_terms if glossary_state else None,
+                glossary_manual_terms=_glossary_terms(glossary_state) or None,
                 debug_translation=getattr(args, "debug", False),
                 parallel_workers=max(1, getattr(args, "parallel", 1)),
                 debug_chunks=getattr(args, "debug_chunks", False),
@@ -863,18 +1009,25 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
             )
             timings["translate"] = time.perf_counter() - start_stage
             nested_timings.update(_load_repair_timing_detail(cfg.output_dir, pdf.stem))
-            translated_md = final_pt_postprocess(translated_md)
-
             md_path = cfg.output_dir / f"{pdf.stem}_pt.md"
+            start_stage = time.perf_counter()
+            translated_md, translation_review = _apply_final_review(
+                text=translated_md,
+                source_text=working_text,
+                source_sections=source_sections,
+                glossary_state=glossary_state,
+                output_path=md_path,
+                logger=logger,
+            )
+            timings["post_translate_review"] = time.perf_counter() - start_stage
             write_text(md_path, translated_md)
             logger.info("Markdown salvo em %s", md_path)
             if debug_run:
                 debug_run.pt_output_rel = md_path.relative_to(cfg.output_dir).as_posix()
 
-            logger.info("Conversão para PDF desativada temporariamente; saída principal é o arquivo .md.")
-
-            if args.no_refine:
-                logger.info("Refinamento desabilitado (--no-refine); apenas *_pt.md será gerado.")
+            if not _should_run_refine_after_translate(args, cfg):
+                logger.info("Refinamento LLM não executado; mantendo *_pt.md com revisão determinística final.")
+                _maybe_export_pdf(args=args, cfg=cfg, md_path=md_path, timings=timings, logger=logger)
             else:
                 current_stage = "refine"
                 logger.info("Executando refine opcional para %s", md_path.name)
@@ -938,17 +1091,37 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                     logger=logger,
                     progress_path=cfg.output_dir / f"{pdf.stem}_pt_refinado_progress.json",
                     resume_manifest=None,
+                    glossary_state=glossary_state,
                     debug_chunks=getattr(args, "debug_chunks", False),
                     cleanup_mode=cleanup_mode,
                     debug_run=debug_run,
                 )
                 timings["refine"] = time.perf_counter() - start_stage
-                logger.info("Conversão para PDF desativada temporariamente; saída principal é o arquivo .md refinado.")
                 start_stage = time.perf_counter()
                 try:
                     refined_text = read_text(output_refined)
-                    refined_text = final_pt_postprocess(refined_text)
-                    refined_text = normalize_structure(refined_text)
+                    refined_text, refined_review = _apply_final_review(
+                        text=refined_text,
+                        source_text=working_text,
+                        source_sections=source_sections,
+                        glossary_state=glossary_state,
+                        output_path=output_refined,
+                        logger=logger,
+                    )
+                    if not _refine_review_is_acceptable(translation_review, refined_review):
+                        logger.warning(
+                            "Refine rejeitado por regressão de QA (%s -> %s); mantendo tradução revisada.",
+                            _quality_score(translation_review),
+                            _quality_score(refined_review),
+                        )
+                        refined_text, _ = _apply_final_review(
+                            text=translated_md,
+                            source_text=working_text,
+                            source_sections=source_sections,
+                            glossary_state=glossary_state,
+                            output_path=output_refined,
+                            logger=logger,
+                        )
                     write_text(output_refined, refined_text)
                 except Exception as exc:
                     logger.warning("Falha ao aplicar pós-processamento final do refinado: %s", exc)
@@ -956,24 +1129,7 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                     timings["post_refine_normalize"] = time.perf_counter() - start_stage
                 if debug_run:
                     debug_run.pt_refined_rel = output_refined.relative_to(cfg.output_dir).as_posix()
-                pdf_enabled = bool(getattr(args, "pdf_enabled", cfg.pdf_enabled))
-                if pdf_enabled:
-                    start_stage = time.perf_counter()
-                    try:
-                        pdf_dir = cfg.output_dir / "pdf"
-                        pdf_output = pdf_dir / f"{output_refined.stem}.pdf"
-                        convert_markdown_to_pdf(
-                            md_path=output_refined,
-                            output_path=pdf_output,
-                            cfg=cfg,
-                            logger=logger,
-                            title=output_refined.stem,
-                        )
-                        logger.info("PDF gerado em %s", pdf_output)
-                    except Exception as exc:
-                        logger.error("Falha ao gerar PDF automaticamente: %s", exc)
-                    finally:
-                        timings["pdf_export"] = time.perf_counter() - start_stage
+                _maybe_export_pdf(args=args, cfg=cfg, md_path=output_refined, timings=timings, logger=logger)
             _write_timing_report(
                 cfg=cfg,
                 source_slug=pdf.stem,
@@ -1116,6 +1272,7 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
     pre_text = ""
     translated_md = ""
     md_path: Path | None = None
+    source_sections: list[dict] = []
     if args.debug:
         debug_run = DebugRunWriter.create(
             output_dir=cfg.output_dir,
@@ -1215,12 +1372,20 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
             fail_on_chunk_error = getattr(cfg, "fail_on_chunk_error", False)
         if getattr(args, "use_glossary", False):
             manual_path = resolve_manual_glossary_path(args.manual_glossary)
-            glossary_state = build_glossary_state(manual_path=manual_path, dynamic_path=None, logger=logger, manual_dir=None)
+            dynamic_path = _dynamic_glossary_path(args, cfg, text_path.stem)
+            glossary_state = build_glossary_state(
+                manual_path=manual_path,
+                dynamic_path=dynamic_path,
+                logger=logger,
+                manual_dir=None,
+            )
             if glossary_state:
-                glossary_text = format_manual_pairs_for_translation(glossary_state.manual_terms, limit=30)
+                translation_terms = _glossary_terms(glossary_state)
+                glossary_text = format_manual_pairs_for_translation(translation_terms, limit=30)
                 logger.info(
-                    "Glossário manual carregado para tradução: %d termos de %s (usando até 30 no prompt).",
+                    "Glossário carregado para tradução: manual=%d dinâmico=%d de %s (usando até 30 no prompt).",
                     len(glossary_state.manual_terms),
+                    len(glossary_state.dynamic_terms),
                     manual_path,
                 )
             else:
@@ -1250,6 +1415,7 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
                     exc,
                 )
 
+        source_sections = _write_source_sections(cfg, text_path.stem, raw_text, logger)
         current_stage = "translate"
         start_stage = time.perf_counter()
         translated_md = translate_document(
@@ -1261,7 +1427,7 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
             progress_path=progress_path,
             resume_manifest=resume_manifest,
             glossary_text=glossary_text,
-            glossary_manual_terms=glossary_state.manual_terms if glossary_state else None,
+            glossary_manual_terms=_glossary_terms(glossary_state) or None,
             debug_translation=getattr(args, "debug", False),
             parallel_workers=max(1, getattr(args, "parallel", 1)),
             debug_chunks=getattr(args, "debug_chunks", False),
@@ -1274,16 +1440,25 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
         )
         timings["translate"] = time.perf_counter() - start_stage
         nested_timings.update(_load_repair_timing_detail(cfg.output_dir, text_path.stem))
-        translated_md = final_pt_postprocess(translated_md)
-
         md_path = cfg.output_dir / f"{text_path.stem}_pt.md"
+        start_stage = time.perf_counter()
+        translated_md, translation_review = _apply_final_review(
+            text=translated_md,
+            source_text=raw_text,
+            source_sections=source_sections,
+            glossary_state=glossary_state,
+            output_path=md_path,
+            logger=logger,
+        )
+        timings["post_translate_review"] = time.perf_counter() - start_stage
         write_text(md_path, translated_md)
         logger.info("Markdown salvo em %s", md_path)
         if debug_run:
             debug_run.pt_output_rel = md_path.relative_to(cfg.output_dir).as_posix()
 
-        if args.no_refine:
-            logger.info("Refinamento desabilitado (--no-refine); apenas *_pt.md ser  gerado.")
+        if not _should_run_refine_after_translate(args, cfg):
+            logger.info("Refinamento LLM não executado; mantendo *_pt.md com revisão determinística final.")
+            _maybe_export_pdf(args=args, cfg=cfg, md_path=md_path, timings=timings, logger=logger)
             if debug_run:
                 run_dir_rel = debug_run.run_dir.relative_to(cfg.output_dir).as_posix()
                 summary = {
@@ -1387,6 +1562,7 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
             logger=logger,
             progress_path=cfg.output_dir / f"{text_path.stem}_pt_refinado_progress.json",
             resume_manifest=None,
+            glossary_state=glossary_state,
             debug_chunks=getattr(args, "debug_chunks", False),
             cleanup_mode=cleanup_mode,
             debug_run=debug_run,
@@ -1396,31 +1572,34 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
         start_stage = time.perf_counter()
         try:
             refined_text = read_text(output_refined)
-            refined_text = final_pt_postprocess(refined_text)
-            refined_text = normalize_structure(refined_text)
+            refined_text, refined_review = _apply_final_review(
+                text=refined_text,
+                source_text=raw_text,
+                source_sections=source_sections,
+                glossary_state=glossary_state,
+                output_path=output_refined,
+                logger=logger,
+            )
+            if not _refine_review_is_acceptable(translation_review, refined_review):
+                logger.warning(
+                    "Refine rejeitado por regressão de QA (%s -> %s); mantendo tradução revisada.",
+                    _quality_score(translation_review),
+                    _quality_score(refined_review),
+                )
+                refined_text, _ = _apply_final_review(
+                    text=translated_md,
+                    source_text=raw_text,
+                    source_sections=source_sections,
+                    glossary_state=glossary_state,
+                    output_path=output_refined,
+                    logger=logger,
+                )
             write_text(output_refined, refined_text)
         except Exception as exc:
             logger.warning("Falha ao aplicar pós-processamento final do refinado: %s", exc)
         finally:
             timings["post_refine_normalize"] = time.perf_counter() - start_stage
-        pdf_enabled = bool(getattr(args, "pdf_enabled", cfg.pdf_enabled))
-        if pdf_enabled:
-            start_stage = time.perf_counter()
-            try:
-                pdf_dir = cfg.output_dir / "pdf"
-                pdf_output = pdf_dir / f"{output_refined.stem}.pdf"
-                convert_markdown_to_pdf(
-                    md_path=output_refined,
-                    output_path=pdf_output,
-                    cfg=cfg,
-                    logger=logger,
-                    title=output_refined.stem,
-                )
-                logger.info("PDF gerado em %s", pdf_output)
-            except Exception as exc:
-                logger.error("Falha ao gerar PDF automaticamente: %s", exc)
-            finally:
-                timings["pdf_export"] = time.perf_counter() - start_stage
+        _maybe_export_pdf(args=args, cfg=cfg, md_path=output_refined, timings=timings, logger=logger)
         if debug_run:
             debug_run.pt_refined_rel = output_refined.relative_to(cfg.output_dir).as_posix()
             run_dir_rel = debug_run.run_dir.relative_to(cfg.output_dir).as_posix()
@@ -1582,24 +1761,28 @@ def run_refine(args, cfg: AppConfig, logger: logging.Logger) -> None:
         args.num_predict,
     )
 
-    glossary_state = None
+    manual_path: Path | None = None
+    manual_dir: Path | None = None
     cleanup_mode = args.cleanup_before_refine or getattr(cfg, "cleanup_before_refine", "off")
     if cleanup_mode not in ("off", "auto", "on"):
         cleanup_mode = "off"
     if getattr(args, "use_glossary", False):
         manual_path = resolve_manual_glossary_path(args.manual_glossary)
         manual_dir = Path(args.auto_glossary_dir) if getattr(args, "auto_glossary_dir", None) else None
-        dynamic_path = Path(args.dynamic_glossary) if args.dynamic_glossary else cfg.output_dir / "glossario_dinamico.json"
-        logger.info(
-            "Modo glossário ativo. Manual: %s | Dinâmico: %s | Auto-dir: %s",
-            manual_path,
-            dynamic_path,
-            manual_dir if manual_dir else "nenhum",
-        )
-        glossary_state = build_glossary_state(manual_path, dynamic_path, logger, manual_dir=manual_dir)
 
     for md in md_files:
         stem = md.stem.replace("_pt", "")
+        glossary_state = None
+        if manual_path:
+            dynamic_path = _dynamic_glossary_path(args, cfg, stem)
+            logger.info(
+                "Modo glossário ativo para %s. Manual: %s | Dinâmico: %s | Auto-dir: %s",
+                stem,
+                manual_path,
+                dynamic_path,
+                manual_dir if manual_dir else "nenhum",
+            )
+            glossary_state = build_glossary_state(manual_path, dynamic_path, logger, manual_dir=manual_dir)
         output_md = cfg.output_dir / f"{stem}_pt_refinado.md"
         output_pdf = cfg.output_dir / f"{stem}_pt_refinado.pdf"
         progress_path = cfg.output_dir / f"{stem}_pt_refinado_progress.json"
@@ -1659,8 +1842,17 @@ def run_refine(args, cfg: AppConfig, logger: logging.Logger) -> None:
                     "changes": editor_changes,
                 }
                 report_path.write_text(json.dumps(report_payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        refined_text = final_pt_postprocess(refined_text)
-        refined_text = normalize_structure(refined_text)
+        source_sections = _load_source_sections(cfg, stem)
+        source_text_path = cfg.output_dir / f"{stem}_raw_desquebrado.md"
+        source_text = read_text(source_text_path) if source_text_path.exists() else ""
+        refined_text, _ = _apply_final_review(
+            text=refined_text,
+            source_text=source_text,
+            source_sections=source_sections,
+            glossary_state=glossary_state,
+            output_path=output_md,
+            logger=logger,
+        )
         write_text(output_md, refined_text)
         markdown_to_pdf(
             markdown_text=refined_text,

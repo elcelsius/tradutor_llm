@@ -1,3 +1,4 @@
+import json
 import sys
 import types
 
@@ -206,3 +207,90 @@ def test_run_translate_skips_desquebrar_when_disabled(monkeypatch, tmp_path):
 
     assert calls["translated_input"] == "preprocessed text"
     assert calls["already_preprocessed"] is True
+
+
+def test_run_translate_passes_per_work_glossary_state_to_refine(monkeypatch, tmp_path):
+    _install_reportlab_stub()
+    import tradutor.main as main  # noqa: WPS433
+
+    pdf_path = tmp_path / "sample.pdf"
+    pdf_path.write_text("dummy", encoding="utf-8")
+    manual_glossary = tmp_path / "manual.json"
+    manual_glossary.write_text(
+        json.dumps(
+            {
+                "terms": [
+                    {
+                        "key": "Sogou",
+                        "pt": "Sogou",
+                        "category": "personagem",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = AppConfig(data_dir=tmp_path, output_dir=tmp_path)
+    logger = setup_logging()
+    calls: dict[str, object] = {}
+
+    monkeypatch.setattr(main, "extract_pdf_text", lambda path, logger: "raw pdf text")
+    monkeypatch.setattr(
+        main,
+        "preprocess_text",
+        lambda text, logger=None, **kwargs: ("preprocessed text", {"chars_in": len(text), "chars_out": 17})
+        if kwargs.get("return_stats")
+        else "preprocessed text",
+    )
+
+    def fake_translate_document(pdf_text, backend, cfg, logger, **kwargs):
+        calls["translation_terms"] = kwargs.get("glossary_manual_terms")
+        return "SOGOU chegou."
+
+    def fake_refine_markdown_file(input_path, output_path, **kwargs):
+        calls["refine_glossary_state"] = kwargs.get("glossary_state")
+        output_path.write_text("SOGOU chegou.", encoding="utf-8")
+
+    class DummyBackend:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    monkeypatch.setattr(main, "translate_document", fake_translate_document)
+    monkeypatch.setattr(main, "refine_markdown_file", fake_refine_markdown_file)
+    monkeypatch.setattr(main, "LLMBackend", DummyBackend)
+
+    args = types.SimpleNamespace(
+        command="traduz",
+        input=None,
+        backend="ollama",
+        model="model-x",
+        num_predict=128,
+        refine=True,
+        no_refine=False,
+        resume=False,
+        use_glossary=True,
+        manual_glossary=str(manual_glossary),
+        parallel=1,
+        preprocess_advanced=False,
+        cleanup_before_refine=None,
+        debug_chunks=False,
+        debug=False,
+        request_timeout=30,
+        use_desquebrar=False,
+        desquebrar_backend="ollama",
+        desquebrar_model="modelo-desq",
+        desquebrar_temperature=0.1,
+        desquebrar_chunk_chars=777,
+        desquebrar_num_predict=256,
+        desquebrar_repeat_penalty=1.1,
+        pdf_enabled=False,
+    )
+
+    main.run_translate(args, cfg, logger)
+
+    state = calls["refine_glossary_state"]
+    assert state is not None
+    assert len(calls["translation_terms"]) == 1
+    assert len(state.manual_terms) == 1
+    assert state.dynamic_path == tmp_path / "sample_glossario_dinamico.json"

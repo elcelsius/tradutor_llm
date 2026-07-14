@@ -15,9 +15,19 @@ def test_sanitize_collapses_blank_lines_inside_quotes():
     raw = "“Entendo.\n\nQuer dizer...”\n\nFora do dialogo."
     cleaned, ok, _ = sanitize_refine_chunk_output(raw, raw, logger=None, label="t2")
     assert ok
-    assert "Entendo.\nQuer dizer" in cleaned
+    assert "Entendo. Quer dizer" in cleaned
     # Paragrafo fora das aspas permanece
     assert "\n\nFora do dialogo." in cleaned
+
+
+def test_sanitize_joins_standalone_closing_quote_after_blank_line() -> None:
+    raw = "“Entendo?\n\n”\n\nFora do dialogo."
+
+    cleaned, ok, _ = sanitize_refine_chunk_output(raw, raw, logger=None, label="t2b")
+
+    assert ok
+    assert "“Entendo?”" in cleaned
+    assert "\n\n”" not in cleaned
 
 
 def test_sanitize_splits_glued_dialogues():
@@ -94,3 +104,50 @@ def test_sanitize_refine_output_removes_refined_markers_only():
     assert "TEXTO_REFINADO" not in cleaned
     assert "# Titulo" in cleaned
     assert "Texto refinado." in cleaned
+
+
+def test_sanitize_refine_output_extracts_delimited_body_after_meta_intro():
+    raw = (
+        "Aqui está a revisão do texto:\n\n***\n\n"
+        "Texto revisado, sem metacomentários.\n\n***\n\n"
+        "### Principais ajustes feitos:\n- Ajuste de fluidez."
+    )
+
+    assert sanitize_refine_output(raw) == "Texto revisado, sem metacomentários."
+
+
+def test_sanitize_refine_output_preserves_scene_separators_without_meta_intro():
+    raw = "Cena um.\n\n***\n\nCena dois.\n\n***\n\nCena três."
+
+    assert sanitize_refine_output(raw) == raw
+
+
+def test_sanitize_refine_output_extracts_named_review_body_and_drops_notes():
+    raw = (
+        "Aqui está a revisão:\n\n**Texto Revisado:**\n\n"
+        "Texto da novel.\n\n---\n\n### Principais Ajustes Feitos:\n- Nota."
+    )
+
+    assert sanitize_refine_output(raw) == "Texto da novel."
+
+
+def test_sanitize_requests_retry_for_new_malformed_quote_boundary():
+    original = "“Ah, tudo bem.”"
+    raw = "”“Ah, tudo bem.”"
+
+    _, ok, info = sanitize_refine_chunk_output(raw, original, logger=None, label="quote-boundary")
+
+    assert ok
+    assert info["soft_retry"]
+    assert info["introduced_malformed_quote_boundary"]
+
+
+def test_sanitize_requests_retry_for_extra_balanced_quote_pair() -> None:
+    original = "“Primeira fala.”"
+    raw = "“Primeira fala.”\n\n“Fala inventada.”"
+
+    _, ok, info = sanitize_refine_chunk_output(raw, original, logger=None, label="quote-count")
+
+    assert ok
+    assert info["soft_retry"]
+    assert info["introduced_extra_curly_quotes"]

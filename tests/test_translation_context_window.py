@@ -50,6 +50,13 @@ def test_translation_prompt_has_dialogue_specific_rules() -> None:
     assert "fala natural em PT-BR" in prompt
 
 
+def test_translation_prompt_requests_silent_linguistic_review() -> None:
+    prompt = build_translation_prompt("The riders could take intense action.")
+
+    assert "REVISÃO SILENCIOSA OBRIGATÓRIA" in prompt
+    assert "tomar ações" in prompt
+
+
 def test_classify_translation_chunk_dialogue_and_narration() -> None:
     assert classify_translation_chunk('"Oi."\n\n"Sim."') == "dialogue"
     assert classify_translation_chunk("The wind crossed the empty field under the gray sky.") == "narration"

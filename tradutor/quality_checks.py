@@ -4,6 +4,8 @@ import re
 from collections import Counter
 from typing import Any
 
+from .qa import has_malformed_quote_boundary
+
 GlossaryEntry = dict[str, Any]
 
 TRANSLATION_MARKER_RE = re.compile(
@@ -23,12 +25,20 @@ DEFAULT_SOURCE_LEAKS = (
     "Land of the Golden-Eyed Monsters",
     "Monster Slayer King",
     "Monster Slayer Knights",
+    "Arright",
+    "boost",
+    "they",
     "Phew",
     "Geez",
     "Huh",
     "Ugh",
+    "buff",
+    "buffs",
     "ain't",
     "ain’t",
+    "selves",
+    "I see",
+    "KYS",
 )
 
 FEMININE_MASCULINE_MARKERS = (
@@ -94,8 +104,15 @@ def _bad_aliases(term: GlossaryEntry) -> list[str]:
     if isinstance(aliases, str):
         aliases = [aliases]
     if not isinstance(aliases, list):
-        return []
-    return [str(alias).strip() for alias in aliases if str(alias).strip()]
+        aliases = []
+    target_replacements = term.get("target_replacements") or {}
+    replacement_aliases = target_replacements.keys() if isinstance(target_replacements, dict) else []
+    return list(
+        dict.fromkeys(
+            [str(alias).strip() for alias in aliases if str(alias).strip()]
+            + [str(alias).strip() for alias in replacement_aliases if str(alias).strip()]
+        )
+    )
 
 
 def _allowed_target_aliases(term: GlossaryEntry) -> list[str]:
@@ -107,10 +124,11 @@ def _allowed_target_aliases(term: GlossaryEntry) -> list[str]:
     return [str(alias).strip() for alias in aliases if str(alias).strip()]
 
 
-def _contains(text: str, needle: str) -> bool:
+def _contains(text: str, needle: str, *, case_sensitive: bool = False) -> bool:
     if not text or not needle:
         return False
-    pattern = re.compile(rf"(?<!\w){re.escape(needle)}(?!\w)", re.IGNORECASE)
+    flags = 0 if case_sensitive else re.IGNORECASE
+    pattern = re.compile(rf"(?<!\w){re.escape(needle)}(?!\w)", flags)
     return bool(pattern.search(text))
 
 
@@ -163,11 +181,20 @@ def _check_glossary(
 
         variants = _term_variants(term)
         allowed_target_aliases = {alias.casefold() for alias in _allowed_target_aliases(term)}
-        source_has_term = any(_contains(source_text, variant) for variant in variants)
+        source_case_sensitive = bool(term.get("source_case_sensitive", False))
+        source_has_key = _contains(source_text, key, case_sensitive=source_case_sensitive)
+        source_has_term = source_has_key or any(
+            _contains(source_text, variant, case_sensitive=source_case_sensitive)
+            for variant in variants[1:]
+        )
         target_has_pt = _contains(translated_text, pt)
+        target_has_allowed_alias = any(_contains(translated_text, alias) for alias in allowed_target_aliases)
 
         for bad_alias in _bad_aliases(term):
-            if _contains(translated_text, bad_alias):
+            # Quando o alias só difere por caixa, a forma canônica não pode
+            # ser denunciada como erro: `Kyokugen` != `kyokugen`.
+            case_sensitive_alias = bad_alias.casefold() == pt.casefold()
+            if _contains(translated_text, bad_alias, case_sensitive=case_sensitive_alias):
                 _add_issue(
                     issues,
                     "bad_alias_in_target",
@@ -195,7 +222,12 @@ def _check_glossary(
                         snippet=_snippet(translated_text, variant),
                     )
 
-        if source_has_term and key != pt and not target_has_pt:
+        # Um alias de origem pode ser uma abreviação natural (por exemplo,
+        # "Yonato" para "State of Yonato"). Só exigimos a forma canônica
+        # quando a chave apareceu literalmente ou quando a entrada foi marcada
+        # como obrigatória para aliases também.
+        requires_canonical = source_has_term if term.get("enforce") else source_has_key
+        if requires_canonical and key != pt and not (target_has_pt or target_has_allowed_alias):
             _add_issue(
                 issues,
                 "missing_canonical_term",
@@ -255,30 +287,30 @@ def _check_gender(translated_text: str, glossary_terms: list[GlossaryEntry], iss
         if " " in pt:
             names.extend(part for part in pt.split() if len(part) > 3)
         markers = FEMININE_MASCULINE_MARKERS if gender == "feminino" else MASCULINE_FEMININE_MARKERS
-        marker_re = re.compile(rf"\b({'|'.join(re.escape(m) for m in markers)})\b", re.IGNORECASE)
+        marker_pattern = "|".join(re.escape(marker) for marker in markers)
+        verb_pattern = r"(?:é|era|está|estava|foi|ficou|parecia|permaneceu|continuou|voltou|sentou(?:-se)?)"
         for sentence in sentences:
             if not sentence.strip():
                 continue
-            if not any(_contains(sentence, name) for name in names):
-                continue
-            match = marker_re.search(sentence)
-            if not match:
-                continue
-            before_expression = sentence[max(0, match.start() - 12) : match.start()]
-            if re.search(r"\bde\s+$", before_expression, flags=re.IGNORECASE):
-                continue
-            if gender == "feminino":
-                before = sentence[max(0, match.start() - 40) : match.start()]
-                if MASCULINE_NOUN_CONTEXT_RE.search(before):
+            for name in names:
+                if not name or not _contains(sentence, name):
                     continue
-            _add_issue(
-                issues,
-                "possible_gender_mismatch",
-                "Possível discordância de gênero perto de personagem com gênero conhecido.",
-                term=key,
-                found=match.group(1),
-                snippet=re.sub(r"\s+", " ", sentence).strip()[:220],
-            )
+                subject_re = re.compile(
+                    rf"\b{re.escape(name)}\b\s+{verb_pattern}(?:\s+(?:mais|muito|bem|tão|menos|um|pouco)){{0,3}}\s+(?P<marker>{marker_pattern})\b",
+                    re.IGNORECASE,
+                )
+                match = subject_re.search(sentence)
+                if not match:
+                    continue
+                _add_issue(
+                    issues,
+                    "possible_gender_mismatch",
+                    "Possível discordância de gênero na predicação direta do personagem.",
+                    term=key,
+                    found=match.group("marker"),
+                    snippet=re.sub(r"\s+", " ", sentence).strip()[:220],
+                )
+                break
 
 
 def _check_structure(translated_text: str, issues: list[dict[str, str]]) -> None:
@@ -308,6 +340,32 @@ def _check_structure(translated_text: str, issues: list[dict[str, str]]) -> None
             found="“/”",
             snippet="",
         )
+    if has_malformed_quote_boundary(translated_text):
+        _add_issue(
+            issues,
+            "malformed_quote_boundary",
+            "Uma fala começa com fechamento e abertura de aspas colados.",
+            found="”“",
+            snippet=_snippet(translated_text, "”“"),
+        )
+    stray_marker = re.search(r"[.!?…][”\"]\*(?=\s|$)", translated_text)
+    if stray_marker:
+        _add_issue(
+            issues,
+            "stray_format_marker",
+            "Um marcador de formatação espúrio permaneceu após uma fala.",
+            found=stray_marker.group(0),
+            snippet=_snippet(translated_text, stray_marker.group(0)),
+        )
+    spacing_match = re.search(r"(?:[”\"](?=[“\"])|[.!?…](?=[“\"][A-Za-zÀ-ÿ]))", translated_text)
+    if spacing_match:
+        _add_issue(
+            issues,
+            "missing_quote_spacing",
+            "Aspas de dialogo foram coladas a outra fala ou a pontuacao anterior.",
+            found=spacing_match.group(0),
+            snippet=_snippet(translated_text, spacing_match.group(0)),
+        )
 
 
 def run_translation_quality_checks(
@@ -334,6 +392,9 @@ def run_translation_quality_checks(
         "possible_gender_mismatch": 3,
         "residual_translation_marker": 10,
         "unbalanced_quotes": 4,
+        "malformed_quote_boundary": 6,
+        "missing_quote_spacing": 3,
+        "stray_format_marker": 3,
     }
     score = 100
     for issue in issues:

@@ -26,6 +26,7 @@ def test_glossary_loader_preserves_enforcement_metadata(tmp_path: Path) -> None:
                         "source_aliases": ["Kayako Suou"],
                         "bad_aliases": ["Kayado"],
                         "allowed_target_aliases": ["Kayako"],
+                        "source_case_sensitive": True,
                         "notes": "Aliada de Ayaka.",
                     }
                 ]
@@ -50,6 +51,7 @@ def test_glossary_loader_preserves_enforcement_metadata(tmp_path: Path) -> None:
     assert term["aliases"] == ["Kayako Suou"]
     assert term["bad_aliases"] == ["Kayado"]
     assert term["allowed_target_aliases"] == ["Kayako"]
+    assert term["source_case_sensitive"] is True
 
 
 def test_translation_glossary_prompt_includes_metadata() -> None:

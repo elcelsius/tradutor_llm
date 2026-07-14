@@ -6,6 +6,8 @@
   - `<slug>_translate_report.json` (status + contagens)
   - `<slug>_translate_metrics.json` (por chunk, inclui `chunk_profile` e tamanho do contexto usado)
   - `<slug>_pt_progress.json` (resume)
+  - `<slug>_source_sections.json` (metadados de estrutura usados na revisão final)
+  - `<slug>_pt_review_report.json` (revisão final automática + QA)
 - Repair seletivo (`tradutor/repair.py`, chamado pela tradução):
   - `<slug>_repair_report.json` (totais da etapa)
   - `<slug>_repair_metrics.json` (por chunk)
@@ -17,6 +19,7 @@
   - `<slug>_refine_metrics.json`
   - `<slug>_pt_refinado_progress.json` (resume)
   - Opcional: `<slug>_pre_refine_cleanup.md` quando `cleanup_before_refine` aplica.
+  - `<slug>_pt_refinado_review_report.json` (revisão final automática + QA)
 - Desquebrar (`tradutor/desquebrar.py`):
   - `<slug>_desquebrar_metrics.json` (quando LLM é usado)
   - Arquivos `_raw_extracted.md`, `_preprocessed.md`, `_raw_desquebrado.md` se `--debug`.
@@ -26,6 +29,7 @@
   - `saida/<slug>_timings.json` (sempre ao final de `traduz`/`traduz-md`, inclusive em falha após início do processamento)
   - Com `--debug`: `debug_runs/<slug>/<run>/99_reports/timings.json`
   - `stages.translate` inclui o repair seletivo; quando houver tempo de repair, ele aparece também em `nested_stages.translation_repair` como detalhe sem dupla contagem.
+  - `stages.post_translate_review` registra a revisão determinística após a tradução; `stages.post_refine_normalize` inclui a revisão final após o refine.
 
 ## Caches (`tradutor/cache_utils.py`)
 - `saida/cache_traducao`

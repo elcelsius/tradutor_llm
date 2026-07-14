@@ -7,7 +7,7 @@ ollama_think: false                  # null/true/false; false evita gastar token
 
 translate_backend: ollama            # ollama ou gemini
 translate_model: mistral-small3.2:24b-instruct-2506-q4_K_M # modelo principal de tradução recomendado pelo benchmark e2e
-translate_temperature: 0.55          # temperatura para tradução; mantida por qualidade em sotaque/gírias
+translate_temperature: 0.35          # equilíbrio recomendado: preserva voz e reduz variação gramatical
 translate_repeat_penalty: 1.10       # penalidade de repetição (ollama)
 translate_chunk_chars: 2000          # tamanho alvo por chunk (caracteres)
 translate_num_predict: 3072          # limite de tokens gerados por chunk
@@ -32,8 +32,8 @@ desquebrar_chunk_chars: 2600         # chunk do desquebrar (pode ser um pouco ma
 desquebrar_num_predict: 2048         # limite de tokens gerados no desquebrar
 desquebrar_num_ctx: 4096             # contexto máximo para desquebrar (Ollama)
 
-# PDF (pós-refine)
-pdf_enabled: false                   # gera PDF automaticamente após o refine (defina true para habilitar)
+# PDF (pós-tradução/refine opcional)
+pdf_enabled: false                   # gera PDF automaticamente após a etapa final disponível
 pdf_font:
   file: C:/Windows/Fonts/Aptos.ttf    # caminho da fonte principal (TTF/OTF)
   size: 12                            # tamanho base da fonte
@@ -53,6 +53,7 @@ refine_chunk_chars: 3072
 refine_num_predict: 4096
 refine_num_ctx: 6144
 refine_guardrails: strict             # strict | relaxed | off
+refine_after_translate: false         # opt-in; `--refine` executa e mantém somente se o QA não piorar
 fail_on_chunk_error: false            # true aborta se algum chunk falhar; false mantém placeholders
 
 cleanup_before_refine: auto           # off | auto | on

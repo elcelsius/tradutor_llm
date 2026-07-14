@@ -1,6 +1,6 @@
 # Tradutor de Light Novels (EN → PT-BR)
 
-Pipeline em Python 3.12 para converter PDFs/Markdown em PT-BR com LLM (Ollama ou Gemini): extrai, limpa, desquebra linhas, traduz em chunks, repara falhas objetivas da tradução, refina e gera relatórios/PDF. Tudo roda local, priorizando Windows (mas funciona em Linux).
+Pipeline em Python 3.12 para converter PDFs/Markdown em PT-BR com LLM (Ollama ou Gemini): extrai, limpa, desquebra linhas, traduz em chunks, repara falhas objetivas, refina, aplica revisão final determinística e gera relatórios/PDF. Tudo roda local, priorizando Windows (mas funciona em Linux).
 
 ## Requisitos e instalação
 - Python 3.12.
@@ -26,28 +26,27 @@ O `config.yaml` versionado está ajustado para a baseline local mais forte encon
 
 - Tradução: `mistral-small3.2:24b-instruct-2506-q4_K_M`
 - Desquebrar: `gemma3:27b-it-q4_K_M`
-- Refine: `gemma4:26b-a4b-it-q4_K_M`
+- Refine LLM: opcional e desabilitado no fluxo automático; use `--refine` ou o subcomando `refina` para avaliação controlada.
 - Ollama API: `chat`, com `ollama_think: false`
 - Repair seletivo da tradução: ligado por padrão (`use_translation_repair: true`)
 - Cleanup antes do refine: `auto`
 
-Para produzir todos os arquivos úteis para inspeção (extraído, preprocessado, desquebrado, traduzido e refinado), rode com `--debug`:
+Para produzir os arquivos de inspeção da tradução (extraído, preprocessado, desquebrado e traduzido), rode com `--debug`. Acrescente `--refine` apenas quando quiser avaliar a pós-edição LLM:
 
 ```bash
 python -m tradutor.main traduz \
   --input "data/meu_livro.pdf" \
   --use-glossary \
   --request-timeout 600 \
-  --cleanup-before-refine auto \
   --clear-cache all \
   --debug
 ```
 
-### 1) Traduzir PDF (com desquebrar + refine)
+### 1) Traduzir PDF (padrão seguro)
 ```bash
 python -m tradutor.main traduz --input "data/meu_livro.pdf" --use-glossary
 ```
-Saídas em `saida/`: `meu_livro_pt.md`, `meu_livro_pt_refinado.md`, relatórios JSON e caches (ver Outputs).
+Saídas em `saida/`: `meu_livro_pt.md`, relatórios JSON e caches (ver Outputs). Use `--refine` para também gerar `meu_livro_pt_refinado.md`; ele só é mantido quando o QA final não fica pior que o da tradução.
 
 ### 2) Traduzir Markdown já desquebrado
 ```bash
@@ -64,7 +63,7 @@ python -m tradutor.main refina --input "saida/meu_livro_pt.md"
 python -m tradutor.main pdf --input "saida/meu_livro_pt_refinado.md"
 ```
 
-## Pipeline v3 (como o código executa)
+## Pipeline v4 (como o código executa)
 Diagrama e regra completa: [docs/PIPELINE.md](docs/PIPELINE.md).
 
 1) **Extração e pré-processo** (`tradutor/preprocess.py::extract_text_from_pdf`, `preprocess_text`):
@@ -74,6 +73,7 @@ Diagrama e regra completa: [docs/PIPELINE.md](docs/PIPELINE.md).
    - Controlado por `--use-desquebrar/--no-use-desquebrar` e `--desquebrar-mode llm|safe`.
 3) **Chunking e tradução** (`tradutor/translate.py::translate_document`):
    - Divide por seções se `split_by_sections` ativo (usa `tradutor/section_splitter.py`).
+   - Repara apenas aberturas de diálogo ausentes que sejam estruturalmente inequívocas e evita cortar chunks no meio de falas sempre que houver uma fronteira segura próxima.
    - Tradução chunk a chunk com glossário manual por chunk, contexto deslizante, perfil automático diálogo/narração, guardrails de diálogo, retries e sanitização.
    - Saídas: `_pt.md`, métricas/relatórios JSON, progress para resume.
 4) **QA/repair seletivo da tradução** (`tradutor/repair.py`):
@@ -82,10 +82,12 @@ Diagrama e regra completa: [docs/PIPELINE.md](docs/PIPELINE.md).
    - Controlado por `--translation-repair/--no-translation-repair` e `use_translation_repair` no config.
 5) **Cleanup opcional pré-refine** (`tradutor/cleanup.py::cleanup_before_refine`), controlado por `--cleanup-before-refine {off,auto,on}`.
 6) **Refine** (`tradutor/refine.py::refine_markdown_file`):
-   - Chunking do PT, guardrails, glossário manual/dinâmico, normalizadores estruturais, anti-colapso.
+   - Opt-in no fluxo automático (`refine_after_translate: false`), com chunking do PT, guardrails, termos do glossário presentes no chunk em PT-BR, normalizadores estruturais e anti-colapso.
    - Saídas: `_pt_refinado.md`, métricas/relatórios JSON, progress.
-7) **Revisão determinística final** (`tradutor/post_translation_review.py` via script):
-   - Corrige aliases proibidos, duplicações de nomes canônicos e ajustes conservadores de artigo/gênero.
+7) **Revisão determinística final automática** (`tradutor/post_translation_review.py`):
+   - Roda após a tradução e novamente após o refine, sem chamada de LLM.
+   - Recupera headings/subtítulos e marcadores de cena, corrige artefatos de aspas, aplica `bad_aliases`, normaliza caixa de entidades conhecidas no glossário e registra QA final.
+   - Gera `<slug>_source_sections.json` e relatórios `<slug>_pt_review_report.json` / `<slug>_pt_refinado_review_report.json`.
 8) **PDF** (`tradutor/pdf.py::convert_markdown_to_pdf` via CLI) se `--pdf-enabled` ou configuração.
 
 Resumos, métricas e progress são escritos em `saida/` (ver Outputs).
@@ -98,6 +100,7 @@ Resumos, métricas e progress são escritos em `saida/` (ver Outputs).
 - `--desquebrar-mode {llm,safe}` e `--use-desquebrar/--no-use-desquebrar`.
 - `--resume`: usa `<slug>_pt_progress.json` para retomar.
 - `--use-glossary` / `--manual-glossary <json>`: glossário manual (apenas termos presentes no chunk são injetados; limite configurável).
+- `--dynamic-glossary <json>`: glossário dinâmico da obra. Sem flag, a CLI usa `saida/<slug>_glossario_dinamico.json`, isolado por volume.
 - `--translation-repair` / `--no-translation-repair`: liga/desliga QA/repair seletivo antes do refine.
 - Contexto deslizante: `translate_context_paragraphs`, `translate_context_chars` e `translate_context_include_pt` no `config.yaml`.
 - `--translate-allow-adaptation`: habilita bloco de adaptação no prompt.
@@ -137,20 +140,24 @@ O comando grava em `saida/preprocess_audit/`: texto preprocessado, `*_preprocess
 Converte um `.md` em PDF com as configs de fonte/margem do `config.yaml`.
 
 ## Glossário (fonte única em código: `tradutor/glossary_utils.py`)
-- Manual: JSON com `terms: [{key, pt, source_aliases?, aliases?, bad_aliases?, allowed_target_aliases?, category?, notes?, locked?, enforce?, gender?}]`. Use `--manual-glossary`. Se não for informado, `--use-glossary` procura `glossario/glossario_manual.json` e depois `glossario/glossario_geral.json`.
+- Manual: JSON com `terms: [{key, pt, source_aliases?, aliases?, source_case_sensitive?, bad_aliases?, allowed_target_aliases?, target_replacements?, category?, notes?, locked?, enforce?, gender?}]`. Use `--manual-glossary`. Se não for informado, `--use-glossary` procura `glossario/glossario_manual.json` e depois `glossario/glossario_geral.json`.
 - `source_aliases`: aliases que podem aparecer no original/entrada e servem para localizar o termo no chunk. O campo legado `aliases` é aceito, mas deve espelhar apenas aliases de busca.
+- Um `source_alias` sozinho não obriga a expansão para `pt` no QA; use `enforce: true` quando a forma canônica também for obrigatória para aliases.
+- `source_case_sensitive`: use `true` quando um nome técnico coincide com uma palavra comum em inglês. Assim `Freeze` (habilidade) é localizado, mas `body freeze` não ativa o glossário nem a cobrança de termo canônico.
 - `bad_aliases`: formas proibidas ou não canônicas no PT-BR; quando encontradas na saída podem ser reportadas/corrigidas para `pt`.
-- `allowed_target_aliases`: formas de saída aceitas embora diferentes de `pt` (ex.: apelidos já naturalizados), para não gerar falso positivo no QA.
+- `allowed_target_aliases`: formas de saída aceitas embora diferentes de `pt` (ex.: apelidos já naturalizados). Elas contam como tradução válida no QA e evitam falso positivo de termo canônico ausente.
+- `target_replacements`: mapa de formas finais erradas que exigem uma substituição contextual, quando trocar apenas o alias por `pt` deixaria artigo, preposição ou flexão incorretos.
 - O glossário real local (`glossario/glossario_geral.json`) não é versionado. Mantenha apenas exemplos no Git.
-- Glossário dinâmico salvo em `saida/glossario_dinamico.json` quando habilitado no refine.
+- Glossário dinâmico: `traduz`, `traduz-md` e `refina` usam por padrão `saida/<slug>_glossario_dinamico.json`; passe `--dynamic-glossary` apenas quando quiser escolher explicitamente outro arquivo.
 - Injeção por chunk: só termos que aparecem no chunk entram no prompt (`select_terms_for_chunk`, limite `translate_glossary_match_limit`; fallback de até `translate_glossary_fallback_limit` termos quando nada casa).
-- Enforcement: termos com `enforce=true` são forçados no texto traduzido (após o LLM) apenas para os termos selecionados naquele chunk (`translate.enforce_canonical_terms`). `bad_aliases` também é usado para corrigir aliases sabidamente errados sem exigir que todos os aliases legítimos sejam forçados.
+- No refine, a seleção usa as formas PT-BR canônicas, aliases de saída e formas proibidas presentes no chunk; não há fallback para termos irrelevantes. Mesmo com `--refine`, a saída é descartada se o QA final piorar.
+- Enforcement: termos com `enforce=true` são forçados no texto traduzido (após o LLM) apenas para os termos selecionados naquele chunk (`translate.enforce_canonical_terms`), inclusive quando a correspondência veio de `source_aliases`. `locked` impede mudanças automáticas na entrada do glossário, mas não torna sua forma obrigatória na saída. `bad_aliases` também é usado para corrigir aliases sabidamente errados sem exigir que todos os aliases legítimos sejam forçados.
 - Auditoria local: `python scripts/audit_glossary.py glossario/glossario_geral.json` reporta chaves duplicadas, aliases ambíguos, aliases PT-BR usados como busca e redundâncias.
 - Migração local de aliases conhecidos: `python scripts/migrate_glossary_aliases.py glossario/glossario_geral.json --write`.
 
 ## Cleanup antes do refine
 - `cleanup_before_refine` (off/auto/on) aplica dedupe e fix de diálogos colados (`tradutor/cleanup.py::cleanup_before_refine`). Quando aplicado, gera `<slug>_pre_refine_cleanup.md` para inspeção.
-- O refine usa guardrails rígidos para rejeitar saídas que alterem a quantidade de parágrafos/linhas fora dos normalizadores estruturais conhecidos. Quando o refine não trouxer ganho literário claro, prefira revisar o `<slug>_pt.md` com a etapa determinística abaixo.
+- O refine usa guardrails rígidos para rejeitar saídas que alterem parágrafos, estilo de diálogo, nomes recorrentes ou aspas fora dos normalizadores estruturais conhecidos. Quando o refine não trouxer ganho literário claro, prefira revisar o `<slug>_pt.md` com a etapa determinística abaixo.
 
 ## Resume e progress
 - Tradução: `<slug>_pt_progress.json` inclui hashes e chunks para retomar (`translate.translate_document` via `run_translate`/`run_translate_md`).
@@ -160,10 +167,12 @@ Converte um `.md` em PDF com as configs de fonte/margem do `config.yaml`.
 ## Outputs, caches e debug (ver também docs/OUTPUTS.md)
 - Com `--debug`, também são gravados `saida/<slug>_raw_extracted.md`, `saida/<slug>_preprocessed.md` e `saida/<slug>_raw_desquebrado.md`, úteis para avaliar cada etapa do pipeline.
 - Tradução: `saida/<slug>_pt.md`, `<slug>_translate_report.json`, `<slug>_translate_metrics.json`, progress (`_pt_progress.json`), debug opcional (`debug_traducao/`, `*_pt_chunks_debug.jsonl`).
+- Estrutura fonte: `saida/<slug>_source_sections.json`, com títulos e offsets das seções usados pela revisão final.
 - Debug completo da tradução: `saida/debug_runs/<slug>/<timestamp>/40_translate/translate_manifest.json` registra por chunk `glossary.matched_count`, `glossary.injected_count`, `glossary.selection_mode`, termos injetados e substituições forçadas; `debug_traducao/chunkNNN_glossary.txt` guarda o bloco de glossário enviado ao prompt.
 - Repair: `saida/<slug>_repair_report.json`, `<slug>_repair_metrics.json` e, com `--debug`, `saida/debug_runs/<slug>/<timestamp>/45_repair/repair_manifest.json` + arquivos antes/depois dos chunks reparados.
 - Refine: `saida/<slug>_pt_refinado.md`, `<slug>_refine_report.json`, `<slug>_refine_metrics.json`, progress (`_pt_refinado_progress.json`), debug opcional (`debug_refine*/`).
-- Revisão determinística pós-tradução: `scripts/review_translation.py` gera `<slug>_pt_revisado.md` e um report JSON com headings restaurados, substituições editoriais conservadoras, correções de `bad_aliases` e ajustes de artigo/gênero para personagens femininas conhecidas no glossário.
+- Revisão final automática: `<slug>_pt_review_report.json` e `<slug>_pt_refinado_review_report.json` registram substituições editoriais, normalização de nomes em CAPS, equilíbrio de aspas e o QA final. A saída final já recebe essa revisão no fluxo normal.
+- Revisão manual de saída existente: `scripts/review_translation.py --finalize` aplica o mesmo pós-processamento sem chamar LLM.
 - Tempos: `saida/<slug>_timings.json` é gerado sempre no fim de `traduz`/`traduz-md`, com duração por etapa e total real. Com `--debug`, uma cópia fica em `debug_runs/<slug>/<timestamp>/99_reports/timings.json`. O tempo de `translate` inclui o repair; quando houver repair, ele aparece também em `nested_stages.translation_repair`.
 - Desquebrar: métricas em `<slug>_desquebrar_metrics.json` se rodar com LLM; debug raw/preprocess quando `--debug`.
 - PDF: `saida/pdf/<slug>_pt_refinado.pdf` se `--pdf-enabled`.
@@ -172,8 +181,8 @@ Converte um `.md` em PDF com as configs de fonte/margem do `config.yaml`.
 ## Testes e qualidade
 - Testes locais: `pytest -q`.
 - Auditoria do glossário local: `python scripts/audit_glossary.py glossario/glossario_geral.json`.
-- Revisão determinística de um volume já traduzido:
-  `python scripts/review_translation.py --input "saida/meu_livro_pt.md" --output "saida/meu_livro_pt_revisado.md" --sections "saida/debug_runs/<slug>/<run>/30_split_chunk/sections.json" --glossary "glossario/glossario_geral.json" --report "saida/meu_livro_pt_revisado_report.json"`.
+- Revisão final de um volume já traduzido, sem nova chamada de LLM:
+  `python scripts/review_translation.py --finalize --input "saida/meu_livro_pt_refinado.md" --source "saida/meu_livro_raw_desquebrado.md" --output "saida/meu_livro_pt_revisado.md" --glossary "glossario/glossario_geral.json" --report "saida/meu_livro_pt_revisado_report.json"`.
 - Hooks locais: `pre-commit run --all-files` (mojibake, EOF, whitespace; usa `scripts/check_mojibake.py` que importa tokens de `tradutor/mojibake.py`).
 - CI: GitHub Actions (`.github/workflows/ci.yml`) roda `pytest -q` e `pre-commit run --all-files` em Ubuntu/Windows com Python 3.12, cache de pip.
 - Benchmarks locais: `python -m tradutor.bench_llms`, `python -m tradutor.bench_refine_llms` e `python -m tradutor.bench_e2e_llms`. Os resultados gerados em `benchmark/traducao`, `benchmark/refine`, `benchmark/e2e` e `benchmark/literario` são locais e ignorados pelo Git.
@@ -186,7 +195,7 @@ Converte um `.md` em PDF com as configs de fonte/margem do `config.yaml`.
 ## Troubleshooting
 - **UTF-8/mojibake:** fontes/tokens inválidos são bloqueados por testes/hook. Use editor em UTF-8.
 - **TOC ou headings vazios virando capítulos:** `skip_front_matter` e `split_by_sections` controlam; o splitter ignora stubs (`tradutor/section_splitter.py`).
-- **Diálogos curtos colados ou omitidos:** guardrails/retries no translate (`needs_retry`, `dialogue_guardrails`); normalizadores de aspas em `translate` e `refine`.
+- **Diálogos curtos colados ou omitidos:** guardrails/retries no translate (`needs_retry`, `dialogue_guardrails`); o refine rejeita saída que introduza `”“` ou deixe aspas desbalanceadas após as tentativas.
 - **Truncamento de chunk:** retries automáticos; se `fail_on_chunk_error` off, placeholders `[CHUNK_*]` aparecem no MD e logs indicam falha.
 - **Caches contaminados:** use `--clear-cache all` ao mudar modelo/prompt; caches ficam em `saida/cache_*`.
 - **Retomar execução:** use `--resume` em `traduz`/`traduz-md`/`refina` para aproveitar progress.

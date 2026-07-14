@@ -31,6 +31,14 @@ ENGLISH_CONTRACTION_RE = re.compile(
     re.IGNORECASE,
 )
 ENGLISH_POSSESSIVE_RE = re.compile(r"\b[A-Z][A-Za-z]+['’]s\b")
+# Formas plurais inglesas que não têm uso natural em PT-BR. Mantemos a lista
+# curta para não sinalizar empréstimos técnicos legítimos ou nomes próprios.
+SINGLE_TOKEN_ENGLISH_LEAKS = frozenset({"af", "arright", "boost", "buff", "buffs", "kys", "selves", "they", "though", "uh", "uhh"})
+SHORT_ENGLISH_LEAKS = frozenset({"i see"})
+MIXED_ENGLISH_ARTIFACT_RE = re.compile(
+    r"(?<![A-Za-zÀ-ÿ])(?:I(?:-(?=[a-zà-ÿ])|\s+(?=[a-zà-ÿ]))|Y-you\b)",
+    re.IGNORECASE,
+)
 
 
 def english_leak_segments(text: str) -> list[str]:
@@ -38,6 +46,23 @@ def english_leak_segments(text: str) -> list[str]:
     if not text:
         return []
     flagged: list[str] = []
+    single_token_match = re.search(
+        rf"\b(?:{'|'.join(re.escape(word) for word in sorted(SINGLE_TOKEN_ENGLISH_LEAKS))})\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if single_token_match:
+        return [single_token_match.group(0)]
+    short_phrase_match = re.search(
+        rf"\b(?:{'|'.join(re.escape(phrase) for phrase in sorted(SHORT_ENGLISH_LEAKS))})\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if short_phrase_match:
+        return [short_phrase_match.group(0)]
+    mixed_artifact_match = MIXED_ENGLISH_ARTIFACT_RE.search(text)
+    if mixed_artifact_match:
+        return [mixed_artifact_match.group(0)]
     segments = re.split(r"(?:\n+|(?<=[.!?])\s+)", text)
     for raw_segment in segments:
         segment = raw_segment.strip()

@@ -16,7 +16,10 @@ def detect_language_anomaly(text: str, mode: str = "refine") -> bool:
     cjk_blocks = re.findall(r"[\u4e00-\u9fff]{6,}", text)
     if cjk_blocks:
         return True
-    french_es = ["mon ami", "bonjour", "ma ch", "très", "oui", "siempre", "porque", "pero", "esta ", "está "]
+    # Não use cognatos isolados como `esta` ou `porque`: ambos são válidos em
+    # PT-BR e faziam o refinador descartar saídas saudáveis. Mantenha apenas
+    # sinais estrangeiros inequívocos.
+    french_es = ["mon ami", "bonjour", "ma ch", "très", "siempre"]
     if any(pat in lower for pat in french_es):
         return True
     if mode != "translate":
@@ -42,12 +45,23 @@ def detect_repetition_anomaly(text: str) -> bool:
         counts[ln] = counts.get(ln, 0) + 1
     if any(c >= 3 for c in counts.values()):
         return True
-    words = text.split()
-    wc = {}
-    for w in words:
-        wc[w] = wc.get(w, 0) + 1
-    if words and max(wc.values()) >= 10:
-        return True
+    # Contagem bruta de palavras marca qualquer texto PT-BR normal como
+    # anômalo: artigos e preposições aparecem dezenas de vezes num chunk.
+    # Só considere repetição global quando um token relevante domina uma
+    # fração expressiva de uma saída suficientemente longa.
+    words = re.findall(r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'-]*", text.casefold())
+    ignored = {
+        "a", "o", "as", "os", "de", "da", "do", "das", "dos", "e", "é", "em",
+        "na", "no", "nas", "nos", "um", "uma", "que", "se", "por", "para", "com",
+        "ao", "aos", "à", "às", "eu", "ela", "ele", "eles", "elas", "não", "mais",
+    }
+    relevant = [word for word in words if len(word) >= 5 and word not in ignored]
+    if len(relevant) >= 40:
+        counts: dict[str, int] = {}
+        for word in relevant:
+            counts[word] = counts.get(word, 0) + 1
+        if max(counts.values(), default=0) >= 12 and max(counts.values()) / len(relevant) >= 0.12:
+            return True
     return False
 
 
@@ -80,6 +94,47 @@ def detect_semantic_drift(orig: str, llm: str) -> bool:
     return False
 
 
+def detect_entity_mutation(orig: str, candidate: str) -> bool:
+    """Detecta deformações de nomes recorrentes, como `Sogou` -> `Sogamente`.
+
+    O teste é deliberadamente estreito: só considera entidades que aparecem ao
+    menos duas vezes no original e um token novo que conserva o mesmo prefixo
+    de três letras, mas foi estendido pelo modelo.
+    """
+    source_counts: dict[str, int] = {}
+    for entity in _extract_entities(orig):
+        normalized = entity.casefold()
+        source_counts[normalized] = source_counts.get(normalized, 0) + 1
+    stable_entities = [
+        entity
+        for entity, count in source_counts.items()
+        if count >= 2 and len(entity) >= 4
+    ]
+    if not stable_entities:
+        return False
+
+    for token in _extract_entities(candidate):
+        normalized = token.casefold()
+        if normalized in source_counts:
+            continue
+        for entity in stable_entities:
+            if normalized.startswith(entity[:3]) and len(normalized) >= len(entity) + 2:
+                return True
+    return False
+
+
+INLINE_SLASH_TOKEN_RE = re.compile(r"(?<![\w/])[A-Za-zÀ-ÿ]{1,}/[A-Za-zÀ-ÿ]{1,}(?![\w/])")
+
+
+def detect_inline_slash_mutation(orig: str, candidate: str) -> bool:
+    """Detecta tokens inventados como `do/a` que não existiam no original."""
+    original_tokens = {match.group(0).casefold() for match in INLINE_SLASH_TOKEN_RE.finditer(orig)}
+    return any(
+        match.group(0).casefold() not in original_tokens
+        for match in INLINE_SLASH_TOKEN_RE.finditer(candidate)
+    )
+
+
 def sanitize_llm_output(llm_raw: str) -> str:
     cleaned = llm_raw
     cleaned = cleaned.replace("Here is the refined text:", "")
@@ -105,6 +160,8 @@ def anti_hallucination_filter(orig: str, llm_raw: str, cleaned: str, mode: str) 
     if not safe.strip():
         return orig
     if detect_structure_anomaly(llm_raw):
+        return orig
+    if detect_entity_mutation(orig, safe) or detect_inline_slash_mutation(orig, safe):
         return orig
     if detect_language_anomaly(safe, mode=mode):
         return orig

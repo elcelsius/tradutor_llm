@@ -39,9 +39,15 @@ from .sanitizer import log_report, sanitize_translation_output, SanitizationRepo
 from .utils import timed
 from .refine import has_suspicious_repetition  # reuse guardrail
 from .anti_hallucination import anti_hallucination_filter
-from .qa import needs_retry, count_quotes, count_quote_lines
+from .qa import has_curly_quote_balance_regression, needs_retry, count_quotes, count_quote_lines
+from .postprocess import normalize_dialogue_quotes
 from .postprocess_translation import postprocess_translation
-from .quote_fix import fix_unbalanced_quotes, count_curly_quotes
+from .quote_fix import (
+    collapse_repeated_curly_quotes,
+    fix_unbalanced_quotes,
+    repair_missing_open_quotes_per_paragraph,
+    count_curly_quotes,
+)
 from .text_postprocess import apply_structural_normalizers, apply_custom_normalizers
 from .language_guardrails import detect_residual_english, english_leak_segments as _english_leak_segments
 from .repair import repair_translation_chunk, repair_prompt_fingerprint, REPAIR_PIPELINE_VERSION
@@ -54,11 +60,179 @@ PT_HEADING_RE = re.compile(
     r"^#?\s*(pr[oó]logo|cap[ií]tulo\s+\d+(?::[^\n]*)?|ep[ií]logo|p[oó]s[- ]?escrito|posf[aá]cio)\s*$",
     re.IGNORECASE,
 )
-TRANSLATE_PIPELINE_VERSION = "8"
+TRANSLATE_PIPELINE_VERSION = "40"
 TRANSLATE_START_MARKER_RE = r"###\s*TEXTO_TRADUZ(?:IDO|DO)?_INICIO"
 TRANSLATE_END_MARKER_RE = r"###\s*TEXTO_TRADUZ(?:IDO|DO)?_FIM"
 TRANSLATE_ANY_MARKER_RE = r"###\s*TEXTO_TRADUZ[A-Z_]*"
 SCENE_SEPARATOR_RE = re.compile(r"^\s*(?:\*\s*){3,}\s*$|^\s*[—–-]{3,}\s*$", re.MULTILINE)
+
+
+def _remove_premature_curly_close(source_text: str, translated_text: str) -> str:
+    """Remove um fechamento precoce quando a estrutura da fonte torna isso inequívoco.
+
+    Alguns modelos fecham uma fala antes de uma risada/interjeição e repetem o
+    fechamento no fim do mesmo parágrafo. Só removemos o primeiro fechamento
+    quando a fonte está balanceada, a saída preservou todas as aberturas e tem
+    exatamente um fechamento extra. Assim não mascaramos uma abertura perdida.
+    """
+    source_open, source_close = count_curly_quotes(source_text)
+    target_open, target_close = count_curly_quotes(translated_text)
+    if (
+        not source_open
+        or source_open != source_close
+        or target_open != source_open
+        or target_close != source_close + 1
+    ):
+        return translated_text
+
+    depth = 0
+    unmatched_close = None
+    for idx, char in enumerate(translated_text):
+        if char == "“":
+            depth += 1
+        elif char == "”":
+            if depth:
+                depth -= 1
+            else:
+                unmatched_close = idx
+                break
+    if unmatched_close is None:
+        return translated_text
+
+    paragraph_start = translated_text.rfind("\n\n", 0, unmatched_close) + 2
+    previous_close = translated_text.rfind("”", paragraph_start, unmatched_close)
+    if previous_close < paragraph_start:
+        return translated_text
+    between = translated_text[previous_close + 1 : unmatched_close]
+    if "“" in between or "\n\n" in between or len(re.sub(r"\W+", "", between)) < 8:
+        return translated_text
+
+    return translated_text[:previous_close] + translated_text[previous_close + 1 :]
+
+
+def _normalize_chunk_dialogue_quotes(source_text: str, translated_text: str) -> str:
+    """Normaliza aspas retas da saída quando a estrutura da fonte é inequívoca.
+
+    Alguns modelos fecham uma fala corretamente e deixam uma aspa reta extra no
+    fim da narração seguinte. Só removemos esse marcador quando a fonte usa
+    aspas curvas balanceadas e a saída tem exatamente uma aspa reta a mais.
+    """
+    if not translated_text:
+        return translated_text
+
+    translated_text = _remove_premature_curly_close(source_text, translated_text)
+
+    source_open, source_close = count_curly_quotes(source_text)
+    if not source_open or source_open != source_close or "“" in translated_text or "”" in translated_text:
+        return normalize_dialogue_quotes(translated_text)
+
+    positions = [
+        idx
+        for idx, char in enumerate(translated_text)
+        if char == '"'
+        and not (idx > 0 and translated_text[idx - 1].isdigit())
+        and not (idx + 1 < len(translated_text) and translated_text[idx + 1].isdigit())
+    ]
+    expected_quotes = source_open + source_close
+    if len(positions) == expected_quotes + 1 and not translated_text[positions[-1] + 1 :].strip():
+        translated_text = translated_text[: positions[-1]] + translated_text[positions[-1] + 1 :]
+
+    return normalize_dialogue_quotes(translated_text)
+
+
+def _repair_residual_english_segments(
+    translated_text: str,
+    *,
+    backend: LLMBackend,
+    cfg: AppConfig,
+    logger: logging.Logger,
+    glossary_text: str | None,
+    allow_adaptation: bool,
+    temperature: float,
+    label: str,
+) -> tuple[str, int, int]:
+    """Retraduz apenas segmentos ainda em inglês, sem reescrever o chunk inteiro."""
+    repaired = translated_text
+    attempts_total = 0
+    replacements = 0
+    blocks: list[str] = []
+    seen_blocks: set[str] = set()
+    for segment in _english_leak_segments(translated_text):
+        if not segment.strip():
+            continue
+        position = translated_text.find(segment)
+        if position < 0:
+            continue
+        block_start = translated_text.rfind("\n\n", 0, position) + 2
+        block_end = translated_text.find("\n\n", position)
+        if block_end < 0:
+            block_end = len(translated_text)
+        block = translated_text[block_start:block_end].strip()
+        if not block or block in seen_blocks:
+            continue
+        seen_blocks.add(block)
+        blocks.append(block)
+
+    for segment_index, segment in enumerate(blocks, start=1):
+        if segment not in repaired:
+            continue
+        prompt = build_translation_prompt(
+            segment,
+            context=None,
+            glossary_text=glossary_text,
+            allow_adaptation=allow_adaptation,
+            chunk_profile="dialogue",
+        )
+        prompt += (
+            "\n\nATENÇÃO: Este é somente o segmento residual em inglês. "
+            "Traduza integralmente para PT-BR, preserve aspas, hesitações e pontuação. "
+            "Não devolva o texto em inglês nem explicações."
+        )
+        previous_temperature = backend.temperature
+        backend.temperature = temperature
+        try:
+            raw_text, _clean_text, attempts, _report = _call_with_retry(
+                backend=backend,
+                prompt=prompt,
+                cfg=cfg,
+                logger=logger,
+                label=f"{label}-{segment_index}",
+            )
+        except Exception as exc:
+            logger.warning("Fallback de inglês residual falhou no bloco %d: %s", segment_index, exc)
+            continue
+        finally:
+            backend.temperature = previous_temperature
+        attempts_total += attempts
+
+        candidate = _strip_translate_markers(_parse_translation_output(raw_text))
+        candidate, _report = sanitize_translation_output(candidate, logger=logger, fail_on_contamination=False)
+        candidate = anti_hallucination_filter(orig=segment, llm_raw=raw_text, cleaned=candidate, mode="translate")
+        candidate = postprocess_translation(candidate, segment)
+        candidate = _normalize_chunk_dialogue_quotes(segment, candidate)
+        candidate, _ = collapse_repeated_curly_quotes(candidate)
+        candidate_whole = repaired.replace(segment, candidate, 1)
+        candidate_has_english, _reason = detect_residual_english(candidate)
+        invalid_reason = ""
+        if not candidate.strip():
+            invalid_reason = "empty"
+        elif candidate_has_english:
+            invalid_reason = "residual_english"
+        elif has_curly_quote_balance_regression(repaired, candidate_whole):
+            invalid_reason = f"quote_balance {count_curly_quotes(repaired)}->{count_curly_quotes(candidate_whole)}"
+        elif len(candidate.strip()) < len(segment.strip()) * 0.45:
+            invalid_reason = "too_short"
+        if invalid_reason:
+            logger.warning(
+                "Fallback de inglês residual não produziu substituição válida no segmento %d: %s.",
+                segment_index,
+                invalid_reason,
+            )
+            continue
+        repaired = candidate_whole
+        replacements += 1
+
+    return repaired, attempts_total, replacements
 
 
 def translation_prompt_fingerprint(*, allow_adaptation: bool) -> str:
@@ -243,6 +417,12 @@ REGRAS PRINCIPAIS:
 8. NÃO use "..." ou "…" para omitir trechos; só use reticências quando elas já existirem no original.
 
 {profile_block}
+
+REVISÃO SILENCIOSA OBRIGATÓRIA:
+- Antes de responder, confira em silêncio se cada frase do original tem correspondente e se não houve troca de sujeito, referente, número ou gênero.
+- Corrija concordância, regência e tempo verbal para que a narração permaneça natural em PT-BR.
+- Troque construções que soem como tradução literal por equivalentes naturais em português. Por exemplo, não traduza "take intense action" literalmente como "tomar ações".
+- Não escreva explicações, checklist ou comentários sobre esta revisão na saída.
 
 MELHORIAS OBRIGATÓRIAS:
 
@@ -510,6 +690,17 @@ def enforce_canonical_terms(text: str, terms: list[dict]) -> tuple[str, dict]:
         pt = str(term.get("pt", "")).strip()
         if not pt:
             continue
+        target_replacements = term.get("target_replacements") or {}
+        if isinstance(target_replacements, dict):
+            for alias, replacement in target_replacements.items():
+                alias_s = str(alias).strip()
+                replacement_s = str(replacement).strip()
+                if not alias_s or not replacement_s or alias_s.casefold() == replacement_s.casefold():
+                    continue
+                pattern = re.compile(rf"(?<!\w){re.escape(alias_s)}(?!\w)", flags=re.IGNORECASE)
+                text, count = pattern.subn(replacement_s, text)
+                if count:
+                    replacements[alias_s] = replacements.get(alias_s, 0) + count
         variants: list[str] = []
         key = str(term.get("key", "")).strip()
         canonical_same_as_source = key.casefold() == pt.casefold()
@@ -572,6 +763,11 @@ def translate_document(
         backend.temperature = cfg.translate_temperature
     clean = pdf_text if already_preprocessed else preprocess_text(pdf_text, logger, skip_front_matter=cfg.skip_front_matter)
     clean = _separate_short_dialogues(clean)
+    clean, source_quote_repairs = repair_missing_open_quotes_per_paragraph(clean, logger=logger, label="source")
+    clean, source_quote_boundary_fixed = fix_unbalanced_quotes(clean, logger=logger, label="source")
+    source_quote_boundary_fixed = source_quote_boundary_fixed or bool(source_quote_repairs)
+    if source_quote_boundary_fixed:
+        logger.info("Fronteiras de aspas do texto-fonte foram restauradas antes da tradução.")
     doc_hash = chunk_hash(clean)
     sections = split_into_sections(clean) if split_flag else [{"title": "Full Text", "body": clean}]
     if split_flag:
@@ -772,6 +968,7 @@ def translate_document(
         "translate_context_paragraphs": context_paragraphs,
         "translate_context_chars": context_chars,
         "translate_context_include_pt": context_include_pt,
+        "source_quote_boundary_fixed": source_quote_boundary_fixed,
         "split_by_sections": split_flag,
         "dialogue_guardrails_mode": dialogue_guardrails_mode,
         "prompt_hash": prompt_hash,
@@ -1082,6 +1279,12 @@ def translate_document(
                                 raise ValueError("Traducao vazia apos parsing/sanitizacao.")
                             raw_candidate = anti_hallucination_filter(orig=chunk, llm_raw=raw_text, cleaned=parsed_raw, mode="translate")
                             parsed_clean = anti_hallucination_filter(orig=chunk, llm_raw=raw_text, cleaned=parsed_clean, mode="translate")
+                            raw_candidate = postprocess_translation(raw_candidate, chunk)
+                            parsed_clean = postprocess_translation(parsed_clean, chunk)
+                            raw_candidate = _normalize_chunk_dialogue_quotes(chunk, raw_candidate)
+                            parsed_clean = _normalize_chunk_dialogue_quotes(chunk, parsed_clean)
+                            raw_candidate, _ = collapse_repeated_curly_quotes(raw_candidate)
+                            parsed_clean, _ = collapse_repeated_curly_quotes(parsed_clean)
                             sanitized_ratio = len(parsed_clean.strip()) / max(len(parsed_raw.strip()), 1) if parsed_raw.strip() else 1.0
                             sanitization_ratio = sanitized_ratio
                             iq = _count_quotes(chunk)
@@ -1141,9 +1344,40 @@ def translate_document(
                                     parsed_clean = raw_candidate
                                 break
                             attempt += 1
-                            is_dialogue_retry = "omissao_dialogo" in (retry_reason or "") or guardrail_triggered
+                            is_dialogue_retry = (
+                                "omissao_dialogo" in (retry_reason or "")
+                                or guardrail_triggered
+                            )
                             fallback_done = False
-                            if attempt >= cfg.max_retries and is_dialogue_retry and dialogue_split_fallback:
+                            if (
+                                attempt >= cfg.max_retries
+                                and "residual_english" in (retry_reason or "")
+                                and dialogue_split_fallback
+                            ):
+                                fallback_text, fallback_attempts, fallback_replacements = _repair_residual_english_segments(
+                                    parsed_clean,
+                                    backend=backend,
+                                    cfg=cfg,
+                                    logger=logger,
+                                    glossary_text=chunk_glossary_text,
+                                    allow_adaptation=allow_adapt_flag,
+                                    temperature=dialogue_retry_temps[-1],
+                                    label=f"trad-residual-{idx}/{len(chunks)}",
+                                )
+                                llm_attempts += fallback_attempts
+                                residual_after_fallback, _ = detect_residual_english(fallback_text)
+                                if fallback_replacements and not residual_after_fallback:
+                                    parsed_clean = fallback_text
+                                    retry = False
+                                    fallback_done = True
+                                    retry_reasons.append("residual_english_targeted_fallback")
+                                    logger.info(
+                                        "Fallback de inglês residual no chunk %d/%d: segmentos=%d",
+                                        idx,
+                                        len(chunks),
+                                        fallback_replacements,
+                                    )
+                            if not fallback_done and attempt >= cfg.max_retries and is_dialogue_retry and dialogue_split_fallback:
                                 blocks = _split_dialogue_blocks(chunk) or [chunk]
                                 logger.warning(
                                     "Fallback de split de dialogos no chunk %d/%d (%d blocos).",
@@ -1204,6 +1438,8 @@ def translate_document(
                                 parsed_clean = "\n\n".join(block_outputs).strip()
                                 retry = False
                                 fallback_done = True
+                            if fallback_done:
+                                break
                             if attempt >= cfg.max_retries:
                                 suspect_output = True
                                 suspect_reason = last_retry_reason or retry_reason or guardrail_reason or "max_retries_exceeded"
@@ -1216,8 +1452,6 @@ def translate_document(
                                     suspect_reason,
                                 )
                                 break
-                            if fallback_done:
-                                break
                             logger.warning(
                                 "QA retry traducao chunk %d/%d: %s (tentativa %d/%d)",
                                 idx,
@@ -1228,14 +1462,19 @@ def translate_document(
                             )
                             if "omissao_dialogo" in retry_reason:
                                 prompt = base_prompt + "\n\nATENÇÃO: Você omitiu falas. Refaça traduzindo TODAS as frases e mantendo cada fala entre aspas exatamente uma vez. Não resuma. Não remova risos/interjeições."
+                            elif "omissao_paragrafos" in retry_reason:
+                                prompt = base_prompt + "\n\nATENÇÃO: Você fundiu ou omitiu parágrafos. Refaça traduzindo TODO o conteúdo, mantendo cada parágrafo da fonte separado e na mesma ordem. Não una fala e narração. Não resuma."
                             elif "residual_english" in retry_reason:
                                 prompt = base_prompt + "\n\nATENÇÃO: Sua saída manteve frases em inglês. Refaça traduzindo 100% do conteúdo para português brasileiro. Não deixe nenhuma frase narrativa ou fala em inglês; mantenha apenas nomes próprios do glossário."
+                            elif "unbalanced_quotes" in retry_reason or "extra_curly_quotes" in retry_reason:
+                                prompt = base_prompt + "\n\nATENÇÃO: Você alterou a estrutura de aspas. Refaça mantendo cada fala entre aspas exatamente uma vez; não feche uma fala antes de risos, interjeições ou o fim da mesma fala."
                             elif "truncado" in retry_reason:
                                 prompt = base_prompt + "\n\nATENÇÃO: Sua saída foi truncada. Refaça incluindo TODO o conteúdo."
                             else:
                                 prompt = base_prompt + "\n\nATENÇÃO: Sua saída anterior veio truncada ou repetitiva. Refaça e inclua TODO o conteúdo. Não resuma."
 
                         parsed_clean = postprocess_translation(parsed_clean, chunk)
+                        parsed_clean = _normalize_chunk_dialogue_quotes(chunk, parsed_clean)
                         terms_for_enforcement = chunk_terms if glossary_matched > 0 else []
                         parsed_clean, enforced = enforce_canonical_terms(parsed_clean, terms_for_enforcement)
                         glossary_enforced = enforced
@@ -1248,7 +1487,7 @@ def translate_document(
                             )
                         # correção de aspas curvas
                         opens_q, closes_q = count_curly_quotes(parsed_clean)
-                        if opens_q != closes_q:
+                        if has_curly_quote_balance_regression(chunk, parsed_clean):
                             parsed_clean, fixed = fix_unbalanced_quotes(parsed_clean, logger=logger, label=f"trad-{idx}")
                             if fixed:
                                 opens_q, closes_q = count_curly_quotes(parsed_clean)
@@ -1329,7 +1568,7 @@ def translate_document(
                                     for key, value in repair_enforced.items():
                                         glossary_enforced[key] = glossary_enforced.get(key, 0) + value
                                 opens_q, closes_q = count_curly_quotes(parsed_clean)
-                                if opens_q != closes_q:
+                                if has_curly_quote_balance_regression(chunk, parsed_clean):
                                     parsed_clean, _ = fix_unbalanced_quotes(parsed_clean, logger=logger, label=f"trad-repair-{idx}")
                         translated_chunks.append(parsed_clean)
                         translated_ok.add(idx)
@@ -1844,6 +2083,7 @@ def translate_document(
             "translate_context_paragraphs": context_paragraphs,
             "translate_context_chars": context_chars,
             "translate_context_include_pt": context_include_pt,
+            "source_quote_boundary_fixed": source_quote_boundary_fixed,
         }
         metrics_path = Path(cfg.output_dir) / f"{slug}_translate_metrics.json"
         metrics_path.write_text(json.dumps(metrics_payload, ensure_ascii=False, indent=2), encoding="utf-8")

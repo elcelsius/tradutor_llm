@@ -42,5 +42,6 @@ def test_paragraph_mismatch_detects_multi_section_loss(caplog, tmp_path) -> None
         )
 
     assert any("Paragrafos ausentes apos traducao" in rec.message for rec in caplog.records)
-    # Ensure multiple calls (chunks per section)
-    assert backend.calls == 2
+    # Há pelo menos uma chamada por seção; retries podem ocorrer para a perda
+    # estrutural que este teste induz deliberadamente.
+    assert backend.calls >= 2

@@ -31,7 +31,7 @@ def test_linha_em_branco_dentro_de_fala():
     text = "“Entendo.\n\nQuer dizer que sim.”"
     fixed, stats = fix_dialogue_artifacts(text)
     assert "\n\n" not in fixed
-    assert "“Entendo.\nQuer dizer que sim.”" == fixed
+    assert "“Entendo. Quer dizer que sim.”" == fixed
     assert stats["inquote_blank_collapses"] >= 1
 
 

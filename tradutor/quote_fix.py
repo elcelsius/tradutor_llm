@@ -14,6 +14,15 @@ def count_curly_quotes(text: str) -> Tuple[int, int]:
     return text.count("“"), text.count("”")
 
 
+def collapse_repeated_curly_quotes(text: str) -> Tuple[str, int]:
+    """Colapsa sequencias espurias como ``””`` ou ``““`` em uma aspa.
+
+    A regra nao toca em ``”“``, que representa uma fronteira entre falas e e
+    validada separadamente pelos guardrails de dialogo.
+    """
+    return re.subn(r"([“”])\1+", r"\1", text)
+
+
 def _first_unmatched_open(text: str) -> int | None:
     """Retorna índice da primeira aspa de abertura não fechada (ou None)."""
     stack: list[int] = []
@@ -26,9 +35,90 @@ def _first_unmatched_open(text: str) -> int | None:
     return stack[0] if stack else None
 
 
+def _first_unmatched_close(text: str) -> int | None:
+    """Retorna a primeira aspa de fechamento sem abertura correspondente."""
+    depth = 0
+    for idx, ch in enumerate(text):
+        if ch == "“":
+            depth += 1
+        elif ch == "”":
+            if depth:
+                depth -= 1
+            else:
+                return idx
+    return None
+
+
+def _safe_missing_open_insert_position(text: str, unmatched_close: int) -> int | None:
+    """Encontra o inicio da fala quando um fechamento isolado e inequivoco aparece.
+
+    So corrigimos uma linha que ja possui texto suficiente antes do fechamento e
+    nao contem uma abertura curva. Isso cobre o caso comum em que uma fala foi
+    dividida pelo PDF/LLM e perdeu apenas a aspa de abertura, sem tentar adivinhar
+    a estrutura de uma linha composta apenas por narracao.
+    """
+    line_start = text.rfind("\n", 0, unmatched_close) + 1
+    prefix = text[line_start:unmatched_close]
+    if "“" in prefix or len(prefix.strip()) < 8:
+        return None
+    leading = len(prefix) - len(prefix.lstrip())
+    return line_start + leading
+
+
+def repair_missing_open_quotes_per_paragraph(
+    text: str,
+    logger: logging.Logger | None = None,
+    label: str | None = None,
+) -> Tuple[str, int]:
+    """Restaura aberturas perdidas mesmo quando o total global parece balanceado.
+
+    A extração ou a desquebra pode perder a abertura de uma fala em um
+    parágrafo e preservar outras aspas em posições diferentes. Nesse caso as
+    contagens globais podem se compensar, mas a fala continua inválida. Só
+    alteramos parágrafos com uma única aspa de fechamento sem abertura local e
+    com uma posição de inserção inequivoca no início da linha.
+    """
+    if not text or "”" not in text:
+        return text, 0
+
+    parts = re.split(r"(\n\s*\n)", text)
+    fixes = 0
+    for index in range(0, len(parts), 2):
+        paragraph = parts[index]
+        if not paragraph or "”" not in paragraph:
+            continue
+
+        depth = 0
+        unmatched_closes: list[int] = []
+        for position, char in enumerate(paragraph):
+            if char == "“":
+                depth += 1
+            elif char == "”":
+                if depth:
+                    depth -= 1
+                else:
+                    unmatched_closes.append(position)
+
+        if depth or len(unmatched_closes) != 1:
+            continue
+        insert_pos = _safe_missing_open_insert_position(paragraph, unmatched_closes[0])
+        if insert_pos is None:
+            continue
+        parts[index] = paragraph[:insert_pos] + "“" + paragraph[insert_pos:]
+        fixes += 1
+
+    if fixes and logger:
+        logger.info(
+            "Aberturas de diálogo restauradas%s: %d",
+            f" ({label})" if label else "",
+            fixes,
+        )
+    return "".join(parts), fixes
+
+
 def fix_unbalanced_quotes(text: str, logger: logging.Logger | None = None, label: str | None = None) -> Tuple[str, bool]:
     """
-    Se houver exatamente uma aspa de abertura a mais, tenta inserir a aspa de fechamento.
+    Se houver exatamente uma aspa curva faltando, tenta restaurar a contraparte.
     Retorna (texto_corrigido, alterado).
     """
     opens, closes = count_curly_quotes(text)
@@ -43,28 +133,37 @@ def fix_unbalanced_quotes(text: str, logger: logging.Logger | None = None, label
             closes,
         )
 
-    if opens - closes != 1:
-        return text, False
+    if opens - closes == 1:
+        unmatched = _first_unmatched_open(text)
+        if unmatched is None:
+            return text, False
 
-    unmatched = _first_unmatched_open(text)
-    if unmatched is None:
-        return text, False
+        next_open = text.find("“", unmatched + 1)
+        search_end = next_open if next_open != -1 else len(text)
+        segment = text[unmatched:search_end]
+        match = NARRATION_PATTERN.search(segment)
 
-    next_open = text.find("“", unmatched + 1)
-    search_end = next_open if next_open != -1 else len(text)
-    segment = text[unmatched:search_end]
-    match = NARRATION_PATTERN.search(segment)
+        if match:
+            insert_pos = unmatched + match.start()
+        elif next_open != -1:
+            insert_pos = next_open
+        else:
+            insert_pos = len(text)
 
-    insert_pos = None
-    if match:
-        insert_pos = unmatched + match.start()
-    elif next_open != -1:
-        insert_pos = next_open
-    else:
-        insert_pos = len(text)
+        fixed = text[:insert_pos] + "”" + text[insert_pos:]
+        return fixed, True
 
-    fixed = text[:insert_pos] + "”" + text[insert_pos:]
-    return fixed, True
+    if closes - opens == 1:
+        unmatched = _first_unmatched_close(text)
+        if unmatched is None:
+            return text, False
+        insert_pos = _safe_missing_open_insert_position(text, unmatched)
+        if insert_pos is None:
+            return text, False
+        fixed = text[:insert_pos] + "“" + text[insert_pos:]
+        return fixed, True
+
+    return text, False
 
 
 def fix_blank_lines_inside_quotes(text: str, logger: logging.Logger | None = None, label: str | None = None) -> Tuple[str, int]:
@@ -79,7 +178,7 @@ def fix_blank_lines_inside_quotes(text: str, logger: logging.Logger | None = Non
 
 
 def _collapse_blank_lines_in_quotes(text: str) -> Tuple[str, int]:
-    """Colapsa linhas em branco apenas quando dentro de aspas curvas."""
+    """Colapsa parágrafos artificiais apenas quando dentro de aspas curvas."""
     in_quote = False
     i = 0
     cleaned: list[str] = []
@@ -111,10 +210,12 @@ def _collapse_blank_lines_in_quotes(text: str) -> Tuple[str, int]:
                     continue
                 break
             if blank_lines:
-                cleaned.append("\n")
-                indent = text[whitespace_start:j]
-                if indent:
-                    cleaned.append(indent)
+                # Uma mesma fala não deve conter um parágrafo vazio. Se a
+                # próxima coisa for o fechamento, una-o à frase anterior;
+                # caso contrário, transforme a quebra artificial em espaço.
+                if j < length and text[j] != "”":
+                    if cleaned and not cleaned[-1].isspace():
+                        cleaned.append(" ")
                 fixes += blank_lines
                 i = j
                 continue

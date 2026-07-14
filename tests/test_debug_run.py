@@ -176,6 +176,7 @@ def test_debug_mode_end_to_end_artifacts(monkeypatch, tmp_path: Path) -> None:
         split_by_sections=False,
         fail_on_chunk_error=False,
         resume=False,
+        refine=True,
         no_refine=False,
         cleanup_before_refine="off",
         pdf_enabled=False,

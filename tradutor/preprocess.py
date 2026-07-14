@@ -38,6 +38,7 @@ except ImportError:  # pragma: no cover - fallback para ambientes sem PyMuPDF
     fitz = _DummyFitz()  # type: ignore
 
 from .utils import chunk_by_paragraphs
+from .quote_fix import fix_blank_lines_inside_quotes
 
 # Watermarks de sites/grupos de scan.
 FOOTER_PATTERNS: Final[list[str]] = [
@@ -511,12 +512,17 @@ def _merge_hard_wraps_across_gaps(text: str) -> tuple[str, dict]:
             nxt_up = nxt.strip().isupper() and len(nxt.strip()) <= 40
             curr_ends_sentence = bool(re.search(r"[.!?…]['\"]?$", curr.strip()))
             nxt_dialogue = nxt.lstrip().startswith(('"', "“", "‘", "—", "-"))
+            # PDFs às vezes separam uma citação curta do restante da frase:
+            # 'from' seguido de '“the bottom of his heart.”'. Não é uma nova fala.
+            nxt_inline_quoted_continuation = bool(
+                re.match(r'^["“‘]\s*[a-zà-öø-ÿ]', nxt.lstrip())
+            )
             prev_is_chapter = bool(merged) and chapter_line_re.match(merged[-1].strip())
             nxt_heading = _is_heading_like(nxt) or (prev_is_chapter and len(nxt.strip().split()) <= 3)
             curr_subheading = prev_is_chapter and (len(curr.strip().split()) <= 4) and (not _is_heading_like(curr))
             if (
                 not curr_ends_sentence
-                and not nxt_dialogue
+                and (not nxt_dialogue or nxt_inline_quoted_continuation)
                 and not nxt_heading
                 and not _is_heading_like(curr)
                 and not curr_subheading
@@ -551,14 +557,20 @@ def _remove_blank_between_dialogue(text: str) -> str:
 def _ensure_subheading_isolated(text: str) -> tuple[str, dict]:
     """Ensure short chapter subheadings remain on their own line.
 
-    Fixes cases like: 'Name MUNIN PRESSED...' right after 'Chapter N:' by splitting
-    the first token(s) as a subheading line.
+    Fixes cases like ``After the Deathmatch AFTER SOGOU...`` right after
+    ``Chapter N:``. PDF extraction frequently glues a title-case subtitle to
+    an all-caps drop-cap opening. Keeping the subtitle isolated lets the
+    section splitter preserve the chapter boundary downstream.
     """
     lines = text.splitlines()
     out: list[str] = []
     fixes = 0
 
     chapter_re = re.compile(r"^chapter\s+\d+:?\s*$", re.IGNORECASE)
+    subtitle_word = r"(?:[A-Z][A-Za-z'’-]*|the|of|and|a|an|to|in|on|at|for|with|after|before)"
+    subtitle_re = re.compile(
+        rf"^(?P<subtitle>{subtitle_word}(?:\s+{subtitle_word}){{0,7}}?)\s+(?P<body>[A-Z]{{2,}}\b.*)$"
+    )
     i = 0
     while i < len(lines):
         ln = lines[i]
@@ -572,11 +584,11 @@ def _ensure_subheading_isolated(text: str) -> tuple[str, dict]:
             if j < len(lines):
                 cand = lines[j].strip()
                 # If cand looks like merged "Subheading NARRATION..." split it.
-                # Limit subheading to 1-3 TitleCase words, followed by ALLCAPS-ish narration.
-                m2 = re.match(r"^([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\s+([A-Z]{2,}.*)$", cand)
+                # English subtitles may contain connectors such as "the" or "of".
+                m2 = subtitle_re.match(cand)
                 if m2:
-                    sub = m2.group(1).strip()
-                    rest = m2.group(2).strip()
+                    sub = m2.group("subtitle").strip()
+                    rest = m2.group("body").strip()
                     out.append(sub)
                     out.append("")
                     out.append(rest)
@@ -844,6 +856,44 @@ def _normalize_uppercase_sentences(text: str) -> tuple[str, dict]:
         else:
             normalized.append(line)
     return "\n".join(normalized), {"uppercase_sentence_normalized": fixes}
+
+
+def _normalize_leading_small_caps(text: str) -> tuple[str, dict]:
+    """Remove pequenas capitulares quebradas na abertura de uma frase.
+
+    Alguns PDFs extraem a abertura temporal de uma frase em caixa alta
+    (``AFTER SOGOU watched``), embora o restante esteja em caixa normal.
+    O padrão e deliberadamente estreito para preservar enfases legitimas como
+    ``FIRST OFF`` ou nomes e gritos em CAPS.
+    """
+    normalized: list[str] = []
+    fixes = 0
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or _is_heading_like(stripped) or stripped.startswith(("#", "***")):
+            normalized.append(line)
+            continue
+        match = re.match(r"^(?P<prefix>[\"“‘(\[]?)(?P<body>.+)$", stripped)
+        if not match:
+            normalized.append(line)
+            continue
+        body = match.group("body")
+        small_caps = re.match(
+            r"^(?P<lead>AFTER|BEFORE|WHEN|WHILE|ONCE)\s+(?P<name>[A-Z]{3,})(?P<tail>\s+.*[a-zà-öø-ÿ].*)$",
+            body,
+        )
+        if not small_caps or small_caps.group("name") in {"THE", "AND", "FOR", "WITH"}:
+            normalized.append(line)
+            continue
+        normalized.append(
+            match.group("prefix")
+            + small_caps.group("lead").lower().capitalize()
+            + " "
+            + small_caps.group("name").lower().capitalize()
+            + small_caps.group("tail")
+        )
+        fixes += 1
+    return "\n".join(normalized), {"leading_small_caps_normalized": fixes}
 
 
 def _strip_inline_watermarks(text: str) -> tuple[str, dict]:
@@ -1421,7 +1471,7 @@ def preprocess_text(
         removed_counter.update(footer_matches_counter)
         for txt_norm, cnt in footer_matches_counter.items():
             removed_records.append((txt_norm, "footer", int(cnt)))
-    
+
     text, toc_stats = _remove_toc_blocks(text)
     stats.update(toc_stats)
     removed_counter.update(toc_stats.get("toc_removed_lines", []))
@@ -1479,10 +1529,14 @@ def preprocess_text(
 
     text, upper_stats = _normalize_uppercase_sentences(text)
     stats.update(upper_stats)
+    text, leading_caps_stats = _normalize_leading_small_caps(text)
+    stats.update(leading_caps_stats)
 
     text, inline_stats = _strip_inline_watermarks(text)
     stats.update(inline_stats)
     text = _remove_blank_between_dialogue(text)
+    text, quote_blank_lines_fixed = fix_blank_lines_inside_quotes(text)
+    stats["quote_blank_lines_fixed"] = quote_blank_lines_fixed
 
     # Restaura heading de pr¢logo se ele existia no raw mas nÆo sobrou ap¢s a limpeza.
     if (
@@ -1563,6 +1617,120 @@ def paragraphs_from_text(clean_text: str) -> List[str]:
     return [p.strip() for p in clean_text.split("\n\n") if p.strip()]
 
 
+_TRANSLATION_BOUNDARY_RE = re.compile(r"\n\n|[.!?](?:['\"”])?(?=\s|\n|$)")
+
+
+def _quote_delta(text: str) -> int:
+    """Retorna a diferença entre aberturas e fechamentos de aspas curvas."""
+    return text.count("“") - text.count("”")
+
+
+def _translation_chunk_end(text: str, start: int, max_chars: int, logger: logging.Logger) -> int:
+    """Escolhe uma fronteira de chunk sem cortar uma fala quando possível.
+
+    O PDF pode colocar diálogos longos no mesmo parágrafo. Cortar apenas no
+    ponto final divide uma fala entre dois prompts, e o modelo costuma fechar a
+    aspa no primeiro chunk. Procuramos então a próxima fronteira que preserve o
+    mesmo estado de aspas do início do trecho, com um lookahead maior apenas
+    nesse caso.
+    """
+    total_len = len(text)
+    target_end = start + max_chars
+    if target_end >= total_len:
+        return total_len
+
+    lookahead = 400
+    hard_end = min(total_len, target_end + lookahead)
+    window = text[start:hard_end]
+    after_target: int | None = None
+    before_target: int | None = None
+    for match in _TRANSLATION_BOUNDARY_RE.finditer(window):
+        end_pos = start + match.end()
+        if target_end <= end_pos <= hard_end:
+            after_target = end_pos
+        elif end_pos < target_end:
+            before_target = end_pos
+
+    if after_target:
+        default_end = after_target
+        default_reason = "fim de frase após lookahead"
+    elif before_target:
+        default_end = before_target
+        default_reason = "limite seguro antes do alvo"
+    else:
+        default_end = min(target_end, total_len)
+        default_reason = "alvo"
+
+    # Se o chunk anterior terminou dentro de uma fala, o balanço local pode
+    # voltar a zero após fechar uma fala e abrir outra. Nessa situação, ainda
+    # vale procurar uma fronteira que devolva o documento ao estado neutro;
+    # caso contrário o modelo recebe dois diálogos partidos no mesmo prompt.
+    start_quote_state = _quote_delta(text[:start])
+    quote_hard_end = min(total_len, target_end + 1200)
+    if start_quote_state:
+        neutral_after: list[int] = []
+        neutral_before: list[int] = []
+        for match in _TRANSLATION_BOUNDARY_RE.finditer(text[start:quote_hard_end]):
+            end_pos = start + match.end()
+            if _quote_delta(text[:end_pos]) != 0:
+                continue
+            if end_pos >= target_end:
+                neutral_after.append(end_pos)
+            else:
+                neutral_before.append(end_pos)
+
+        if neutral_after:
+            chunk_end = neutral_after[0]
+            logger.debug(
+                "tradução: chunk estendido para encerrar fala aberta (len=%d)",
+                chunk_end - start,
+            )
+            return chunk_end
+        if neutral_before:
+            chunk_end = neutral_before[-1]
+            logger.debug(
+                "tradução: chunk antecipado para encerrar fala aberta (len=%d)",
+                chunk_end - start,
+            )
+            return chunk_end
+
+    if _quote_delta(text[start:default_end]) == 0:
+        logger.debug("tradução: chunk fechado em %s (len=%d)", default_reason, default_end - start)
+        return default_end
+
+    # Permite uma extensão moderada somente para encerrar a fala aberta. Se não
+    # houver fechamento próximo, volta à última fronteira segura antes do alvo.
+    quote_window = text[start:quote_hard_end]
+    balanced_after: list[int] = []
+    balanced_before: list[int] = []
+    for match in _TRANSLATION_BOUNDARY_RE.finditer(quote_window):
+        end_pos = start + match.end()
+        if _quote_delta(text[start:end_pos]) != 0:
+            continue
+        if end_pos >= target_end:
+            balanced_after.append(end_pos)
+        else:
+            balanced_before.append(end_pos)
+
+    if balanced_after:
+        chunk_end = balanced_after[0]
+        logger.debug(
+            "tradução: chunk estendido para preservar fronteira de aspas (len=%d)",
+            chunk_end - start,
+        )
+        return chunk_end
+    if balanced_before:
+        chunk_end = balanced_before[-1]
+        logger.debug(
+            "tradução: chunk antecipado para preservar fronteira de aspas (len=%d)",
+            chunk_end - start,
+        )
+        return chunk_end
+
+    logger.debug("tradução: chunk sem fronteira de aspas segura; usando %s (len=%d)", default_reason, default_end - start)
+    return default_end
+
+
 def chunk_for_translation(paragraphs: List[str], max_chars: int, logger: logging.Logger) -> List[str]:
     """
     Chunk seguro para tradução com ajuste leve por fronteira de frase.
@@ -1574,52 +1742,15 @@ def chunk_for_translation(paragraphs: List[str], max_chars: int, logger: logging
     if not text:
         return []
 
-    boundary_re = re.compile(r"\n\n|[.!?](?:['\"”])?(?=\s|\n|$)")
     chunks: List[str] = []
     start = 0
     total_len = len(text)
-    lookahead = 400  # permite estouro controlado para terminar frase
     consumed = 0
 
     while start < total_len:
-        target_end = start + max_chars
-        hard_end = min(total_len, start + max_chars + lookahead)
-
-        if target_end >= total_len:
-            last_slice = text[start:]
-            chunks.append(last_slice.strip())
-            consumed += len(last_slice)
-            break
-
-        window = text[start:hard_end]
-        after_target: int | None = None
-        before_target: int | None = None
-
-        for match in boundary_re.finditer(window):
-            end_pos = start + match.end()
-            if target_end <= end_pos <= hard_end:
-                after_target = end_pos
-            elif end_pos < target_end:
-                before_target = end_pos
-
-        if after_target:
-            chunk_end = after_target
-            logger.debug(
-                "tradução: chunk fechado em fim de frase após lookahead (len=%d)",
-                chunk_end - start,
-            )
-        elif before_target:
-            chunk_end = before_target
-            logger.debug(
-                "tradução: chunk fechado em limite seguro antes do alvo (len=%d)",
-                chunk_end - start,
-            )
-        else:
-            chunk_end = min(target_end, total_len)
-            logger.debug("tradução: chunk fechado no alvo (len=%d)", chunk_end - start)
-
+        chunk_end = _translation_chunk_end(text, start, max_chars, logger)
         if chunk_end <= start:
-            chunk_end = min(target_end, total_len)
+            chunk_end = min(start + max_chars, total_len)
 
         raw_slice = text[start:chunk_end]
         chunks.append(raw_slice.strip())
@@ -1647,57 +1778,15 @@ def chunk_for_translation_with_offsets(
     if not text:
         return []
 
-    boundary_re = re.compile(r"\n\n|[.!?](?:['\"”])?(?=\s|\n|$)")
     chunks: List[tuple[str, int | None, int | None]] = []
     start = 0
     total_len = len(text)
-    lookahead = 400
     consumed = 0
 
     while start < total_len:
-        target_end = start + max_chars
-        hard_end = min(total_len, start + max_chars + lookahead)
-
-        if target_end >= total_len:
-            raw_slice = text[start:]
-            chunk_text = raw_slice.strip()
-            leading = len(raw_slice) - len(raw_slice.lstrip())
-            trailing = len(raw_slice) - len(raw_slice.rstrip())
-            start_offset = start + leading if chunk_text else None
-            end_offset = (start + len(raw_slice) - trailing) if chunk_text else None
-            chunks.append((chunk_text, start_offset, end_offset))
-            consumed += len(raw_slice)
-            break
-
-        window = text[start:hard_end]
-        after_target: int | None = None
-        before_target: int | None = None
-
-        for match in boundary_re.finditer(window):
-            end_pos = start + match.end()
-            if target_end <= end_pos <= hard_end:
-                after_target = end_pos
-            elif end_pos < target_end:
-                before_target = end_pos
-
-        if after_target:
-            chunk_end = after_target
-            logger.debug(
-                "tradução: chunk fechado em fim de frase após lookahead (len=%d)",
-                chunk_end - start,
-            )
-        elif before_target:
-            chunk_end = before_target
-            logger.debug(
-                "tradução: chunk fechado em limite seguro antes do alvo (len=%d)",
-                chunk_end - start,
-            )
-        else:
-            chunk_end = min(target_end, total_len)
-            logger.debug("tradução: chunk fechado no alvo (len=%d)", chunk_end - start)
-
+        chunk_end = _translation_chunk_end(text, start, max_chars, logger)
         if chunk_end <= start:
-            chunk_end = min(target_end, total_len)
+            chunk_end = min(start + max_chars, total_len)
 
         raw_slice = text[start:chunk_end]
         chunk_text = raw_slice.strip()
