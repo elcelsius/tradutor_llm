@@ -2,6 +2,7 @@ from tradutor.translate import _separate_short_dialogues
 
 
 def test_separate_short_dialogues_inserts_blank_lines_between_short_lines() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "“Eh?”",

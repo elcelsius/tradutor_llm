@@ -6,18 +6,24 @@ from tradutor.cache_utils import chunk_hash, set_cache_base_dir
 from tradutor.config import AppConfig
 from tradutor.translate import (
     TRANSLATE_PIPELINE_VERSION,
-    translation_prompt_fingerprint,
     translate_document,
+    translation_prompt_fingerprint,
 )
 
 
 class _StubResponse:
+    """Processamento interno auxiliar."""
+
     def __init__(self, text: str):
+        """Processamento interno auxiliar."""
         self.text = text
 
 
 class _StubBackend:
+    """Processamento interno auxiliar."""
+
     def __init__(self) -> None:
+        """Processamento interno auxiliar."""
         self.backend = "stub"
         self.model = "stub-model"
         self.num_predict = 42
@@ -26,12 +32,16 @@ class _StubBackend:
         self.calls = 0
 
     def generate(self, prompt: str):
+        """Processamento interno auxiliar."""
         self.calls += 1
         body = "um dois tres quatro cinco seis sete oito nove dez onze doze treze catorze quinze"
-        return _StubResponse(f"### TEXTO_TRADUZIDO_INICIO\n{body}\n### TEXTO_TRADUZIDO_FIM")
+        return _StubResponse(
+            f"### TEXTO_TRADUZIDO_INICIO\n{body}\n### TEXTO_TRADUZIDO_FIM"
+        )
 
 
 def test_translate_cache_mismatch_is_ignored(tmp_path: Path) -> None:
+    """Processamento interno auxiliar."""
     cfg = AppConfig(output_dir=tmp_path)
     backend = _StubBackend()
     logger = logging.getLogger("translate-cache")
@@ -48,7 +58,9 @@ def test_translate_cache_mismatch_is_ignored(tmp_path: Path) -> None:
         "timestamp": "now",
         "metadata": {"backend": "other-backend"},
     }
-    cache_path.write_text(json.dumps(cache_payload, ensure_ascii=False), encoding="utf-8")
+    cache_path.write_text(
+        json.dumps(cache_payload, ensure_ascii=False), encoding="utf-8"
+    )
 
     result = translate_document(
         pdf_text=text,
@@ -72,6 +84,7 @@ def test_translate_cache_mismatch_is_ignored(tmp_path: Path) -> None:
 
 
 def test_translate_cache_ignores_allow_adaptation_change(tmp_path: Path) -> None:
+    """Processamento interno auxiliar."""
     cfg = AppConfig(output_dir=tmp_path, split_by_sections=False)
     backend = _StubBackend()
     logger = logging.getLogger("translate-cache-flag")
@@ -98,12 +111,16 @@ def test_translate_cache_ignores_allow_adaptation_change(tmp_path: Path) -> None
             "source": "sample",
             "allow_adaptation": False,
             "split_by_sections": False,
-            "dialogue_guardrails_mode": getattr(cfg, "translate_dialogue_guardrails", "strict"),
+            "dialogue_guardrails_mode": getattr(
+                cfg, "translate_dialogue_guardrails", "strict"
+            ),
             "prompt_hash": translation_prompt_fingerprint(allow_adaptation=False),
             "pipeline_version": TRANSLATE_PIPELINE_VERSION,
         },
     }
-    cache_path.write_text(json.dumps(cache_payload, ensure_ascii=False), encoding="utf-8")
+    cache_path.write_text(
+        json.dumps(cache_payload, ensure_ascii=False), encoding="utf-8"
+    )
 
     result = translate_document(
         pdf_text=text,

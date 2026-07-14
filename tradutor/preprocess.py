@@ -7,38 +7,49 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
-from pathlib import Path
 from collections import Counter
+from pathlib import Path
 from typing import Final, List, Optional, Tuple
 
 try:
     import fitz  # PyMuPDF
 except ImportError:  # pragma: no cover - fallback para ambientes sem PyMuPDF
+
     class _DummyDoc:
+        """Processamento interno auxiliar."""
+
         def __enter__(self):
+            """Processamento interno auxiliar."""
             return self
 
         def __exit__(self, *args, **kwargs):
+            """Processamento interno auxiliar."""
             return False
 
         def __iter__(self):
+            """Processamento interno auxiliar."""
             return iter([])
 
         @property
         def pages(self):
+            """Processamento interno auxiliar."""
             return []
 
         def __len__(self):
+            """Processamento interno auxiliar."""
             return 0
 
     class _DummyFitz:
+        """Processamento interno auxiliar."""
+
         def open(self, *args, **kwargs):
+            """Processamento interno auxiliar."""
             return _DummyDoc()
 
     fitz = _DummyFitz()  # type: ignore
 
-from .utils import chunk_by_paragraphs
 from .quote_fix import fix_blank_lines_inside_quotes
+from .utils import chunk_by_paragraphs
 
 # Watermarks de sites/grupos de scan.
 FOOTER_PATTERNS: Final[list[str]] = [
@@ -73,7 +84,10 @@ NOISE_PARAGRAPH_PATTERNS: Final[list[str]] = [
 ]
 
 ZERO_WIDTH_RE = re.compile(r"[\u200b\u200c\u200d\ufeff]")
-URL_RE = re.compile(r"(https?://|www\.)|(\w+\.(?:com|net|org|io|gg|co|me|xyz)(?:[/?#]|$))", re.IGNORECASE)
+URL_RE = re.compile(
+    r"(https?://|www\.)|(\w+\.(?:com|net|org|io|gg|co|me|xyz)(?:[/?#]|$))",
+    re.IGNORECASE,
+)
 
 TOC_MARKER_RE = re.compile(
     r"^(prologue|epilogue|afterword|chapter\s+\d+(?::[^\n]+)?)\s*$",
@@ -135,6 +149,7 @@ def normalize_line_for_filters(line: str) -> str:
 
 
 def _is_ellipsis_line(raw_line: str) -> bool:
+    """Processamento interno auxiliar."""
     stripped = raw_line.strip()
     return bool(re.fullmatch(r"[\"“”']?\u2026[\"“”']?", stripped)) or bool(
         re.fullmatch(r"[\"“”']?\.{3,}[\"“”']?", stripped)
@@ -142,19 +157,29 @@ def _is_ellipsis_line(raw_line: str) -> bool:
 
 
 def _sha256_text(text: str) -> str:
+    """Processamento interno auxiliar."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _default_noise_glossary() -> dict:
+    """Processamento interno auxiliar."""
     return {
         "line_contains": PROMO_DOMAINS + PROMO_PHRASES + ["favorite light novels"],
-        "line_compact_contains": ["oceanofpdf", "zerobooks", "jnovels", "gomanga", "discordgg", "patreon"],
+        "line_compact_contains": [
+            "oceanofpdf",
+            "zerobooks",
+            "jnovels",
+            "gomanga",
+            "discordgg",
+            "patreon",
+        ],
         "line_regex": list(PROMO_LINE_REGEXES),
         "max_line_len": 160,
     }
 
 
 def _load_noise_glossary(path: str | Path | None) -> dict:
+    """Processamento interno auxiliar."""
     if not path:
         return _default_noise_glossary()
     p = Path(path)
@@ -185,6 +210,7 @@ def extract_text_from_pdf(path: Path, logger: logging.Logger) -> str:
 
 
 def _remove_headers_footers(text: str) -> str:
+    """Processamento interno auxiliar."""
     lines = text.splitlines()
     cleaned: List[str] = []
     for line in lines:
@@ -203,7 +229,9 @@ def _remove_headers_footers(text: str) -> str:
     return "\n".join(cleaned)
 
 
-def sanitize_extracted_text(text: str, logger: Optional[logging.Logger] = None) -> Tuple[str, dict]:
+def sanitize_extracted_text(
+    text: str, logger: Optional[logging.Logger] = None
+) -> Tuple[str, dict]:
     """
     Remove ruídos determinísticos da extração (caractere U+FFFF e linhas só com números).
     Preserva estrutura de parágrafos.
@@ -211,7 +239,7 @@ def sanitize_extracted_text(text: str, logger: Optional[logging.Logger] = None) 
     stats = {"removed_uffff": 0, "removed_numeric_lines": 0}
 
     before = text
-    text = text.replace("\uFFFF", "").replace("￿", "")
+    text = text.replace("\uffff", "").replace("￿", "")
     stats["removed_uffff"] = len(before) - len(text)  # proxy de remoções de char
 
     lines = text.splitlines()
@@ -232,10 +260,12 @@ def sanitize_extracted_text(text: str, logger: Optional[logging.Logger] = None) 
 
 
 def _remove_hyphenation(text: str) -> str:
+    """Processamento interno auxiliar."""
     return re.sub(r"(\w+)-\s*\n(\w+)", r"\1\2\n", text)
 
 
 def _join_broken_lines(text: str) -> str:
+    """Processamento interno auxiliar."""
     lines = text.splitlines()
     joined: List[str] = []
     buffer: List[str] = []
@@ -271,7 +301,14 @@ def _remove_noise_blocks_with_stats(text: str) -> tuple[str, dict, list[str]]:
         if not norm:
             cleaned.append("")
             continue
-        matched = next((pat for pat in NOISE_PARAGRAPH_PATTERNS if re.search(pat, norm, flags=re.IGNORECASE)), "")
+        matched = next(
+            (
+                pat
+                for pat in NOISE_PARAGRAPH_PATTERNS
+                if re.search(pat, norm, flags=re.IGNORECASE)
+            ),
+            "",
+        )
         if matched:
             removed_norm = normalize_line_for_filters(para)
             if removed_norm:
@@ -294,16 +331,20 @@ def remove_noise_blocks(text: str) -> str:
 
 
 def _is_promo_line(line: str) -> bool:
+    """Processamento interno auxiliar."""
     norm = normalize_line_for_filters(line).lower()
     if not norm:
         return False
     has_domain = any(dom in norm for dom in PROMO_DOMAINS)
     has_phrase = any(phrase in norm for phrase in PROMO_PHRASES)
-    has_regex = any(re.search(pat, norm, flags=re.IGNORECASE) for pat in PROMO_LINE_REGEXES)
+    has_regex = any(
+        re.search(pat, norm, flags=re.IGNORECASE) for pat in PROMO_LINE_REGEXES
+    )
     return has_domain or has_phrase or has_regex
 
 
 def _remove_promo_lines(text: str, glossary: dict) -> tuple[str, dict, list[str]]:
+    """Processamento interno auxiliar."""
     lines = text.splitlines()
     cleaned: list[str] = []
     stats = {
@@ -318,8 +359,14 @@ def _remove_promo_lines(text: str, glossary: dict) -> tuple[str, dict, list[str]
     }
     removed_norms: list[str] = []
     max_len = glossary.get("max_line_len", 160) or 160
-    line_contains = [s.lower() for s in glossary.get("line_contains", []) if isinstance(s, str)]
-    line_compact = [re.sub(r"[^a-z0-9]", "", s.lower()) for s in glossary.get("line_compact_contains", []) if isinstance(s, str)]
+    line_contains = [
+        s.lower() for s in glossary.get("line_contains", []) if isinstance(s, str)
+    ]
+    line_compact = [
+        re.sub(r"[^a-z0-9]", "", s.lower())
+        for s in glossary.get("line_compact_contains", [])
+        if isinstance(s, str)
+    ]
     domain_tokens = [s for s in line_contains if "." in s or "/" in s] + line_compact
     phrase_tokens = [s for s in line_contains if s not in domain_tokens]
     regexes = []
@@ -330,6 +377,7 @@ def _remove_promo_lines(text: str, glossary: dict) -> tuple[str, dict, list[str]
             continue
 
     def _is_dialogue_like(norm_line: str, raw_line: str) -> bool:
+        """Processamento interno auxiliar."""
         stripped = raw_line.lstrip()
         if stripped.startswith(('"', "“", "'", "’", "—", "-")):
             return True
@@ -341,12 +389,16 @@ def _remove_promo_lines(text: str, glossary: dict) -> tuple[str, dict, list[str]
         return False
 
     def _record_reason(reason: str, sample: str) -> None:
-        stats["promo_removed_reason_counts"][reason] = stats["promo_removed_reason_counts"].get(reason, 0) + 1
+        """Processamento interno auxiliar."""
+        stats["promo_removed_reason_counts"][reason] = (
+            stats["promo_removed_reason_counts"].get(reason, 0) + 1
+        )
         samples = stats["promo_removed_samples"].setdefault(reason, [])
         if len(samples) < 10:
             samples.append(sample)
 
     def _update_stats(norm_line: str, *, has_url: bool, has_domain: bool) -> None:
+        """Processamento interno auxiliar."""
         stats["promo_lines_removed_count"] += 1
         if has_url or has_domain:
             stats["urls_removed_count"] += 1
@@ -375,14 +427,18 @@ def _remove_promo_lines(text: str, glossary: dict) -> tuple[str, dict, list[str]
             cleaned.append("")
             i += 1
             continue
-        has_domain = any(dom in norm_lower for dom in domain_tokens) or any(tok in norm_compact for tok in line_compact)
+        has_domain = any(dom in norm_lower for dom in domain_tokens) or any(
+            tok in norm_compact for tok in line_compact
+        )
         has_url = bool(URL_RE.search(norm_lower))
         has_phrase = any(phrase in norm_lower for phrase in phrase_tokens)
         has_regex = any(r.search(line) for r in regexes)
         looks_dialogue = line.lstrip().startswith(('"', "“", "'", "’", "-", "–"))
         long_narrative = len(normalized) > 180 and not (has_url or has_domain)
         promo_seed = has_domain or has_url or has_phrase or has_regex
-        if _is_dialogue_like(norm_lower, line) and not (has_domain or has_url or has_regex):
+        if _is_dialogue_like(norm_lower, line) and not (
+            has_domain or has_url or has_regex
+        ):
             cleaned.append(line)
             i += 1
             continue
@@ -390,7 +446,9 @@ def _remove_promo_lines(text: str, glossary: dict) -> tuple[str, dict, list[str]
             cleaned.append(line)
             i += 1
             continue
-        if promo_seed and (has_domain or has_url or (not long_narrative and len(normalized) <= max_len)):
+        if promo_seed and (
+            has_domain or has_url or (not long_narrative and len(normalized) <= max_len)
+        ):
             block_end = i + 1
             while block_end < len(lines):
                 next_norm = normalize_line_for_filters(lines[block_end])
@@ -399,12 +457,16 @@ def _remove_promo_lines(text: str, glossary: dict) -> tuple[str, dict, list[str]
                     break
                 next_lower = next_norm.lower()
                 next_compact = re.sub(r"[^a-z0-9]", "", next_lower)
-                next_domain = any(dom in next_lower for dom in domain_tokens) or any(tok in next_compact for tok in line_compact)
+                next_domain = any(dom in next_lower for dom in domain_tokens) or any(
+                    tok in next_compact for tok in line_compact
+                )
                 next_url = bool(URL_RE.search(next_lower))
                 next_phrase = any(phrase in next_lower for phrase in phrase_tokens)
                 next_regex = any(r.search(lines[block_end]) for r in regexes)
                 short_line = len(next_norm) <= 140
-                letter_ratio = sum(1 for ch in next_norm if ch.isalpha()) / max(len(next_norm), 1)
+                letter_ratio = sum(1 for ch in next_norm if ch.isalpha()) / max(
+                    len(next_norm), 1
+                )
                 low_linguistic = letter_ratio < 0.65
                 if next_domain or next_url or next_phrase or next_regex:
                     block_end += 1
@@ -424,11 +486,15 @@ def _remove_promo_lines(text: str, glossary: dict) -> tuple[str, dict, list[str]
                     continue
                 removed_lower = removed_norm.lower()
                 removed_compact = re.sub(r"[^a-z0-9]", "", removed_lower)
-                removed_has_domain = any(dom in removed_lower for dom in line_contains) or any(
-                    tok in removed_compact for tok in line_compact
-                )
+                removed_has_domain = any(
+                    dom in removed_lower for dom in line_contains
+                ) or any(tok in removed_compact for tok in line_compact)
                 removed_has_url = bool(URL_RE.search(removed_lower))
-                _update_stats(removed_compact, has_url=removed_has_url, has_domain=removed_has_domain)
+                _update_stats(
+                    removed_compact,
+                    has_url=removed_has_url,
+                    has_domain=removed_has_domain,
+                )
                 _record_reason("block", removed_norm)
                 if removed_norm:
                     removed_norms.append(removed_norm)
@@ -447,21 +513,36 @@ def _remove_promo_lines(text: str, glossary: dict) -> tuple[str, dict, list[str]
         i += 1
 
     remaining_counts = {
-        "oceanofpdf": sum(1 for ln in cleaned if "oceanofpdf" in normalize_line_for_filters(ln).lower()),
-        "gomanga": sum(1 for ln in cleaned if "gomanga.com" in normalize_line_for_filters(ln).lower()),
-        "jnovels": sum(1 for ln in cleaned if "jnovels" in normalize_line_for_filters(ln).lower()),
-        "zerobooks": sum(1 for ln in cleaned if "zerobooks" in normalize_line_for_filters(ln).lower()),
+        "oceanofpdf": sum(
+            1
+            for ln in cleaned
+            if "oceanofpdf" in normalize_line_for_filters(ln).lower()
+        ),
+        "gomanga": sum(
+            1
+            for ln in cleaned
+            if "gomanga.com" in normalize_line_for_filters(ln).lower()
+        ),
+        "jnovels": sum(
+            1 for ln in cleaned if "jnovels" in normalize_line_for_filters(ln).lower()
+        ),
+        "zerobooks": sum(
+            1 for ln in cleaned if "zerobooks" in normalize_line_for_filters(ln).lower()
+        ),
     }
     stats["remaining_counts"] = remaining_counts
     stats["promo_lines_removed_total"] = len(removed_norms)
     max_samples = 20
     stats["promo_samples"] = removed_lines[:max_samples]
     stats["promo_samples_truncated"] = len(removed_lines) > max_samples
-    stats["promo_removed_hash"] = _sha256_text("\n".join(removed_lines)) if removed_lines else ""
+    stats["promo_removed_hash"] = (
+        _sha256_text("\n".join(removed_lines)) if removed_lines else ""
+    )
     return "\n".join(cleaned), stats, removed_norms
 
 
 def _dedupe_consecutive_lines(text: str) -> tuple[str, dict, list[str]]:
+    """Processamento interno auxiliar."""
     lines = text.splitlines()
     cleaned: list[str] = []
     removed_norms: list[str] = []
@@ -518,8 +599,14 @@ def _merge_hard_wraps_across_gaps(text: str) -> tuple[str, dict]:
                 re.match(r'^["“‘]\s*[a-zà-öø-ÿ]', nxt.lstrip())
             )
             prev_is_chapter = bool(merged) and chapter_line_re.match(merged[-1].strip())
-            nxt_heading = _is_heading_like(nxt) or (prev_is_chapter and len(nxt.strip().split()) <= 3)
-            curr_subheading = prev_is_chapter and (len(curr.strip().split()) <= 4) and (not _is_heading_like(curr))
+            nxt_heading = _is_heading_like(nxt) or (
+                prev_is_chapter and len(nxt.strip().split()) <= 3
+            )
+            curr_subheading = (
+                prev_is_chapter
+                and (len(curr.strip().split()) <= 4)
+                and (not _is_heading_like(curr))
+            )
             if (
                 not curr_ends_sentence
                 and (not nxt_dialogue or nxt_inline_quoted_continuation)
@@ -539,6 +626,7 @@ def _merge_hard_wraps_across_gaps(text: str) -> tuple[str, dict]:
 
 
 def _remove_blank_between_dialogue(text: str) -> str:
+    """Processamento interno auxiliar."""
     lines = text.splitlines()
     out: list[str] = []
     for idx, line in enumerate(lines):
@@ -551,7 +639,6 @@ def _remove_blank_between_dialogue(text: str) -> str:
                 continue
         out.append(line)
     return "\n".join(out)
-
 
 
 def _ensure_subheading_isolated(text: str) -> tuple[str, dict]:
@@ -567,7 +654,9 @@ def _ensure_subheading_isolated(text: str) -> tuple[str, dict]:
     fixes = 0
 
     chapter_re = re.compile(r"^chapter\s+\d+:?\s*$", re.IGNORECASE)
-    subtitle_word = r"(?:[A-Z][A-Za-z'’-]*|the|of|and|a|an|to|in|on|at|for|with|after|before)"
+    subtitle_word = (
+        r"(?:[A-Z][A-Za-z'’-]*|the|of|and|a|an|to|in|on|at|for|with|after|before)"
+    )
     subtitle_re = re.compile(
         rf"^(?P<subtitle>{subtitle_word}(?:\s+{subtitle_word}){{0,7}}?)\s+(?P<body>[A-Z]{{2,}}\b.*)$"
     )
@@ -609,10 +698,10 @@ def _split_dialogue_narration_boundaries(text: str) -> tuple[str, dict]:
     out: list[str] = []
     fixes = 0
     # closing quote variants after punctuation or music note
-    boundary_re = re.compile(r'([.!?…\\u266a])([\"”’\'])\\s+(?=[A-Z])')
+    boundary_re = re.compile(r"([.!?…\\u266a])([\"”’\'])\\s+(?=[A-Z])")
     for ln in lines:
         stripped = ln.lstrip()
-        if stripped.startswith(("\"", "“", "‘")) and boundary_re.search(ln):
+        if stripped.startswith(('"', "“", "‘")) and boundary_re.search(ln):
             new_ln = boundary_re.sub(r"\1\2\n\n", ln)
             if new_ln != ln:
                 fixes += 1
@@ -665,10 +754,15 @@ def _wrap_very_long_lines(text: str, *, max_len: int = 1200) -> tuple[str, dict]
             out.append(s)
         else:
             out.append(ln)
-    return "\n".join(out), {"very_long_line_wraps": wraps, "max_line_length": max_observed, "lines_over_800": over_800}
+    return "\n".join(out), {
+        "very_long_line_wraps": wraps,
+        "max_line_length": max_observed,
+        "lines_over_800": over_800,
+    }
 
 
 def _fix_under_merge(text: str) -> tuple[str, dict]:
+    """Processamento interno auxiliar."""
     lines = text.splitlines()
     fixed: list[str] = []
     merges = 0
@@ -680,14 +774,25 @@ def _fix_under_merge(text: str) -> tuple[str, dict]:
             prev = fixed[-1] if fixed else ""
             if i + 1 < len(lines):
                 nxt = lines[i + 1].lstrip()
-                if prev and nxt and not re.search(r"[.!?…]['\"]?$", prev) and prev[-1].isalpha():
-                    first_word = nxt.split(" ")[0] if nxt else ""
+                if (
+                    prev
+                    and nxt
+                    and not re.search(r"[.!?…]['\"]?$", prev)
+                    and prev[-1].isalpha()
+                ):
                     nxt_is_heading = _is_heading_like(nxt)
                     nxt_dialogue = nxt.startswith(('"', "“", "‘", "—", "-"))
-                    nxt_promo = any(dom in nxt.lower() for dom in PROMO_DOMAINS) or URL_RE.search(nxt)
+                    nxt_promo = any(
+                        dom in nxt.lower() for dom in PROMO_DOMAINS
+                    ) or URL_RE.search(nxt)
                     if _is_heading_like(prev):
                         pass
-                    elif not nxt_dialogue and not nxt_is_heading and not nxt_promo and (nxt[:1].islower() or nxt[:1].isupper()):
+                    elif (
+                        not nxt_dialogue
+                        and not nxt_is_heading
+                        and not nxt_promo
+                        and (nxt[:1].islower() or nxt[:1].isupper())
+                    ):
                         fixed[-1] = f"{prev} {nxt}"
                         merges += 1
                         i += 2
@@ -705,10 +810,17 @@ def _fix_under_merge(text: str) -> tuple[str, dict]:
             curr_is_heading = _is_heading_like(curr)
             ends_sentence = bool(re.search(r"[.!?…]['\"]?$", curr))
             starts_dialogue = nxt.startswith(('"', "“", "‘", "—", "-"))
-            promo_guard = any(dom in nxt.lower() for dom in PROMO_DOMAINS) or URL_RE.search(nxt)
+            promo_guard = any(
+                dom in nxt.lower() for dom in PROMO_DOMAINS
+            ) or URL_RE.search(nxt)
             next_is_heading = _is_heading_like(nxt)
             curr_all_caps = curr.strip().isupper()
-            if curr.strip().isupper() and nxt.strip().isupper() and len(curr.strip()) <= 40 and len(nxt.strip()) <= 40:
+            if (
+                curr.strip().isupper()
+                and nxt.strip().isupper()
+                and len(curr.strip()) <= 40
+                and len(nxt.strip()) <= 40
+            ):
                 fixed.append(lines[i])
                 i += 1
                 continue
@@ -721,7 +833,12 @@ def _fix_under_merge(text: str) -> tuple[str, dict]:
                 and re.search(r"[A-Za-z0-9,;:–—-]$", curr)
                 and (
                     nxt[:1].islower()
-                    or (nxt[:1].isupper() and len(nxt.split(" ")[0]) <= 4 and not starts_dialogue and not next_is_heading)
+                    or (
+                        nxt[:1].isupper()
+                        and len(nxt.split(" ")[0]) <= 4
+                        and not starts_dialogue
+                        and not next_is_heading
+                    )
                 )
                 and not promo_guard
                 and not curr_is_heading
@@ -754,6 +871,7 @@ def _reflow_paragraphs(text: str) -> tuple[str, dict]:
     merges = 0
 
     def _flush() -> None:
+        """Processamento interno auxiliar."""
         nonlocal merges
         if not buffer:
             return
@@ -763,6 +881,7 @@ def _reflow_paragraphs(text: str) -> tuple[str, dict]:
         buffer.clear()
 
     def _is_dialogue_start(s: str) -> bool:
+        """Processamento interno auxiliar."""
         return s.startswith(('"', "“"))
 
     chapter_line_re = re.compile(r"chapter\s+\d+:?", re.IGNORECASE)
@@ -800,7 +919,9 @@ def _reflow_paragraphs(text: str) -> tuple[str, dict]:
                 reflowed.append("")
             last_emitted = stripped
             continue
-        prev_is_chapter = bool(last_emitted) and chapter_line_re.match(last_emitted.lower())
+        prev_is_chapter = bool(last_emitted) and chapter_line_re.match(
+            last_emitted.lower()
+        )
         if prev_is_chapter and len(stripped.split()) <= 3:
             _flush()
             reflowed.append(stripped)
@@ -808,9 +929,11 @@ def _reflow_paragraphs(text: str) -> tuple[str, dict]:
             continue
         # If we are inside a dialogue paragraph (started with a quote) and the last line ends
         # with a closing quote, do NOT merge the next narration line into the same paragraph.
-        if buffer and buffer[0].lstrip().startswith(('"', '“')):
+        if buffer and buffer[0].lstrip().startswith(('"', "“")):
             prev_tail = buffer[-1].rstrip()
-            if re.search(r"[\"”’']\s*$", prev_tail) and (not stripped.startswith(('\"', '“'))):
+            if re.search(r"[\"”’']\s*$", prev_tail) and (
+                not stripped.startswith(('"', "“"))
+            ):
                 if stripped[:1].isupper():
                     _flush()
         if not buffer:
@@ -842,7 +965,7 @@ def _normalize_uppercase_sentences(text: str) -> tuple[str, dict]:
             and not _is_heading_like(stripped)
             and not re.fullmatch(r"\*{2,}", stripped)
             and not any(p in stripped for p in ("!", "?"))
-            and not stripped.startswith(("\"", "“", "‘"))
+            and not stripped.startswith(('"', "“", "‘"))
         ):
             match = re.match(r"^([\"“‘(\\[]*)(.+)$", stripped)
             if match:
@@ -870,7 +993,11 @@ def _normalize_leading_small_caps(text: str) -> tuple[str, dict]:
     fixes = 0
     for line in text.splitlines():
         stripped = line.strip()
-        if not stripped or _is_heading_like(stripped) or stripped.startswith(("#", "***")):
+        if (
+            not stripped
+            or _is_heading_like(stripped)
+            or stripped.startswith(("#", "***"))
+        ):
             normalized.append(line)
             continue
         match = re.match(r"^(?P<prefix>[\"“‘(\[]?)(?P<body>.+)$", stripped)
@@ -932,17 +1059,18 @@ def _spaced_caps_suspects(text: str) -> list[str]:
 
 
 def _fix_hyphen_linebreaks(text: str) -> tuple[str, dict]:
+    """Processamento interno auxiliar."""
     pattern = re.compile(r"([A-Za-z]{1,24})-\s*\n\s*([A-Za-z]{1,24})")
     count = 0
 
     def _repl(match: re.Match[str]) -> str:
+        """Processamento interno auxiliar."""
         nonlocal count
         count += 1
         return f"{match.group(1)}-{match.group(2)}"
 
     fixed = pattern.sub(_repl, text)
     return fixed, {"hyphen_linebreak_fixes": count}
-
 
 
 def _fix_ellipsis_spacing(text: str) -> tuple[str, dict]:
@@ -961,10 +1089,12 @@ def _fix_ellipsis_spacing(text: str) -> tuple[str, dict]:
     ellipsis_hits = 0
 
     def _should_skip(start: int) -> bool:
+        """Processamento interno auxiliar."""
         tail = before[start : start + 5]
         return bool(re.match(r"[A-Z]{2,}", tail))
 
     def _repl_unicode(match: re.Match[str]) -> str:
+        """Processamento interno auxiliar."""
         nonlocal ellipsis_hits
         idx = match.start(1)
         if _should_skip(idx):
@@ -973,6 +1103,7 @@ def _fix_ellipsis_spacing(text: str) -> tuple[str, dict]:
         return f"{unicode_ell} {match.group(1)}"
 
     def _repl_dots(match: re.Match[str]) -> str:
+        """Processamento interno auxiliar."""
         nonlocal ellipsis_hits
         idx = match.start(1)
         if _should_skip(idx):
@@ -987,16 +1118,26 @@ def _fix_ellipsis_spacing(text: str) -> tuple[str, dict]:
     text = re.sub(r"\.\.\.\s{2,}(?=[A-Za-z])", "... ", text)
     return text, {"ellipsis_spacing_fixes": ellipsis_hits}
 
+
 def _is_toc_entry(line: str) -> bool:
+    """Processamento interno auxiliar."""
     stripped = normalize_line_for_filters(line)
     if not stripped:
         return False
     norm = stripped.lower()
     if any(marker in norm for marker in TOC_MARKER_LINES):
         return True
-    if re.match(r"^(prologue|epilogue|afterword|chapter\s+\d+(:?[^\n]+)?)$", norm, flags=re.IGNORECASE):
+    if re.match(
+        r"^(prologue|epilogue|afterword|chapter\s+\d+(:?[^\n]+)?)$",
+        norm,
+        flags=re.IGNORECASE,
+    ):
         return True
-    if re.match(r"^(pr[óo]logo|cap[ií]tulo\s+\d+|ep[ií]logo|p[oó]s-?escrito)", norm, flags=re.IGNORECASE):
+    if re.match(
+        r"^(pr[óo]logo|cap[ií]tulo\s+\d+|ep[ií]logo|p[oó]s-?escrito)",
+        norm,
+        flags=re.IGNORECASE,
+    ):
         return True
     if len(stripped) < 80 and re.search(r"\b\d+\b", stripped):
         return True
@@ -1006,6 +1147,7 @@ def _is_toc_entry(line: str) -> bool:
 
 
 def _is_heading_like(line: str) -> bool:
+    """Processamento interno auxiliar."""
     norm = normalize_line_for_filters(line).lower()
     if not norm:
         return False
@@ -1028,17 +1170,20 @@ def _remove_toc_blocks(
     min_density: float = 0.35,
     gap_limit: int = 8,
 ) -> tuple[str, dict]:
+    """Processamento interno auxiliar."""
     lines = text.splitlines()
     removed_lines: list[str] = []
     head_removed = 0
     tail_removed = 0
 
     def _is_marker(norm: str) -> bool:
+        """Processamento interno auxiliar."""
         if norm == "contents":
             return True
         return norm in TOC_MARKER_LINES
 
     def _looks_narrative(norm_line: str) -> bool:
+        """Processamento interno auxiliar."""
         if not norm_line:
             return False
         if len(norm_line) >= 120:
@@ -1047,11 +1192,16 @@ def _remove_toc_blocks(
         ratio = alpha / max(len(norm_line), 1)
         if len(norm_line) > 40 and ratio > 0.6 and bool(re.search(r"[.!?]", norm_line)):
             return True
-        if len(norm_line) >= 20 and ratio > 0.7 and bool(re.search(r"[.!?]", norm_line)):
+        if (
+            len(norm_line) >= 20
+            and ratio > 0.7
+            and bool(re.search(r"[.!?]", norm_line))
+        ):
             return True
         return False
 
     def _strip_in_range(start: int, end: int, *, is_tail: bool = False) -> None:
+        """Processamento interno auxiliar."""
         nonlocal head_removed, tail_removed, lines
         idx = start
         while idx < end and idx < len(lines):
@@ -1067,7 +1217,9 @@ def _remove_toc_blocks(
                 while j < limit:
                     total += 1
                     candidate_norm = normalize_line_for_filters(lines[j]).lower()
-                    if _is_toc_entry(candidate_norm) or re.search(r"\s\d{1,4}$", candidate_norm):
+                    if _is_toc_entry(candidate_norm) or re.search(
+                        r"\s\d{1,4}$", candidate_norm
+                    ):
                         toc_like += 1
                         gap = 0
                         last_idx = j
@@ -1081,13 +1233,18 @@ def _remove_toc_blocks(
                     j += 1
                 density = toc_like / total if total else 0
                 min_entries = tail_min_entries if is_tail else head_min_entries
-                if block_invalid and not (toc_like >= min_entries and density >= min_density):
+                if block_invalid and not (
+                    toc_like >= min_entries and density >= min_density
+                ):
                     removed_lines.append(current_norm)
                     del lines[idx]
                     end = min(end, len(lines))
                     continue
                 if toc_like >= min_entries and density >= min_density:
-                    removed_lines.extend(normalize_line_for_filters(ln) for ln in lines[idx : last_idx + 1])
+                    removed_lines.extend(
+                        normalize_line_for_filters(ln)
+                        for ln in lines[idx : last_idx + 1]
+                    )
                     del lines[idx : last_idx + 1]
                     if is_tail:
                         tail_removed += 1
@@ -1116,13 +1273,17 @@ def _remove_toc_blocks(
 
 
 def _normalize_line_for_repeat(line: str) -> str:
+    """Processamento interno auxiliar."""
     norm = normalize_line_for_filters(line).lower()
     norm = re.sub(r"\s+", " ", norm)
     norm = re.sub(r"[.,;:!?\-–—]+", "", norm)
     return norm
 
 
-def _remove_repeated_lines(text: str, *, min_freq: int = 6, max_len: int = 80) -> tuple[str, dict, list[str]]:
+def _remove_repeated_lines(
+    text: str, *, min_freq: int = 6, max_len: int = 80
+) -> tuple[str, dict, list[str]]:
+    """Processamento interno auxiliar."""
     lines = text.splitlines()
     freq: Counter[str] = Counter()
     normalized: dict[int, str] = {}
@@ -1146,11 +1307,15 @@ def _remove_repeated_lines(text: str, *, min_freq: int = 6, max_len: int = 80) -
         if re.fullmatch(r"\*{2,}", lines[idx].strip()):
             continue
         count = freq.get(norm, 0)
-        if count >= min_freq and (len(norm) <= max_len or any(dom in norm for dom in PROMO_DOMAINS)):
+        if count >= min_freq and (
+            len(norm) <= max_len or any(dom in norm for dom in PROMO_DOMAINS)
+        ):
             to_remove.add(idx)
 
     cleaned = [ln for idx, ln in enumerate(lines) if idx not in to_remove]
-    removed_norms = [normalized[idx] for idx in sorted(to_remove) if normalized.get(idx)]
+    removed_norms = [
+        normalized[idx] for idx in sorted(to_remove) if normalized.get(idx)
+    ]
     top_repeated = freq.most_common(10)
     stats = {
         "repeated_lines_removed_count": len(to_remove),
@@ -1160,9 +1325,11 @@ def _remove_repeated_lines(text: str, *, min_freq: int = 6, max_len: int = 80) -
 
 
 def _fix_ocr_spacing(text: str) -> tuple[str, dict]:
+    """Processamento interno auxiliar."""
     trailing_punct_re = re.compile("([-\u2013\u2014.,;:!?\u2026'\"”’]+)$")
 
     def _split_token(token: str) -> tuple[str, str]:
+        """Processamento interno auxiliar."""
         match = trailing_punct_re.search(token)
         if not match:
             return token, ""
@@ -1170,11 +1337,13 @@ def _fix_ocr_spacing(text: str) -> tuple[str, dict]:
         return token[:start], token[start:]
 
     def _is_upperish(token: str) -> bool:
+        """Processamento interno auxiliar."""
         core, _ = _split_token(token)
         clean_core = re.sub(r"[^A-Z]", "", core)
         return bool(clean_core) and core.isupper()
 
     def _fix_line(line: str) -> tuple[str, list[tuple[str, str]]]:
+        """Processamento interno auxiliar."""
         tokens = line.split()
         new_tokens: list[str] = []
         samples: list[tuple[str, str]] = []
@@ -1187,7 +1356,12 @@ def _fix_ocr_spacing(text: str) -> tuple[str, dict]:
                     tok = tokens[i]
                     core, punct = _split_token(tok)
                     clean_core = re.sub(r"[^A-Z]", "", core)
-                    if len(clean_core) > 1 and long_count >= 1 and len(seq) >= 2 and len(clean_core) > 6:
+                    if (
+                        len(clean_core) > 1
+                        and long_count >= 1
+                        and len(seq) >= 2
+                        and len(clean_core) > 6
+                    ):
                         break
                     if len(clean_core) > 1:
                         long_count += 1
@@ -1200,7 +1374,11 @@ def _fix_ocr_spacing(text: str) -> tuple[str, dict]:
                 combined_core = "".join(cores)
                 combined_clean = "".join(cores_clean)
                 combined = combined_core + trail
-                allow_merge = len(seq) >= 2 and long_count <= 1 and re.search(r"[AEIOU]", combined_clean)
+                allow_merge = (
+                    len(seq) >= 2
+                    and long_count <= 1
+                    and re.search(r"[AEIOU]", combined_clean)
+                )
                 if any(("," in p) or ("." in p) or (";" in p) for p in puncts):
                     allow_merge = False
                 # não junta se houver pontuação forte no meio e próximo token inicia com maiúscula (evita KUN? Is -> KUNIs)
@@ -1219,7 +1397,9 @@ def _fix_ocr_spacing(text: str) -> tuple[str, dict]:
                 if len(seq) >= 3 and len(cores_clean[-1]) >= 4:
                     allow_merge = False
 
-                has_punct_next_upper = any(p in combined for p in ("?", "!")) and next_token[:1].isupper()
+                has_punct_next_upper = (
+                    any(p in combined for p in ("?", "!")) and next_token[:1].isupper()
+                )
                 if allow_merge and not has_punct_next_upper:
                     new_tokens.append(combined)
                     samples.append((" ".join(tok for (tok, _, _, _) in seq), combined))
@@ -1233,9 +1413,14 @@ def _fix_ocr_spacing(text: str) -> tuple[str, dict]:
                         and len(cores_clean[0]) == 1
                         and cores_clean[0] != "I"
                         and 2 <= len(cores_clean[1]) <= 12
-                        and (re.search(r"[AEIOU]", cores_clean[1]) or len(cores_clean[1]) <= 4)
+                        and (
+                            re.search(r"[AEIOU]", cores_clean[1])
+                            or len(cores_clean[1]) <= 4
+                        )
                     ):
-                        merged_prefix = cores[0] + cores[1] + (puncts[1] if len(puncts) > 1 else "")
+                        merged_prefix = (
+                            cores[0] + cores[1] + (puncts[1] if len(puncts) > 1 else "")
+                        )
                         new_tokens.append(merged_prefix)
                         if len(samples) < 10:
                             samples.append((f"{cores[0]} {cores[1]}", merged_prefix))
@@ -1264,7 +1449,10 @@ def _fix_ocr_spacing(text: str) -> tuple[str, dict]:
             remaining = 10 - len(samples)
             samples.extend(local_samples[:remaining])
         fixed_lines.append(fixed)
-    return "\n".join(fixed_lines), {"ocr_spacing_fixes": total_fixes, "ocr_spacing_samples": samples}
+    return "\n".join(fixed_lines), {
+        "ocr_spacing_fixes": total_fixes,
+        "ocr_spacing_samples": samples,
+    }
 
 
 def _fix_spaced_caps_pairs(text: str) -> tuple[str, dict]:
@@ -1284,7 +1472,9 @@ def _fix_spaced_caps_pairs(text: str) -> tuple[str, dict]:
             combined = f"{match.group(1)}{match.group(2)}"
             has_vowel = bool(re.search(r"[AEIOU]", combined))
             if has_vowel or len(combined) <= 3:
-                new_line = new_line[: match.start()] + combined + new_line[match.end() :]
+                new_line = (
+                    new_line[: match.start()] + combined + new_line[match.end() :]
+                )
                 fixes += 1
             else:
                 break
@@ -1331,7 +1521,9 @@ def strip_front_matter(text: str) -> str:
     """
     lines = text.splitlines()
     start_idx = None
-    marker_re = re.compile(r"^(prologue|chapter\s*1:?|cap[ií]tulo\s*1:?|ep[ií]logo)", re.IGNORECASE)
+    marker_re = re.compile(
+        r"^(prologue|chapter\s*1:?|cap[ií]tulo\s*1:?|ep[ií]logo)", re.IGNORECASE
+    )
     for idx, ln in enumerate(lines):
         if marker_re.match(ln.strip()):
             start_idx = idx
@@ -1462,12 +1654,16 @@ def preprocess_text(
 
     text, promo_stats, promo_removed = _remove_promo_lines(text, glossary)
     stats.update(promo_stats)
-    stats["promo_lines_removed_total"] = stats.get("promo_lines_removed_count", stats.get("promo_lines_removed_total", 0))
+    stats["promo_lines_removed_total"] = stats.get(
+        "promo_lines_removed_count", stats.get("promo_lines_removed_total", 0)
+    )
     removed_counter.update(promo_removed)
-    removed_records.extend((normalize_line_for_filters(item), "promo", 1) for item in promo_removed if item)
+    removed_records.extend(
+        (normalize_line_for_filters(item), "promo", 1) for item in promo_removed if item
+    )
 
     # Registra remoções de footer de forma consistente (por texto removido).
-    if 'footer_matches_counter' in locals() and footer_matches_counter:
+    if "footer_matches_counter" in locals() and footer_matches_counter:
         removed_counter.update(footer_matches_counter)
         for txt_norm, cnt in footer_matches_counter.items():
             removed_records.append((txt_norm, "footer", int(cnt)))
@@ -1475,7 +1671,11 @@ def preprocess_text(
     text, toc_stats = _remove_toc_blocks(text)
     stats.update(toc_stats)
     removed_counter.update(toc_stats.get("toc_removed_lines", []))
-    removed_records.extend((normalize_line_for_filters(item), "toc", 1) for item in toc_stats.get("toc_removed_lines", []) if item)
+    removed_records.extend(
+        (normalize_line_for_filters(item), "toc", 1)
+        for item in toc_stats.get("toc_removed_lines", [])
+        if item
+    )
 
     text, hyphen_stats = _fix_hyphen_linebreaks(text)
     stats.update(hyphen_stats)
@@ -1501,16 +1701,28 @@ def preprocess_text(
     text, noise_block_stats, noise_block_removed = _remove_noise_blocks_with_stats(text)
     stats.update(noise_block_stats)
     removed_counter.update(noise_block_removed)
-    removed_records.extend((normalize_line_for_filters(item), "noise_block", 1) for item in noise_block_removed if item)
+    removed_records.extend(
+        (normalize_line_for_filters(item), "noise_block", 1)
+        for item in noise_block_removed
+        if item
+    )
     text, repeat_stats, repeat_removed = _remove_repeated_lines(text)
     stats.update(repeat_stats)
     removed_counter.update(repeat_removed)
-    removed_records.extend((normalize_line_for_filters(item), "repeated", 1) for item in repeat_removed if item)
+    removed_records.extend(
+        (normalize_line_for_filters(item), "repeated", 1)
+        for item in repeat_removed
+        if item
+    )
 
     text, dedupe_stats, dedupe_removed = _dedupe_consecutive_lines(text)
     stats.update(dedupe_stats)
     removed_counter.update(dedupe_removed)
-    removed_records.extend((normalize_line_for_filters(item), "dedupe", 1) for item in dedupe_removed if item)
+    removed_records.extend(
+        (normalize_line_for_filters(item), "dedupe", 1)
+        for item in dedupe_removed
+        if item
+    )
 
     text, gap_merge_stats = _merge_hard_wraps_across_gaps(text)
     stats.update(gap_merge_stats)
@@ -1557,7 +1769,16 @@ def preprocess_text(
     watermarks_remaining = sum(
         1
         for ln in text.splitlines()
-        if any(tok in normalize_line_for_filters(ln).lower() for tok in ("oceanofpdf", "zerobooks", "jnovels", "gomanga.com", "newsletter"))
+        if any(
+            tok in normalize_line_for_filters(ln).lower()
+            for tok in (
+                "oceanofpdf",
+                "zerobooks",
+                "jnovels",
+                "gomanga.com",
+                "newsletter",
+            )
+        )
     )
     stats["watermarks_remaining"] = watermarks_remaining
     stats["soft_hyphen_remaining"] = text.count("\u00ad")
@@ -1597,11 +1818,17 @@ def preprocess_text(
     stats["removed_aggregated"] = aggregated[:max_items]
     stats["removed_aggregated_truncated"] = len(aggregated) > max_items
     # lista completa (normalizada) para auditoria, com motivo por item
-    stats["removed_full"] = [{"text": t, "reason": r, "count": c} for (t, r, c) in removed_records if t]
+    stats["removed_full"] = [
+        {"text": t, "reason": r, "count": c} for (t, r, c) in removed_records if t
+    ]
     stats["removed_full_count"] = len(stats["removed_full"])
     stats["urls_remaining_count"] = len(URL_RE.findall(text))
     toc_terms = ("table of contents", "contents")
-    stats["toc_remaining_count"] = sum(1 for ln in text.splitlines() if normalize_line_for_filters(ln).lower() in toc_terms)
+    stats["toc_remaining_count"] = sum(
+        1
+        for ln in text.splitlines()
+        if normalize_line_for_filters(ln).lower() in toc_terms
+    )
     stats["chars_out"] = len(text)
 
     if logger is not None:
@@ -1625,7 +1852,9 @@ def _quote_delta(text: str) -> int:
     return text.count("“") - text.count("”")
 
 
-def _translation_chunk_end(text: str, start: int, max_chars: int, logger: logging.Logger) -> int:
+def _translation_chunk_end(
+    text: str, start: int, max_chars: int, logger: logging.Logger
+) -> int:
     """Escolhe uma fronteira de chunk sem cortar uma fala quando possível.
 
     O PDF pode colocar diálogos longos no mesmo parágrafo. Cortar apenas no
@@ -1695,7 +1924,11 @@ def _translation_chunk_end(text: str, start: int, max_chars: int, logger: loggin
             return chunk_end
 
     if _quote_delta(text[start:default_end]) == 0:
-        logger.debug("tradução: chunk fechado em %s (len=%d)", default_reason, default_end - start)
+        logger.debug(
+            "tradução: chunk fechado em %s (len=%d)",
+            default_reason,
+            default_end - start,
+        )
         return default_end
 
     # Permite uma extensão moderada somente para encerrar a fala aberta. Se não
@@ -1727,11 +1960,17 @@ def _translation_chunk_end(text: str, start: int, max_chars: int, logger: loggin
         )
         return chunk_end
 
-    logger.debug("tradução: chunk sem fronteira de aspas segura; usando %s (len=%d)", default_reason, default_end - start)
+    logger.debug(
+        "tradução: chunk sem fronteira de aspas segura; usando %s (len=%d)",
+        default_reason,
+        default_end - start,
+    )
     return default_end
 
 
-def chunk_for_translation(paragraphs: List[str], max_chars: int, logger: logging.Logger) -> List[str]:
+def chunk_for_translation(
+    paragraphs: List[str], max_chars: int, logger: logging.Logger
+) -> List[str]:
     """
     Chunk seguro para tradução com ajuste leve por fronteira de frase.
 
@@ -1758,7 +1997,11 @@ def chunk_for_translation(paragraphs: List[str], max_chars: int, logger: logging
         start = chunk_end
 
     if consumed != total_len:
-        logger.warning("tradução: soma dos chunks (%d) difere do texto original (%d)", consumed, total_len)
+        logger.warning(
+            "tradução: soma dos chunks (%d) difere do texto original (%d)",
+            consumed,
+            total_len,
+        )
 
     return chunks
 
@@ -1799,11 +2042,19 @@ def chunk_for_translation_with_offsets(
         start = chunk_end
 
     if consumed != total_len:
-        logger.warning("tradução: soma dos chunks (%d) difere do texto original (%d)", consumed, total_len)
+        logger.warning(
+            "tradução: soma dos chunks (%d) difere do texto original (%d)",
+            consumed,
+            total_len,
+        )
 
     return chunks
 
 
-def chunk_for_refine(paragraphs: List[str], max_chars: int, logger: logging.Logger) -> List[str]:
+def chunk_for_refine(
+    paragraphs: List[str], max_chars: int, logger: logging.Logger
+) -> List[str]:
     """Chunk seguro para refine com limite estrito."""
-    return chunk_by_paragraphs(paragraphs, max_chars=max_chars, logger=logger, label="refine")
+    return chunk_by_paragraphs(
+        paragraphs, max_chars=max_chars, logger=logger, label="refine"
+    )

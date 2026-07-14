@@ -26,7 +26,9 @@ def load_terms(path: Path, logger: logging.Logger) -> List[Dict]:
     return terms if isinstance(terms, list) else []
 
 
-def merge_terms(inputs: List[Path], logger: logging.Logger) -> tuple[List[Dict], List[str]]:
+def merge_terms(
+    inputs: List[Path], logger: logging.Logger
+) -> tuple[List[Dict], List[str]]:
     merged: Dict[str, Dict] = {}
     conflicts: List[str] = []
 
@@ -41,23 +43,36 @@ def merge_terms(inputs: List[Path], logger: logging.Logger) -> tuple[List[Dict],
             if existing:
                 if existing.get("locked"):
                     if pt != existing.get("pt"):
-                        conflicts.append(f'Conflito: "{key}" -> "{existing.get("pt")}" vs "{pt}" (mantido locked)')
+                        conflicts.append(
+                            f'Conflito: "{key}" -> "{existing.get("pt")}" vs "{pt}" (mantido locked)'
+                        )
                     continue
                 if locked:
                     merged[key] = {**term, "locked": True}
                 else:
                     # mantém o primeiro; se diferente, loga conflito
                     if pt != existing.get("pt"):
-                        conflicts.append(f'Conflito: "{key}" -> "{existing.get("pt")}" vs "{pt}" (mantido primeiro)')
+                        conflicts.append(
+                            f'Conflito: "{key}" -> "{existing.get("pt")}" vs "{pt}" (mantido primeiro)'
+                        )
             else:
                 merged[key] = {**term, "locked": locked}
     return list(merged.values()), conflicts
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Mescla glossários em um único MASTER_GLOSSARIO.json")
-    parser.add_argument("--input", type=str, required=True, help="Diretório com arquivos de glossário (*.json)")
-    parser.add_argument("--output", type=str, default=str(DEFAULT_OUTPUT), help="Arquivo de saída")
+    parser = argparse.ArgumentParser(
+        description="Mescla glossários em um único MASTER_GLOSSARIO.json"
+    )
+    parser.add_argument(
+        "--input",
+        type=str,
+        required=True,
+        help="Diretório com arquivos de glossário (*.json)",
+    )
+    parser.add_argument(
+        "--output", type=str, default=str(DEFAULT_OUTPUT), help="Arquivo de saída"
+    )
     args = parser.parse_args()
 
     logger = logging.getLogger("glossario.merge")
@@ -77,8 +92,12 @@ def main() -> None:
 
     merged_terms, conflicts = merge_terms(files, logger)
     payload = {"terms": merged_terms}
-    output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    logger.info("Glossário mesclado salvo em %s (%d termos).", output_path, len(merged_terms))
+    output_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    logger.info(
+        "Glossário mesclado salvo em %s (%d termos).", output_path, len(merged_terms)
+    )
 
     if conflicts:
         log_path = Path("saida/glossario_conflicts.log")

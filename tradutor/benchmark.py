@@ -13,13 +13,14 @@ from typing import Dict, List
 
 from sacrebleu import corpus_bleu, corpus_chrf
 
-from .config import AppConfig, load_config
+from .config import load_config
 from .llm_backend import LLMBackend
 from .translate import translate_document
 from .utils import setup_logging, timed
 
 
 def _load_samples(path: Path) -> List[Dict[str, str]]:
+    """Processamento interno auxiliar."""
     if not path.exists():
         raise FileNotFoundError(f"Arquivo de amostras não encontrado: {path}")
     return json.loads(path.read_text(encoding="utf-8"))
@@ -44,7 +45,9 @@ def run_benchmark(models: List[Dict]) -> None:
             temperature=model_cfg["temperature"],
             logger=logger,
             request_timeout=cfg.request_timeout,
-            repeat_penalty=model_cfg.get("repeat_penalty", cfg.translate_repeat_penalty),
+            repeat_penalty=model_cfg.get(
+                "repeat_penalty", cfg.translate_repeat_penalty
+            ),
             num_predict=model_cfg.get("num_predict", cfg.translate_num_predict),
             num_ctx=getattr(cfg, "translate_num_ctx", None),
             api_mode=getattr(cfg, "ollama_api_mode", "generate"),

@@ -2,6 +2,7 @@ from tradutor.structure_normalizer import normalize_structure
 
 
 def test_heading_with_inline_text_is_split():
+    """Processamento interno auxiliar."""
     text = "Prólogo SOGOU AYAKA PAROU O GOLPE.\n\nOutro parágrafo."
     result = normalize_structure(text)
     assert "Prólogo" in result
@@ -11,6 +12,7 @@ def test_heading_with_inline_text_is_split():
 
 
 def test_idempotent_normalize_structure():
+    """Processamento interno auxiliar."""
     text = "Prólogo\n\nSOGOU AYAKA PAROU O GOLPE.\n\nOutro parágrafo."
     once = normalize_structure(text)
     twice = normalize_structure(once)
@@ -18,6 +20,7 @@ def test_idempotent_normalize_structure():
 
 
 def test_chapter_title_glued_to_first_sentence_is_split():
+    """Processamento interno auxiliar."""
     text = "# Capítulo 1:\n\nDepois do Deathmatch DEPOIS QUE SOGOU viu o corpo do Kirihara congelar."
     result = normalize_structure(text)
 
@@ -27,6 +30,7 @@ def test_chapter_title_glued_to_first_sentence_is_split():
 
 
 def test_missing_chapter_heading_for_deathmatch_opening_is_restored():
+    """Processamento interno auxiliar."""
     text = "Após o combate mortal, após Sogou ter visto o corpo do Kirihara congelar, ela perdeu os sentidos."
     result = normalize_structure(text)
 
@@ -35,6 +39,7 @@ def test_missing_chapter_heading_for_deathmatch_opening_is_restored():
 
 
 def test_chapter_subtitle_is_merged_into_markdown_heading():
+    """Processamento interno auxiliar."""
     text = "# Capítulo 1:\n\nApós o Combate Mortal\n\nDepois que Sogou acordou."
 
     result = normalize_structure(text)
@@ -44,6 +49,7 @@ def test_chapter_subtitle_is_merged_into_markdown_heading():
 
 
 def test_duplicate_generic_heading_is_removed_after_a_titled_heading():
+    """Processamento interno auxiliar."""
     text = "# Capítulo 1: Após a Batalha de Morte\n\n# Capítulo 1:\n\nDEPOIS QUE SOGOU viu Seras."
 
     result = normalize_structure(text)
@@ -54,6 +60,7 @@ def test_duplicate_generic_heading_is_removed_after_a_titled_heading():
 
 
 def test_character_time_label_is_split_into_structure():
+    """Processamento interno auxiliar."""
     text = "Yasu Tomohiro ALGUM TEMPO ANTES, há um tempo…"
 
     result = normalize_structure(text)
@@ -62,6 +69,7 @@ def test_character_time_label_is_split_into_structure():
 
 
 def test_scene_separator_glued_to_narration_is_isolated():
+    """Processamento interno auxiliar."""
     result = normalize_structure("*** A cena continua.")
 
     assert result == "***\n\nA cena continua."

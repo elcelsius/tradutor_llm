@@ -1,13 +1,15 @@
 import re
-import types
 
-from tradutor.config import AppConfig
 import tradutor.translate as translate
+from tradutor.config import AppConfig
 from tradutor.utils import setup_logging
 
 
 class _StubBackend:
+    """Processamento interno auxiliar."""
+
     def __init__(self) -> None:
+        """Processamento interno auxiliar."""
         self.backend = "stub"
         self.model = "stub"
         self.num_predict = 128
@@ -15,26 +17,34 @@ class _StubBackend:
         self.repeat_penalty = 1.0
 
     def generate(self, prompt: str):
+        """Processamento interno auxiliar."""
         raise RuntimeError("Should not call generate directly")
 
 
 def _extract_block(prompt: str) -> str:
-    match = re.search(r'TEXTO A SER TRADUZIDO:\n\"\"\"(.*?)\"\"\"', prompt, flags=re.DOTALL)
+    """Processamento interno auxiliar."""
+    match = re.search(
+        r"TEXTO A SER TRADUZIDO:\n\"\"\"(.*?)\"\"\"", prompt, flags=re.DOTALL
+    )
     return match.group(1).strip() if match else ""
 
 
 def test_dialogue_split_fallback_translates_all_blocks(monkeypatch) -> None:
+    """Processamento interno auxiliar."""
     backend = _StubBackend()
     logger = setup_logging()
     cfg = AppConfig(split_by_sections=False, max_retries=1, translate_chunk_chars=5000)
 
     def fake_call_with_retry(backend, prompt, cfg, logger, label):
+        """Processamento interno auxiliar."""
         block_text = _extract_block(prompt)
         raw = f"### TEXTO_TRADUZIDO_INICIO\n{block_text}\n### TEXTO_TRADUZIDO_FIM"
         return raw, block_text, 1, None
 
     monkeypatch.setattr(translate, "_call_with_retry", fake_call_with_retry)
-    monkeypatch.setattr(translate, "needs_retry", lambda *a, **k: (True, "omissao_dialogo_guardrail"))
+    monkeypatch.setattr(
+        translate, "needs_retry", lambda *a, **k: (True, "omissao_dialogo_guardrail")
+    )
 
     chunk_text = "\n".join(
         [

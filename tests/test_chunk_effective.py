@@ -1,20 +1,28 @@
 import json
-from pathlib import Path
 import logging
+from pathlib import Path
 
 from tradutor.config import AppConfig
 from tradutor.llm_backend import LLMResponse
-from tradutor.translate import translate_document
 from tradutor.refine import refine_markdown_file
+from tradutor.translate import translate_document
 from tradutor.utils import setup_logging
 
 
 class FakeTranslateBackend:
+    """Processamento interno auxiliar."""
+
     def generate(self, prompt: str) -> LLMResponse:
-        return LLMResponse(text="### TEXTO_TRADUZIDO_INICIO\nTexto traduzido.\n\nOutra linha.\n### TEXTO_TRADUZIDO_FIM", latency=0.01)
+        """Processamento interno auxiliar."""
+        return LLMResponse(
+            text="### TEXTO_TRADUZIDO_INICIO\nTexto traduzido.\n\nOutra linha.\n### TEXTO_TRADUZIDO_FIM",
+            latency=0.01,
+        )
 
 
 class FakeRefineBackend:
+    """Processamento interno auxiliar."""
+
     backend = "ollama"
     model = "fake-refine"
     num_predict = 128
@@ -22,10 +30,12 @@ class FakeRefineBackend:
     repeat_penalty = 1.0
 
     def generate(self, prompt: str) -> LLMResponse:
+        """Processamento interno auxiliar."""
         return LLMResponse(text="Texto refinado simples.", latency=0.01)
 
 
 def test_translate_metrics_include_effective_chunk(tmp_path: Path) -> None:
+    """Processamento interno auxiliar."""
     cfg = AppConfig(
         data_dir=tmp_path,
         output_dir=tmp_path,
@@ -47,6 +57,7 @@ def test_translate_metrics_include_effective_chunk(tmp_path: Path) -> None:
 
 
 def test_refine_metrics_include_effective_chunk(tmp_path: Path) -> None:
+    """Processamento interno auxiliar."""
     cfg = AppConfig(
         data_dir=tmp_path,
         output_dir=tmp_path,

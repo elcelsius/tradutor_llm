@@ -15,7 +15,6 @@ if str(ROOT) not in sys.path:
 from tradutor.config import load_config
 from tradutor.preprocess import normalize_line_for_filters, preprocess_text
 
-
 NOISE_TOKENS = (
     "oceanofpdf",
     "gomanga",
@@ -35,9 +34,17 @@ NOISE_TOKENS = (
     "get the latest news",
 )
 
-URL_RE = re.compile(r"(https?://|www\.)|(\w+\.(?:com|net|org|io|gg|co|me|xyz)(?:[/?#]|$))", re.IGNORECASE)
-STORY_MARKER_RE = re.compile(r"^(prologue|chapter\s+1\b|chapter\s+one\b)", re.IGNORECASE)
-TOC_LIKE_RE = re.compile(r"^(chapter\s+\d+|prologue|epilogue|afterword|color inserts|title page)$", re.IGNORECASE)
+URL_RE = re.compile(
+    r"(https?://|www\.)|(\w+\.(?:com|net|org|io|gg|co|me|xyz)(?:[/?#]|$))",
+    re.IGNORECASE,
+)
+STORY_MARKER_RE = re.compile(
+    r"^(prologue|chapter\s+1\b|chapter\s+one\b)", re.IGNORECASE
+)
+TOC_LIKE_RE = re.compile(
+    r"^(chapter\s+\d+|prologue|epilogue|afterword|color inserts|title page)$",
+    re.IGNORECASE,
+)
 
 
 def _compact(text: str) -> str:
@@ -72,7 +79,9 @@ def _story_start_line(lines: list[str], skip_front_matter: bool) -> int:
     return 1
 
 
-def _raw_missing_candidates(raw_text: str, clean_text: str, *, skip_front_matter: bool) -> list[dict[str, Any]]:
+def _raw_missing_candidates(
+    raw_text: str, clean_text: str, *, skip_front_matter: bool
+) -> list[dict[str, Any]]:
     raw_lines = raw_text.splitlines()
     start_line = _story_start_line(raw_lines, skip_front_matter)
     clean_compact = _compact(clean_text)
@@ -96,8 +105,12 @@ def _raw_missing_candidates(raw_text: str, clean_text: str, *, skip_front_matter
             {
                 "line": idx,
                 "text": norm,
-                "prev": normalize_line_for_filters(raw_lines[idx - 2]) if idx >= 2 else "",
-                "next": normalize_line_for_filters(raw_lines[idx]) if idx < len(raw_lines) else "",
+                "prev": normalize_line_for_filters(raw_lines[idx - 2])
+                if idx >= 2
+                else "",
+                "next": normalize_line_for_filters(raw_lines[idx])
+                if idx < len(raw_lines)
+                else "",
             }
         )
     return candidates
@@ -128,7 +141,9 @@ def _write_markdown_report(
     suspicious_removed: list[dict[str, Any]],
     raw_missing: list[dict[str, Any]],
 ) -> None:
-    reason_counts = Counter(str(item.get("reason", "")) for item in stats.get("removed_full", []))
+    reason_counts = Counter(
+        str(item.get("reason", "")) for item in stats.get("removed_full", [])
+    )
     lines = [
         "# Preprocess audit",
         "",
@@ -169,7 +184,9 @@ def _write_markdown_report(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Audit PDF preprocessing output.")
     parser.add_argument("--input", required=True, help="Raw extracted text file.")
-    parser.add_argument("--output-dir", default="saida/preprocess_audit", help="Audit output directory.")
+    parser.add_argument(
+        "--output-dir", default="saida/preprocess_audit", help="Audit output directory."
+    )
     parser.add_argument(
         "--skip-front-matter",
         action=argparse.BooleanOptionalAction,
@@ -179,13 +196,19 @@ def main() -> int:
     args = parser.parse_args()
 
     cfg = load_config()
-    skip_front_matter = cfg.skip_front_matter if args.skip_front_matter is None else args.skip_front_matter
+    skip_front_matter = (
+        cfg.skip_front_matter
+        if args.skip_front_matter is None
+        else args.skip_front_matter
+    )
     input_path = Path(args.input)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     raw_text = input_path.read_text(encoding="utf-8")
-    clean_text, stats = preprocess_text(raw_text, return_stats=True, skip_front_matter=skip_front_matter)
+    clean_text, stats = preprocess_text(
+        raw_text, return_stats=True, skip_front_matter=skip_front_matter
+    )
     stem = input_path.stem.removesuffix("_raw_extracted")
     preprocessed_path = output_dir / f"{stem}_preprocessed.md"
     report_path = output_dir / f"{stem}_preprocess_report.json"
@@ -193,7 +216,9 @@ def main() -> int:
     md_path = output_dir / f"{stem}_audit.md"
 
     suspicious_removed = _suspicious_removed(stats)
-    raw_missing = _raw_missing_candidates(raw_text, clean_text, skip_front_matter=skip_front_matter)
+    raw_missing = _raw_missing_candidates(
+        raw_text, clean_text, skip_front_matter=skip_front_matter
+    )
     audit = {
         "input": str(input_path),
         "preprocessed": str(preprocessed_path),
@@ -213,8 +238,12 @@ def main() -> int:
     }
 
     preprocessed_path.write_text(clean_text, encoding="utf-8")
-    report_path.write_text(json.dumps(stats, ensure_ascii=False, indent=2), encoding="utf-8")
-    audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2), encoding="utf-8")
+    report_path.write_text(
+        json.dumps(stats, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    audit_path.write_text(
+        json.dumps(audit, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     _write_markdown_report(
         md_path,
         input_path=input_path,

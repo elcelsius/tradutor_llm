@@ -9,6 +9,7 @@ import re
 
 
 def clean_text(text: str) -> str:
+    """Processamento interno auxiliar."""
     if not text:
         return text
     cleaned = text
@@ -32,7 +33,11 @@ def clean_text(text: str) -> str:
                 buffer = []
             result.append("")
             continue
-        if buffer and not buffer[-1].endswith((".", "!", "?", "—")) and not ln.lstrip().startswith("—"):
+        if (
+            buffer
+            and not buffer[-1].endswith((".", "!", "?", "—"))
+            and not ln.lstrip().startswith("—")
+        ):
             buffer.append(ln.strip())
         else:
             if buffer:

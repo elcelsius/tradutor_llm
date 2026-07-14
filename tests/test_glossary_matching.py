@@ -2,14 +2,18 @@ from tradutor.glossary_utils import select_terms_for_chunk, select_terms_for_tar
 
 
 def test_glossary_word_boundary_matching() -> None:
+    """Processamento interno auxiliar."""
     manual_terms = [{"key": "Art", "pt": "Arte"}]
     chunk_text = "This is a partial mention that should not match."
-    selected, matched = select_terms_for_chunk(manual_terms, chunk_text, match_limit=80, fallback_limit=0)
+    selected, matched = select_terms_for_chunk(
+        manual_terms, chunk_text, match_limit=80, fallback_limit=0
+    )
     assert matched == 0
     assert selected == []
 
 
 def test_glossary_case_sensitive_source_term_does_not_match_common_word() -> None:
+    """Processamento interno auxiliar."""
     manual_terms = [{"key": "Freeze", "pt": "Congelar", "source_case_sensitive": True}]
 
     selected, matched = select_terms_for_chunk(
@@ -34,6 +38,7 @@ def test_glossary_case_sensitive_source_term_does_not_match_common_word() -> Non
 
 
 def test_target_text_selection_uses_pt_forms_without_unrelated_fallback() -> None:
+    """Processamento interno auxiliar."""
     terms = [
         {"key": "Deathmatch", "pt": "Combate Mortal"},
         {"key": "Freeze", "pt": "Congelar", "bad_aliases": ["Congelamento"]},

@@ -4,6 +4,7 @@ from tradutor.preprocess import preprocess_text
 
 
 def test_preprocess_removes_watermarks_but_keeps_text() -> None:
+    """Processamento interno auxiliar."""
     raw = textwrap.dedent(
         """
         They say nothing good can ever come from revenge.

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import re
 
-ELLIPSIS_IN_WORD_RE = re.compile(r"[A-Za-zÀ-ÿ]\.\.\.[A-Za-zÀ-ÿ]|[A-Za-zÀ-ÿ]…[A-Za-zÀ-ÿ]")
+ELLIPSIS_IN_WORD_RE = re.compile(
+    r"[A-Za-zÀ-ÿ]\.\.\.[A-Za-zÀ-ÿ]|[A-Za-zÀ-ÿ]…[A-Za-zÀ-ÿ]"
+)
 LOWERCASE_START_RE = re.compile(r"^[a-zà-ÿ].*")
 TRUNCATED_ELLIPSIS_RE = re.compile(r"(?:^|\s)[A-Za-zÀ-ÿ]{1,4}(?:\.{3}|…)\s*$")
 MALFORMED_QUOTE_BOUNDARY_RE = re.compile(r"”[ \t]*“(?=[A-Za-zÀ-ÿ])")
@@ -28,16 +30,25 @@ def _has_suspicious_repetition(text: str, min_repeats: int = 3) -> bool:
 
 
 def _has_meta_noise(text: str) -> bool:
+    """Processamento interno auxiliar."""
     lower = text.lower()
-    markers = ["as an ai", "<think>", "</think>", "sou um modelo de linguagem", "analysis:"]
+    markers = [
+        "as an ai",
+        "<think>",
+        "</think>",
+        "sou um modelo de linguagem",
+        "analysis:",
+    ]
     return any(m in lower for m in markers)
 
 
 def count_quotes(text: str) -> int:
+    """Processamento interno auxiliar."""
     return len([ch for ch in text if ch in {'"', "“", "”", "‟", "❝", "❞"}])
 
 
 def count_quote_lines(text: str) -> int:
+    """Processamento interno auxiliar."""
     return sum(1 for ln in text.splitlines() if ln.strip().startswith(('"', "“", "”")))
 
 
@@ -51,6 +62,7 @@ def has_malformed_quote_boundary(text: str) -> bool:
 
 
 def _count_curly_quotes(text: str) -> tuple[int, int]:
+    """Processamento interno auxiliar."""
     return text.count("“"), text.count("”")
 
 
@@ -154,7 +166,9 @@ def _excess_repeated_short_lines(input_text: str, output_text: str) -> bool:
     se repete no original (como uma personagem insistindo em uma ordem) pode
     continuar repetida na tradução, mas não pode crescer muito além dele.
     """
+
     def _short_lines(text: str) -> list[str]:
+        """Processamento interno auxiliar."""
         lines = []
         for ln in text.splitlines():
             stripped = ln.strip()
@@ -176,10 +190,12 @@ def _excess_repeated_short_lines(input_text: str, output_text: str) -> bool:
 
 
 def _paragraph_count(text: str) -> int:
+    """Processamento interno auxiliar."""
     return len([part for part in re.split(r"\n\s*\n", text.strip()) if part.strip()])
 
 
 def _meaningful_line_count(text: str) -> int:
+    """Processamento interno auxiliar."""
     return sum(1 for line in (text or "").splitlines() if line.strip())
 
 
@@ -194,6 +210,7 @@ def needs_retry(
     contamination_detected: bool = False,
     sanitization_ratio: float = 1.0,
 ) -> tuple[bool, str]:
+    """Processamento interno auxiliar."""
     iq = input_quotes if input_quotes is not None else count_quotes(input_text)
     oq = output_quotes if output_quotes is not None else count_quotes(output_text)
     if has_malformed_quote_boundary(output_text):
@@ -202,16 +219,23 @@ def needs_retry(
         return True, "unbalanced_quotes"
     if has_curly_quote_count_regression(input_text, output_text):
         return True, "extra_curly_quotes"
-    quote_repair_allowed = (
-        _allows_single_source_quote_repair(input_text, output_text)
-        or _allows_single_missing_open_repair(input_text, output_text)
-    )
+    quote_repair_allowed = _allows_single_source_quote_repair(
+        input_text, output_text
+    ) or _allows_single_missing_open_repair(input_text, output_text)
     if (iq % 2 != oq % 2 or (iq and oq > iq + 4)) and not quote_repair_allowed:
         return True, "unbalanced_quotes_straight"
     if iq >= 4 and oq < iq - 2:
         return True, "omissao_dialogo_quotes"
-    iql = input_quote_lines if input_quote_lines is not None else count_quote_lines(input_text)
-    oql = output_quote_lines if output_quote_lines is not None else count_quote_lines(output_text)
+    iql = (
+        input_quote_lines
+        if input_quote_lines is not None
+        else count_quote_lines(input_text)
+    )
+    oql = (
+        output_quote_lines
+        if output_quote_lines is not None
+        else count_quote_lines(output_text)
+    )
     if iql >= 2 and oql < max(1, iql - 1):
         return True, "omissao_dialogo_linhas"
     if not output_text or not output_text.strip():
@@ -228,7 +252,12 @@ def needs_retry(
         return True, "ellipsis_in_word"
     paragraphs = [p.strip() for p in re.split(r"\n{2,}", output_text) if p.strip()]
     for p in paragraphs:
-        if len(paragraphs) > 1 and len(p) <= 30 and LOWERCASE_START_RE.match(p) and not p.startswith(('"', "“", "”", "-", "—")):
+        if (
+            len(paragraphs) > 1
+            and len(p) <= 30
+            and LOWERCASE_START_RE.match(p)
+            and not p.startswith(('"', "“", "”", "-", "—"))
+        ):
             return True, "lowercased_fragment"
     for p in paragraphs:
         if LOWERCASE_START_RE.match(p) and not p.startswith(('"', "“", "”", "-", "—")):

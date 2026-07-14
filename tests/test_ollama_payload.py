@@ -1,13 +1,14 @@
-import json
 import logging
-from pathlib import Path
-
 import types
+
 import tradutor.llm_backend as lb
 
 
 def _fake_post(expected_payload_container):
+    """Processamento interno auxiliar."""
+
     def _post(url, json=None, timeout=None):
+        """Processamento interno auxiliar."""
         expected_payload_container["payload"] = json
         return types.SimpleNamespace(
             json=lambda: {"response": "ok"},
@@ -18,6 +19,7 @@ def _fake_post(expected_payload_container):
 
 
 def test_ollama_includes_num_ctx_and_keep_alive(monkeypatch):
+    """Processamento interno auxiliar."""
     captured = {}
     monkeypatch.setattr(lb.requests, "post", _fake_post(captured))
     backend = lb.LLMBackend(
@@ -37,6 +39,7 @@ def test_ollama_includes_num_ctx_and_keep_alive(monkeypatch):
 
 
 def test_ollama_omits_num_ctx_when_none(monkeypatch):
+    """Processamento interno auxiliar."""
     captured = {}
     monkeypatch.setattr(lb.requests, "post", _fake_post(captured))
     backend = lb.LLMBackend(

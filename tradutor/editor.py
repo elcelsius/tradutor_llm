@@ -11,9 +11,19 @@ from typing import Dict, List, Tuple
 Change = Dict[str, object]
 
 
-def _record_change(changes: List[Change], before: str, after: str, line: int, reason: str, mode: str) -> None:
+def _record_change(
+    changes: List[Change], before: str, after: str, line: int, reason: str, mode: str
+) -> None:
     if before != after:
-        changes.append({"before": before, "after": after, "line": line, "reason": reason, "mode": mode})
+        changes.append(
+            {
+                "before": before,
+                "after": after,
+                "line": line,
+                "reason": reason,
+                "mode": mode,
+            }
+        )
 
 
 def editor_lite(text: str) -> Tuple[str, Dict]:
@@ -53,7 +63,14 @@ def editor_consistency(text: str, memory: Dict | None = None) -> Tuple[str, Dict
         # tempo verbal simples: se predominância de passado detectada, priorizar "era" sobre "é" em descrições
         if memory.get("past_preference"):
             ln = re.sub(r"\b[eE]ra como se ele é\b", "era como se ele era", ln)
-        _record_change(changes, original, ln, idx, "consistency padronização local", "editor-consistency")
+        _record_change(
+            changes,
+            original,
+            ln,
+            idx,
+            "consistency padronização local",
+            "editor-consistency",
+        )
         out.append(ln)
     memory["changes"] = memory.get("changes", 0) + len(changes)
     return "\n".join(out), {"changes": len(changes), "detail": changes}
@@ -75,9 +92,15 @@ def editor_voice(text: str, character_map: Dict | None = None) -> Tuple[str, Dic
         if ln.lstrip().startswith("—"):
             ln = re.sub(r"\.{4,}", "…", ln)
             ln = re.sub(r"\s{2,}", " ", ln)
-        _record_change(changes, original, ln, idx, "voice ritmo de fala", "editor-voice")
+        _record_change(
+            changes, original, ln, idx, "voice ritmo de fala", "editor-voice"
+        )
         out.append(ln)
-    return "\n".join(out), {"changes": len(changes), "detail": changes, "character_map": character_map}
+    return "\n".join(out), {
+        "changes": len(changes),
+        "detail": changes,
+        "character_map": character_map,
+    }
 
 
 def editor_strict(text: str) -> Tuple[str, Dict]:

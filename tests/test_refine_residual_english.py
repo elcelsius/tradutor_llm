@@ -7,7 +7,10 @@ from tradutor.refine import refine_section
 
 
 class _ResidualEnglishRefineBackend:
+    """Processamento interno auxiliar."""
+
     def __init__(self) -> None:
+        """Processamento interno auxiliar."""
         self.backend = "stub"
         self.model = "stub"
         self.num_predict = 10
@@ -16,6 +19,7 @@ class _ResidualEnglishRefineBackend:
         self.calls = 0
 
     def generate(self, prompt: str):
+        """Processamento interno auxiliar."""
         self.calls += 1
         if self.calls == 1:
             text = (
@@ -33,6 +37,7 @@ class _ResidualEnglishRefineBackend:
 
 
 def test_refine_retries_on_residual_english_sentence(tmp_path: Path) -> None:
+    """Processamento interno auxiliar."""
     set_cache_base_dir(tmp_path)
     cfg = AppConfig(output_dir=tmp_path, max_retries=2, refine_chunk_chars=2000)
     backend = _ResidualEnglishRefineBackend()

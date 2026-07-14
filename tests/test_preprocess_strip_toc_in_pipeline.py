@@ -5,6 +5,7 @@ from tradutor.utils import setup_logging
 
 
 def test_preprocess_removes_toc_when_skip_front_matter_enabled() -> None:
+    """Processamento interno auxiliar."""
     logger = setup_logging(level=logging.ERROR)
     toc = """Prologue
 1

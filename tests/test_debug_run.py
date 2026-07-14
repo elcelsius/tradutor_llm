@@ -11,11 +11,14 @@ from tradutor.debug_run import DebugRunWriter
 from tradutor.llm_backend import LLMResponse
 from tradutor.refine import refine_markdown_file
 from tradutor.translate import translate_document
-from tradutor.utils import setup_logging, write_text, read_text
+from tradutor.utils import read_text, setup_logging, write_text
 
 
 class FakeTranslateBackend:
+    """Processamento interno auxiliar."""
+
     def generate(self, prompt: str) -> LLMResponse:
+        """Processamento interno auxiliar."""
         return LLMResponse(
             text="### TEXTO_TRADUZIDO_INICIO\nTexto traduzido em português.\n\nSegundo parágrafo traduzido.\n### TEXTO_TRADUZIDO_FIM",
             latency=0.01,
@@ -23,7 +26,10 @@ class FakeTranslateBackend:
 
 
 class FakeRefineBackend:
+    """Processamento interno auxiliar."""
+
     def generate(self, prompt: str) -> LLMResponse:
+        """Processamento interno auxiliar."""
         return LLMResponse(
             text="### TEXTO_REFINADO_INICIO\nTexto refinado.\n### TEXTO_REFINADO_FIM",
             latency=0.01,
@@ -31,7 +37,17 @@ class FakeRefineBackend:
 
 
 class FakeLLMBackend:
-    def __init__(self, backend: str = "fake", model: str = "fake", temperature=None, num_predict=None, repeat_penalty=None, **kwargs):
+    """Processamento interno auxiliar."""
+
+    def __init__(
+        self,
+        backend: str = "fake",
+        model: str = "fake",
+        temperature=None,
+        num_predict=None,
+        repeat_penalty=None,
+        **kwargs,
+    ):
         self.backend = backend
         self.model = model
         self.temperature = temperature
@@ -39,14 +55,18 @@ class FakeLLMBackend:
         self.repeat_penalty = repeat_penalty
 
     def generate(self, prompt: str) -> LLMResponse:
+        """Processamento interno auxiliar."""
         if "TEXTO_REFINADO" in prompt:
             text = "### TEXTO_REFINADO_INICIO\nREFINED BLOCK\n### TEXTO_REFINADO_FIM"
         else:
-            text = "### TEXTO_TRADUZIDO_INICIO\nTRADUZIDO BLOCO\n### TEXTO_TRADUZIDO_FIM"
+            text = (
+                "### TEXTO_TRADUZIDO_INICIO\nTRADUZIDO BLOCO\n### TEXTO_TRADUZIDO_FIM"
+            )
         return LLMResponse(text=text, latency=0.0)
 
 
 def test_debug_run_translate_refine_outputs(tmp_path: Path) -> None:
+    """Processamento interno auxiliar."""
     cfg = AppConfig(output_dir=tmp_path)
     logger = setup_logging(logging.DEBUG)
     source_text = "First paragraph in English.\n\nSecond paragraph in English."
@@ -100,17 +120,23 @@ def test_debug_run_translate_refine_outputs(tmp_path: Path) -> None:
         debug_run=debug_run,
     )
 
-    translate_manifest_path = debug_run.run_dir / "40_translate" / "translate_manifest.json"
+    translate_manifest_path = (
+        debug_run.run_dir / "40_translate" / "translate_manifest.json"
+    )
     refine_manifest_path = debug_run.run_dir / "60_refine" / "refine_manifest.json"
     assert translate_manifest_path.exists()
     assert refine_manifest_path.exists()
 
     translate_manifest = json.loads(read_text(translate_manifest_path))
     refine_manifest = json.loads(read_text(refine_manifest_path))
-    assert translate_manifest["chunking"]["total_chunks"] == len(translate_manifest["chunks"])
+    assert translate_manifest["chunking"]["total_chunks"] == len(
+        translate_manifest["chunks"]
+    )
     assert refine_manifest["refine"]["total_chunks"] == len(refine_manifest["chunks"])
 
-    debug_chunk = debug_run.run_dir / "40_translate" / "debug_traducao" / "chunk001_final_pt.txt"
+    debug_chunk = (
+        debug_run.run_dir / "40_translate" / "debug_traducao" / "chunk001_final_pt.txt"
+    )
     assert debug_chunk.exists()
 
     for path_value in translate_manifest["input_paths"].values():
@@ -124,6 +150,7 @@ def test_debug_run_translate_refine_outputs(tmp_path: Path) -> None:
 
 
 def test_debug_mode_end_to_end_artifacts(monkeypatch, tmp_path: Path) -> None:
+    """Processamento interno auxiliar."""
     import tradutor.main as main  # noqa: WPS433
 
     base_para = (
@@ -215,19 +242,32 @@ def test_debug_mode_end_to_end_artifacts(monkeypatch, tmp_path: Path) -> None:
     for dirname in expected_dirs:
         assert (run_dir / dirname).is_dir()
 
-    translate_manifest = json.loads(read_text(run_dir / "40_translate" / "translate_manifest.json"))
-    refine_manifest = json.loads(read_text(run_dir / "60_refine" / "refine_manifest.json"))
+    translate_manifest = json.loads(
+        read_text(run_dir / "40_translate" / "translate_manifest.json")
+    )
+    refine_manifest = json.loads(
+        read_text(run_dir / "60_refine" / "refine_manifest.json")
+    )
     run_summary = json.loads(read_text(run_dir / "99_reports" / "run_summary.json"))
 
     assert re.match(r"sample/\d{8}_\d{6}$", translate_manifest["run_id"])
-    assert translate_manifest["run_id"] == refine_manifest["run_id"] == run_summary["run_id"]
+    assert (
+        translate_manifest["run_id"]
+        == refine_manifest["run_id"]
+        == run_summary["run_id"]
+    )
     total_chunks = translate_manifest["chunking"]["total_chunks"]
     assert total_chunks >= 1
-    assert len(translate_manifest["chunks"]) == min(total_chunks, debug_cfg.debug_max_chunks or total_chunks)
+    assert len(translate_manifest["chunks"]) == min(
+        total_chunks, debug_cfg.debug_max_chunks or total_chunks
+    )
     total_refine_chunks = refine_manifest["refine"]["total_chunks"]
-    assert len(refine_manifest["chunks"]) == min(total_refine_chunks, debug_cfg.debug_max_chunks or total_refine_chunks)
+    assert len(refine_manifest["chunks"]) == min(
+        total_refine_chunks, debug_cfg.debug_max_chunks or total_refine_chunks
+    )
 
     def _assert_rel(path_str: str) -> None:
+        """Processamento interno auxiliar."""
         assert path_str is None or not Path(path_str).is_absolute()
         assert path_str is None or not re.match(r"^[A-Za-z]:", path_str)
 
@@ -266,6 +306,7 @@ def test_debug_mode_end_to_end_artifacts(monkeypatch, tmp_path: Path) -> None:
 
 
 def test_debug_run_writes_summary_on_failure(monkeypatch, tmp_path: Path) -> None:
+    """Processamento interno auxiliar."""
     import tradutor.main as main  # noqa: WPS433
 
     md_path = tmp_path / "sample.md"
@@ -275,6 +316,7 @@ def test_debug_run_writes_summary_on_failure(monkeypatch, tmp_path: Path) -> Non
     logger = setup_logging(logging.DEBUG)
 
     def _boom(*args, **kwargs):
+        """Processamento interno auxiliar."""
         raise RuntimeError("boom")
 
     monkeypatch.setattr(main, "translate_document", _boom)
@@ -319,7 +361,9 @@ def test_debug_run_writes_summary_on_failure(monkeypatch, tmp_path: Path) -> Non
     summary_path = run_dir / "99_reports" / "run_summary.json"
     assert summary_path.exists()
     summary = json.loads(read_text(summary_path))
-    assert any("run_aborted_at_stage:translate" == note for note in summary.get("notes", []))
+    assert any(
+        "run_aborted_at_stage:translate" == note for note in summary.get("notes", [])
+    )
     for rel_path in summary["paths"].values():
         assert not Path(rel_path).is_absolute()
         assert not re.match(r"^[A-Za-z]:", rel_path)

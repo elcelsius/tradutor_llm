@@ -1,12 +1,17 @@
 import logging
 import re
 
-from tradutor.preprocess import preprocess_text, paragraphs_from_text, chunk_for_translation
+from tradutor.preprocess import (
+    chunk_for_translation,
+    paragraphs_from_text,
+    preprocess_text,
+)
 from tradutor.section_splitter import split_into_sections
 from tradutor.utils import setup_logging
 
 
 def test_no_stub_chunks_after_toc_removal() -> None:
+    """Processamento interno auxiliar."""
     logger = setup_logging(level=logging.ERROR)
     raw = """Prologue
 Chapter 1
@@ -31,5 +36,9 @@ The actual story begins here with enough narrative content to exceed the stub th
 
     assert chunks, "Chunk list should not be empty."
     first = chunks[0].strip()
-    assert not re.fullmatch(r"#\\s*(Prologue|Chapter\\s+\\d+(?::[^\\n]+)?|Epilogue|Afterword)\\s*", first, flags=re.IGNORECASE)
+    assert not re.fullmatch(
+        r"#\\s*(Prologue|Chapter\\s+\\d+(?::[^\\n]+)?|Epilogue|Afterword)\\s*",
+        first,
+        flags=re.IGNORECASE,
+    )
     assert len(first) >= 200

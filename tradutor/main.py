@@ -11,27 +11,34 @@ import time
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
 
+from .advanced_preprocess import clean_text as advanced_clean
+from .cache_utils import clear_cache, set_cache_base_dir
 from .config import AppConfig, ensure_paths, load_config
 from .debug_run import DebugRunWriter
-from .glossary_utils import build_glossary_state, format_manual_pairs_for_translation, resolve_manual_glossary_path
+from .desquebrar import (
+    desquebrar_stats_to_dict,
+    desquebrar_text,
+    normalize_md_paragraphs,
+)
+from .desquebrar_safe import desquebrar_safe
+from .editor import editor_pipeline
+from .glossary_utils import (
+    build_glossary_state,
+    format_manual_pairs_for_translation,
+    resolve_manual_glossary_path,
+)
 from .llm_backend import LLMBackend
+from .pdf import convert_markdown_to_pdf
 from .pdf_export import markdown_to_pdf
 from .pdf_reader import extract_pdf_text
-from .advanced_preprocess import clean_text as advanced_clean
-from .preprocess import preprocess_text, strip_front_matter
-from .refine import refine_markdown_file, refine_prompt_fingerprint
 from .post_translation_review import finalize_translation_text, load_sections
-from .translate import translate_document, translation_prompt_fingerprint
+from .preprocess import preprocess_text
+from .refine import refine_markdown_file, refine_prompt_fingerprint
 from .repair import repair_prompt_fingerprint
-from .desquebrar import desquebrar_text, desquebrar_stats_to_dict, normalize_md_paragraphs
-from .desquebrar_safe import desquebrar_safe
-from .utils import setup_logging, write_text, read_text
 from .section_splitter import split_into_sections
-from .editor import editor_pipeline
-from .pdf import convert_markdown_to_pdf
-from .cache_utils import clear_cache, set_cache_base_dir
+from .translate import translate_document, translation_prompt_fingerprint
+from .utils import read_text, setup_logging, write_text
 
 
 def _format_elapsed(seconds: float) -> str:
@@ -54,9 +61,16 @@ def _build_timing_payload(
     failed_stage: str | None = None,
     nested_timings: dict | None = None,
 ) -> dict:
+    """
+    Constrói o payload JSON com os dados de tempo de execução das etapas do pipeline.
+    Calcula o tempo total e formata os tempos em um formato legível por humanos.
+    """
     finished_at = datetime.now(timezone.utc)
     total_elapsed = time.perf_counter() - run_started
-    stage_items = [(name, float(seconds)) for name, seconds in timings.items() if name != "total"]
+    # Remove a chave 'total' para não duplicar o tempo total calculado manualmente
+    stage_items = [
+        (name, float(seconds)) for name, seconds in timings.items() if name != "total"
+    ]
     measured_stage_seconds = sum(seconds for _, seconds in stage_items)
     payload = {
         "source_slug": source_slug,
@@ -115,6 +129,10 @@ def _write_timing_report(
     debug_run: DebugRunWriter | None = None,
     nested_timings: dict | None = None,
 ) -> dict | None:
+    """
+    Gera e salva o relatório de métricas de tempo (timings) no diretório de saída.
+    Opcionalmente também grava os dados na sessão de debug, se ativa.
+    """
     try:
         payload = _build_timing_payload(
             source_slug=source_slug,
@@ -129,10 +147,16 @@ def _write_timing_report(
         )
         report_path = cfg.output_dir / f"{source_slug}_timings.json"
         report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        report_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         if debug_run:
             debug_run.write_timing(payload)
-        logger.info("Relatório de tempos salvo em %s (total=%s)", report_path, payload["total_elapsed_human"])
+        logger.info(
+            "Relatório de tempos salvo em %s (total=%s)",
+            report_path,
+            payload["total_elapsed_human"],
+        )
         return payload
     except Exception as exc:
         logger.warning("Falha ao gravar relatório de tempos: %s", exc)
@@ -140,6 +164,10 @@ def _write_timing_report(
 
 
 def _load_repair_timing_detail(output_dir: Path, source_slug: str) -> dict:
+    """
+    Tenta carregar as métricas de tempo geradas especificamente pela etapa de reparo (repair).
+    Retorna um dicionário com os detalhes de tempo a serem incluídos nos timings gerais.
+    """
     try:
         repair_metrics_path = output_dir / f"{source_slug}_repair_metrics.json"
         payload = json.loads(repair_metrics_path.read_text(encoding="utf-8"))
@@ -157,12 +185,19 @@ def _load_repair_timing_detail(output_dir: Path, source_slug: str) -> dict:
 
 
 def _glossary_terms(glossary_state) -> list[dict]:
+    """
+    Extrai a lista de termos combinados a partir do estado do glossário.
+    """
     if not glossary_state:
         return []
     return list(glossary_state.combined_index.values())
 
 
 def _dynamic_glossary_path(args, cfg: AppConfig, source_slug: str) -> Path:
+    """
+    Determina o caminho do arquivo JSON que será usado como glossário dinâmico,
+    seja explicitamente passado pelos argumentos ou gerado pelo identificador do documento.
+    """
     explicit_path = getattr(args, "dynamic_glossary", None)
     if explicit_path:
         return Path(explicit_path)
@@ -171,6 +206,9 @@ def _dynamic_glossary_path(args, cfg: AppConfig, source_slug: str) -> Path:
 
 
 def _source_sections_payload(source_text: str) -> list[dict]:
+    """
+    Processa o texto fonte dividindo-o em seções estruturadas (título, índices e tamanho em caracteres).
+    """
     payload: list[dict] = []
     for section in split_into_sections(source_text):
         body = str(section.get("body", ""))
@@ -185,15 +223,25 @@ def _source_sections_payload(source_text: str) -> list[dict]:
     return payload
 
 
-def _write_source_sections(cfg: AppConfig, source_slug: str, source_text: str, logger: logging.Logger) -> list[dict]:
+def _write_source_sections(
+    cfg: AppConfig, source_slug: str, source_text: str, logger: logging.Logger
+) -> list[dict]:
+    """
+    Salva as informações sobre as seções do arquivo fonte em um JSON no diretório de saída.
+    """
     sections = _source_sections_payload(source_text)
     path = cfg.output_dir / f"{source_slug}_source_sections.json"
-    path.write_text(json.dumps(sections, ensure_ascii=False, indent=2), encoding="utf-8")
+    path.write_text(
+        json.dumps(sections, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     logger.info("Metadados de seções salvos em %s (%d seções).", path, len(sections))
     return sections
 
 
 def _load_source_sections(cfg: AppConfig, source_slug: str) -> list[dict]:
+    """
+    Carrega do disco o JSON com os metadados das seções do arquivo fonte correspondente ao slug.
+    """
     return load_sections(cfg.output_dir / f"{source_slug}_source_sections.json")
 
 
@@ -206,6 +254,10 @@ def _apply_final_review(
     output_path: Path,
     logger: logging.Logger,
 ) -> tuple[str, dict]:
+    """
+    Executa a revisão final de qualidade da tradução através de uma verificação estatística ou LLM
+    e grava um relatório detalhado (`*_review_report.json`).
+    """
     reviewed, report = finalize_translation_text(
         text,
         source_text=source_text,
@@ -218,7 +270,9 @@ def _apply_final_review(
         "source_sections": len(source_sections),
         **report,
     }
-    report_path.write_text(json.dumps(report_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    report_path.write_text(
+        json.dumps(report_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     quality = report.get("quality", {})
     logger.info(
         "Revisão final salva em %s (QA %s/100; problemas=%s).",
@@ -233,10 +287,16 @@ def _should_run_refine_after_translate(args, cfg: AppConfig) -> bool:
     """Decide se o refine LLM entra no fluxo automático de tradução."""
     if getattr(args, "no_refine", False):
         return False
-    return bool(getattr(args, "refine", False) or getattr(cfg, "refine_after_translate", False))
+    return bool(
+        getattr(args, "refine", False) or getattr(cfg, "refine_after_translate", False)
+    )
 
 
 def _quality_score(review_report: dict) -> int | None:
+    """
+    Lê a pontuação de qualidade calculada na etapa de revisão.
+    Retorna None se a pontuação não existir ou não for numérica.
+    """
     try:
         return int(review_report.get("quality", {}).get("score"))
     except (AttributeError, TypeError, ValueError):
@@ -307,7 +367,12 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
         help="Traduz PDFs da pasta data/ (ou um arquivo especifico).",
     )
     t.add_argument("--input", type=str, help="PDF especifico para traduzir.")
-    t.add_argument("--backend", type=str, choices=["ollama", "gemini"], default=cfg.translate_backend)
+    t.add_argument(
+        "--backend",
+        type=str,
+        choices=["ollama", "gemini"],
+        default=cfg.translate_backend,
+    )
     t.add_argument("--model", type=str, default=cfg.translate_model)
     t.add_argument(
         "--num-predict",
@@ -315,8 +380,14 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
         default=cfg.translate_num_predict,
         help="Limite de tokens gerados por chunk (Ollama).",
     )
-    t.add_argument("--refine", action="store_true", help="Executa o refine LLM opcional após traduzir.")
-    t.add_argument("--no-refine", action="store_true", help="Não executar refine após traduzir.")
+    t.add_argument(
+        "--refine",
+        action="store_true",
+        help="Executa o refine LLM opcional após traduzir.",
+    )
+    t.add_argument(
+        "--no-refine", action="store_true", help="Não executar refine após traduzir."
+    )
     t.add_argument(
         "--translation-repair",
         action=argparse.BooleanOptionalAction,
@@ -471,8 +542,18 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
         parents=[common],
         help="Traduz um arquivo .md/.txt já desquebrado (pula extração de PDF).",
     )
-    tm.add_argument("--input", type=str, required=True, help="Arquivo .md ou .txt já desquebrado para traduzir.")
-    tm.add_argument("--backend", type=str, choices=["ollama", "gemini"], default=cfg.translate_backend)
+    tm.add_argument(
+        "--input",
+        type=str,
+        required=True,
+        help="Arquivo .md ou .txt já desquebrado para traduzir.",
+    )
+    tm.add_argument(
+        "--backend",
+        type=str,
+        choices=["ollama", "gemini"],
+        default=cfg.translate_backend,
+    )
     tm.add_argument("--model", type=str, default=cfg.translate_model)
     tm.add_argument(
         "--num-predict",
@@ -480,8 +561,14 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
         default=cfg.translate_num_predict,
         help="Limite de tokens gerados por chunk (Ollama).",
     )
-    tm.add_argument("--refine", action="store_true", help="Executa o refine LLM opcional após traduzir.")
-    tm.add_argument("--no-refine", action="store_true", help="Não executar refine após traduzir.")
+    tm.add_argument(
+        "--refine",
+        action="store_true",
+        help="Executa o refine LLM opcional após traduzir.",
+    )
+    tm.add_argument(
+        "--no-refine", action="store_true", help="Não executar refine após traduzir."
+    )
     tm.add_argument(
         "--translation-repair",
         action=argparse.BooleanOptionalAction,
@@ -571,8 +658,14 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
         parents=[common],
         help="Refina arquivos *_pt.md na pasta saida/ ou um arquivo especifico.",
     )
-    r.add_argument("--input", type=str, help="Arquivo especifico para refinar (ex.: saida/xxx_pt.md).")
-    r.add_argument("--backend", type=str, choices=["ollama", "gemini"], default=cfg.refine_backend)
+    r.add_argument(
+        "--input",
+        type=str,
+        help="Arquivo especifico para refinar (ex.: saida/xxx_pt.md).",
+    )
+    r.add_argument(
+        "--backend", type=str, choices=["ollama", "gemini"], default=cfg.refine_backend
+    )
     r.add_argument("--model", type=str, default=cfg.refine_model)
     r.add_argument(
         "--num-predict",
@@ -656,11 +749,29 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
         action="store_true",
         help="Ativa debug detalhado por chunk (JSONL) no refine.",
     )
-    r.add_argument("--editor-lite", action="store_true", help="Ativa modo editor lite pos-refine.")
-    r.add_argument("--editor-consistency", action="store_true", help="Ativa modo editor consistency pos-refine.")
-    r.add_argument("--editor-voice", action="store_true", help="Ativa modo editor voice pos-refine.")
-    r.add_argument("--editor-strict", action="store_true", help="Ativa modo editor strict pos-refine.")
-    r.add_argument("--editor-report", action="store_true", help="Gera relatorio das mudancas do editor.")
+    r.add_argument(
+        "--editor-lite", action="store_true", help="Ativa modo editor lite pos-refine."
+    )
+    r.add_argument(
+        "--editor-consistency",
+        action="store_true",
+        help="Ativa modo editor consistency pos-refine.",
+    )
+    r.add_argument(
+        "--editor-voice",
+        action="store_true",
+        help="Ativa modo editor voice pos-refine.",
+    )
+    r.add_argument(
+        "--editor-strict",
+        action="store_true",
+        help="Ativa modo editor strict pos-refine.",
+    )
+    r.add_argument(
+        "--editor-report",
+        action="store_true",
+        help="Gera relatorio das mudancas do editor.",
+    )
 
     # Subcomando: PDF direto
     p = sub.add_parser(
@@ -668,7 +779,9 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
         parents=[common],
         help="Gera PDF a partir de um arquivo .md (ex.: *_pt_refinado.md).",
     )
-    p.add_argument("--input", type=str, required=True, help="Arquivo .md para converter em PDF.")
+    p.add_argument(
+        "--input", type=str, required=True, help="Arquivo .md para converter em PDF."
+    )
 
     return parser
 
@@ -695,14 +808,18 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
         clear_cache(args.clear_cache)
         logger.info("Cache %s limpo em %s", args.clear_cache, cfg.output_dir)
     if hasattr(args, "desquebrar_mode"):
-        desquebrar_mode = getattr(args, "desquebrar_mode", getattr(cfg, "desquebrar_mode", "llm"))
+        desquebrar_mode = getattr(
+            args, "desquebrar_mode", getattr(cfg, "desquebrar_mode", "llm")
+        )
     else:
         desquebrar_mode = "llm"
     pdfs = find_pdfs(cfg.data_dir, args.input)
     if not pdfs:
         raise SystemExit("Nenhum PDF encontrado em data/ ou caminho inválido.")
 
-    use_desquebrar = bool(getattr(args, "use_desquebrar", getattr(cfg, "use_desquebrar", True)))
+    use_desquebrar = bool(
+        getattr(args, "use_desquebrar", getattr(cfg, "use_desquebrar", True))
+    )
 
     backend = LLMBackend(
         backend=args.backend,
@@ -759,7 +876,9 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
             )
             if glossary_state:
                 translation_terms = _glossary_terms(glossary_state)
-                glossary_text = format_manual_pairs_for_translation(translation_terms, limit=30)
+                glossary_text = format_manual_pairs_for_translation(
+                    translation_terms, limit=30
+                )
                 logger.info(
                     "Glossário carregado para %s: manual=%d dinâmico=%d (até 30 termos por prompt).",
                     pdf.name,
@@ -776,7 +895,9 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                 store_llm_raw=cfg.debug_store_llm_raw,
             )
             translate_prompt_hash = translation_prompt_fingerprint(
-                allow_adaptation=getattr(args, "translate_allow_adaptation", cfg.translate_allow_adaptation)
+                allow_adaptation=getattr(
+                    args, "translate_allow_adaptation", cfg.translate_allow_adaptation
+                )
             )
             debug_run.write_run_metadata(
                 args=vars(args),
@@ -810,25 +931,37 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
             raw_text = extract_pdf_text(pdf, logger)
             timings["extract_pdf"] = time.perf_counter() - start_stage
             if not raw_text.strip():
-                raise SystemExit(f"PDF {pdf.name} não possui texto extraído (pode ser imagem/scan).")
+                raise SystemExit(
+                    f"PDF {pdf.name} não possui texto extraído (pode ser imagem/scan)."
+                )
             if getattr(args, "preprocess_advanced", False):
                 raw_text = advanced_clean(raw_text)
             if args.debug:
-                logger.debug("Debug ativado: salvando também raw_extracted e preprocessed.")
+                logger.debug(
+                    "Debug ativado: salvando também raw_extracted e preprocessed."
+                )
                 raw_out = cfg.output_dir / f"{pdf.stem}_raw_extracted.md"
                 write_text(raw_out, raw_text)
                 logger.info("Texto bruto salvo em %s", raw_out)
             if debug_run:
-                debug_run.write_text(f"10_preprocess/{pdf.stem}_raw_extracted.md", raw_text)
+                debug_run.write_text(
+                    f"10_preprocess/{pdf.stem}_raw_extracted.md", raw_text
+                )
 
             current_stage = "preprocess"
             start_stage = time.perf_counter()
             pre_text, pre_stats = preprocess_text(
                 raw_text,
                 logger,
-                skip_front_matter=getattr(args, "skip_front_matter", cfg.skip_front_matter),
+                skip_front_matter=getattr(
+                    args, "skip_front_matter", cfg.skip_front_matter
+                ),
                 return_stats=True,
-                noise_glossary_path=getattr(args, "preprocess_noise_glossary_path", cfg.preprocess_noise_glossary_path),
+                noise_glossary_path=getattr(
+                    args,
+                    "preprocess_noise_glossary_path",
+                    cfg.preprocess_noise_glossary_path,
+                ),
             )
             timings["preprocess"] = time.perf_counter() - start_stage
             if args.debug:
@@ -842,17 +975,37 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                     {
                         "chars_in": pre_stats.get("chars_in", len(raw_text)),
                         "chars_out": pre_stats.get("chars_out", len(pre_text)),
-                        "removed_chars": max(pre_stats.get("chars_in", len(raw_text)) - pre_stats.get("chars_out", len(pre_text)), 0),
-                        "skip_front_matter": getattr(args, "skip_front_matter", cfg.skip_front_matter),
-                        "oceanofpdf_removed_count": pre_stats.get("oceanofpdf_removed_count"),
-                        "promo_lines_removed_count": pre_stats.get("promo_lines_removed_count"),
+                        "removed_chars": max(
+                            pre_stats.get("chars_in", len(raw_text))
+                            - pre_stats.get("chars_out", len(pre_text)),
+                            0,
+                        ),
+                        "skip_front_matter": getattr(
+                            args, "skip_front_matter", cfg.skip_front_matter
+                        ),
+                        "oceanofpdf_removed_count": pre_stats.get(
+                            "oceanofpdf_removed_count"
+                        ),
+                        "promo_lines_removed_count": pre_stats.get(
+                            "promo_lines_removed_count"
+                        ),
                         "urls_removed_count": pre_stats.get("urls_removed_count"),
-                        "toc_blocks_removed_count": pre_stats.get("toc_blocks_removed_count"),
-                        "toc_blocks_removed_head": pre_stats.get("toc_blocks_removed_head"),
-                        "toc_blocks_removed_tail": pre_stats.get("toc_blocks_removed_tail"),
-                        "toc_lines_removed_count": pre_stats.get("toc_lines_removed_count"),
+                        "toc_blocks_removed_count": pre_stats.get(
+                            "toc_blocks_removed_count"
+                        ),
+                        "toc_blocks_removed_head": pre_stats.get(
+                            "toc_blocks_removed_head"
+                        ),
+                        "toc_blocks_removed_tail": pre_stats.get(
+                            "toc_blocks_removed_tail"
+                        ),
+                        "toc_lines_removed_count": pre_stats.get(
+                            "toc_lines_removed_count"
+                        ),
                         "remaining_counts": pre_stats.get("remaining_counts"),
-                        "repeated_lines_removed_count": pre_stats.get("repeated_lines_removed_count"),
+                        "repeated_lines_removed_count": pre_stats.get(
+                            "repeated_lines_removed_count"
+                        ),
                         "top_repeated_lines": pre_stats.get("top_repeated_lines"),
                         "dedupe_removed_count": pre_stats.get("dedupe_removed_count"),
                         "removed_lines_total": pre_stats.get("removed_lines_total"),
@@ -867,7 +1020,9 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
             if use_desquebrar:
                 if desquebrar_mode == "safe":
                     current_stage = "desquebrar_safe"
-                    logger.info("Modo safe: aplicando desquebrar_safe (sem LLM), preservando layout.")
+                    logger.info(
+                        "Modo safe: aplicando desquebrar_safe (sem LLM), preservando layout."
+                    )
                     start_stage = time.perf_counter()
                     working_text = desquebrar_safe(working_text)
                     timings["desquebrar"] = time.perf_counter() - start_stage
@@ -876,7 +1031,9 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                         write_text(desq_out, working_text)
                         logger.info("Texto desquebrado (safe) salvo em %s", desq_out)
                     if debug_run:
-                        debug_run.desquebrado_rel = f"20_desquebrar/{pdf.stem}_raw_desquebrado.md"
+                        debug_run.desquebrado_rel = (
+                            f"20_desquebrar/{pdf.stem}_raw_desquebrado.md"
+                        )
                         debug_run.write_text(debug_run.desquebrado_rel, working_text)
                         debug_run.write_desquebrar_report(
                             {
@@ -930,27 +1087,42 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                         write_text(desq_out, working_text)
                         logger.info("Texto desquebrado salvo em %s", desq_out)
                     if debug_run:
-                        debug_run.desquebrado_rel = f"20_desquebrar/{pdf.stem}_raw_desquebrado.md"
+                        debug_run.desquebrado_rel = (
+                            f"20_desquebrar/{pdf.stem}_raw_desquebrado.md"
+                        )
                         debug_run.write_text(debug_run.desquebrado_rel, working_text)
                         debug_run.write_desquebrar_report(
                             {
                                 "mode": "llm",
-                                "stats": desquebrar_stats_to_dict(desquebrar_stats, cfg) if desquebrar_stats else {},
+                                "stats": desquebrar_stats_to_dict(desquebrar_stats, cfg)
+                                if desquebrar_stats
+                                else {},
                             }
                         )
                     try:
-                        metrics_path = cfg.output_dir / f"{pdf.stem}_desquebrar_metrics.json"
-                        metrics_payload = desquebrar_stats_to_dict(desquebrar_stats, cfg)
+                        metrics_path = (
+                            cfg.output_dir / f"{pdf.stem}_desquebrar_metrics.json"
+                        )
+                        metrics_payload = desquebrar_stats_to_dict(
+                            desquebrar_stats, cfg
+                        )
                         metrics_payload["timestamp"] = datetime.now().isoformat()
-                        metrics_path.write_text(json.dumps(metrics_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+                        metrics_path.write_text(
+                            json.dumps(metrics_payload, ensure_ascii=False, indent=2),
+                            encoding="utf-8",
+                        )
                     except Exception as exc:
-                        logger.warning("Falha ao gravar métricas do desquebrar: %s", exc)
+                        logger.warning(
+                            "Falha ao gravar métricas do desquebrar: %s", exc
+                        )
             else:
                 current_stage = "desquebrar_off"
                 logger.info("Desquebrar desativado; seguindo direto para tradução.")
                 timings["desquebrar"] = 0.0
                 if debug_run:
-                    debug_run.desquebrado_rel = f"20_desquebrar/{pdf.stem}_raw_desquebrado.md"
+                    debug_run.desquebrado_rel = (
+                        f"20_desquebrar/{pdf.stem}_raw_desquebrado.md"
+                    )
                     debug_run.write_text(debug_run.desquebrado_rel, working_text)
                     debug_run.write_desquebrar_report(
                         {
@@ -984,7 +1156,9 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                         exc,
                     )
 
-            source_sections = _write_source_sections(cfg, pdf.stem, working_text, logger)
+            source_sections = _write_source_sections(
+                cfg, pdf.stem, working_text, logger
+            )
             current_stage = "translate"
             start_stage = time.perf_counter()
             translated_md = translate_document(
@@ -1001,9 +1175,15 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                 parallel_workers=max(1, getattr(args, "parallel", 1)),
                 debug_chunks=getattr(args, "debug_chunks", False),
                 already_preprocessed=True,
-                split_by_sections=getattr(args, "split_by_sections", cfg.split_by_sections),
-                allow_adaptation=getattr(args, "translate_allow_adaptation", cfg.translate_allow_adaptation),
-                translation_repair=getattr(args, "translation_repair", cfg.use_translation_repair),
+                split_by_sections=getattr(
+                    args, "split_by_sections", cfg.split_by_sections
+                ),
+                allow_adaptation=getattr(
+                    args, "translate_allow_adaptation", cfg.translate_allow_adaptation
+                ),
+                translation_repair=getattr(
+                    args, "translation_repair", cfg.use_translation_repair
+                ),
                 fail_on_chunk_error=fail_on_chunk_error,
                 debug_run=debug_run,
             )
@@ -1026,12 +1206,18 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                 debug_run.pt_output_rel = md_path.relative_to(cfg.output_dir).as_posix()
 
             if not _should_run_refine_after_translate(args, cfg):
-                logger.info("Refinamento LLM não executado; mantendo *_pt.md com revisão determinística final.")
-                _maybe_export_pdf(args=args, cfg=cfg, md_path=md_path, timings=timings, logger=logger)
+                logger.info(
+                    "Refinamento LLM não executado; mantendo *_pt.md com revisão determinística final."
+                )
+                _maybe_export_pdf(
+                    args=args, cfg=cfg, md_path=md_path, timings=timings, logger=logger
+                )
             else:
                 current_stage = "refine"
                 logger.info("Executando refine opcional para %s", md_path.name)
-                cleanup_mode = args.cleanup_before_refine or getattr(cfg, "cleanup_before_refine", "off")
+                cleanup_mode = args.cleanup_before_refine or getattr(
+                    cfg, "cleanup_before_refine", "off"
+                )
                 if cleanup_mode not in ("off", "auto", "on"):
                     cleanup_mode = "off"
                 refine_backend = LLMBackend(
@@ -1089,7 +1275,8 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                     backend=refine_backend,
                     cfg=cfg,
                     logger=logger,
-                    progress_path=cfg.output_dir / f"{pdf.stem}_pt_refinado_progress.json",
+                    progress_path=cfg.output_dir
+                    / f"{pdf.stem}_pt_refinado_progress.json",
                     resume_manifest=None,
                     glossary_state=glossary_state,
                     debug_chunks=getattr(args, "debug_chunks", False),
@@ -1108,7 +1295,9 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                         output_path=output_refined,
                         logger=logger,
                     )
-                    if not _refine_review_is_acceptable(translation_review, refined_review):
+                    if not _refine_review_is_acceptable(
+                        translation_review, refined_review
+                    ):
                         logger.warning(
                             "Refine rejeitado por regressão de QA (%s -> %s); mantendo tradução revisada.",
                             _quality_score(translation_review),
@@ -1124,12 +1313,22 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                         )
                     write_text(output_refined, refined_text)
                 except Exception as exc:
-                    logger.warning("Falha ao aplicar pós-processamento final do refinado: %s", exc)
+                    logger.warning(
+                        "Falha ao aplicar pós-processamento final do refinado: %s", exc
+                    )
                 finally:
                     timings["post_refine_normalize"] = time.perf_counter() - start_stage
                 if debug_run:
-                    debug_run.pt_refined_rel = output_refined.relative_to(cfg.output_dir).as_posix()
-                _maybe_export_pdf(args=args, cfg=cfg, md_path=output_refined, timings=timings, logger=logger)
+                    debug_run.pt_refined_rel = output_refined.relative_to(
+                        cfg.output_dir
+                    ).as_posix()
+                _maybe_export_pdf(
+                    args=args,
+                    cfg=cfg,
+                    md_path=output_refined,
+                    timings=timings,
+                    logger=logger,
+                )
             _write_timing_report(
                 cfg=cfg,
                 source_slug=pdf.stem,
@@ -1170,7 +1369,9 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                         "preprocessed": debug_run.sha256_text(pre_text),
                         "desquebrado": debug_run.sha256_text(working_text),
                         "pt": debug_run.sha256_text(translated_md),
-                        "pt_refinado": debug_run.sha256_text(read_text(output_refined)) if output_refined else None,
+                        "pt_refinado": debug_run.sha256_text(read_text(output_refined))
+                        if output_refined
+                        else None,
                     },
                     "notes": [],
                 }
@@ -1186,10 +1387,22 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                     }
                 )
                 try:
-                    run_dir_rel = debug_run.run_dir.relative_to(cfg.output_dir).as_posix()
-                    pre_rel = debug_run.preprocessed_rel or f"10_preprocess/{pdf.stem}_preprocessed.md"
-                    desq_rel = debug_run.desquebrado_rel or f"20_desquebrar/{pdf.stem}_raw_desquebrado.md"
-                    pt_rel = debug_run.pt_output_rel or (md_path.relative_to(cfg.output_dir).as_posix() if md_path else f"{pdf.stem}_pt.md")
+                    run_dir_rel = debug_run.run_dir.relative_to(
+                        cfg.output_dir
+                    ).as_posix()
+                    pre_rel = (
+                        debug_run.preprocessed_rel
+                        or f"10_preprocess/{pdf.stem}_preprocessed.md"
+                    )
+                    desq_rel = (
+                        debug_run.desquebrado_rel
+                        or f"20_desquebrar/{pdf.stem}_raw_desquebrado.md"
+                    )
+                    pt_rel = debug_run.pt_output_rel or (
+                        md_path.relative_to(cfg.output_dir).as_posix()
+                        if md_path
+                        else f"{pdf.stem}_pt.md"
+                    )
                     pt_ref_rel = debug_run.pt_refined_rel
                     pre_hash = debug_run.sha256_text(pre_text or "")
                     desq_hash = debug_run.sha256_text(working_text or pre_text or "")
@@ -1197,8 +1410,12 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                     pt_ref_hash = None
                     if output_refined and output_refined.exists():
                         try:
-                            pt_ref_hash = debug_run.sha256_text(read_text(output_refined))
-                            pt_ref_rel = output_refined.relative_to(cfg.output_dir).as_posix()
+                            pt_ref_hash = debug_run.sha256_text(
+                                read_text(output_refined)
+                            )
+                            pt_ref_rel = output_refined.relative_to(
+                                cfg.output_dir
+                            ).as_posix()
                         except Exception:
                             pt_ref_hash = debug_run.sha256_text("")
                     summary = {
@@ -1283,7 +1500,9 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
             store_llm_raw=cfg.debug_store_llm_raw,
         )
         translate_prompt_hash = translation_prompt_fingerprint(
-            allow_adaptation=getattr(args, "translate_allow_adaptation", cfg.translate_allow_adaptation)
+            allow_adaptation=getattr(
+                args, "translate_allow_adaptation", cfg.translate_allow_adaptation
+            )
         )
         debug_run.write_run_metadata(
             args=vars(args),
@@ -1322,7 +1541,9 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
             raw_text = normalize_md_paragraphs(raw_text)
         timings["preprocess"] = time.perf_counter() - start_stage
         if debug_run:
-            debug_run.preprocessed_rel = f"10_preprocess/{text_path.stem}_preprocessed.md"
+            debug_run.preprocessed_rel = (
+                f"10_preprocess/{text_path.stem}_preprocessed.md"
+            )
             debug_run.write_text(debug_run.preprocessed_rel, raw_text)
             debug_run.write_preprocess_report(
                 {
@@ -1332,7 +1553,9 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
                     "skip_front_matter": False,
                 }
             )
-            debug_run.desquebrado_rel = f"20_desquebrar/{text_path.stem}_raw_desquebrado.md"
+            debug_run.desquebrado_rel = (
+                f"20_desquebrar/{text_path.stem}_raw_desquebrado.md"
+            )
             debug_run.write_text(debug_run.desquebrado_rel, raw_text)
             debug_run.write_desquebrar_report(
                 {
@@ -1381,7 +1604,9 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
             )
             if glossary_state:
                 translation_terms = _glossary_terms(glossary_state)
-                glossary_text = format_manual_pairs_for_translation(translation_terms, limit=30)
+                glossary_text = format_manual_pairs_for_translation(
+                    translation_terms, limit=30
+                )
                 logger.info(
                     "Glossário carregado para tradução: manual=%d dinâmico=%d de %s (usando até 30 no prompt).",
                     len(glossary_state.manual_terms),
@@ -1389,7 +1614,9 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
                     manual_path,
                 )
             else:
-                logger.warning("Uso de gloss rio solicitado, mas nenhum gloss rio manual carregado.")
+                logger.warning(
+                    "Uso de gloss rio solicitado, mas nenhum gloss rio manual carregado."
+                )
 
         progress_path = cfg.output_dir / f"{text_path.stem}_pt_progress.json"
         resume_manifest = None
@@ -1433,13 +1660,19 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
             debug_chunks=getattr(args, "debug_chunks", False),
             already_preprocessed=True,
             split_by_sections=getattr(args, "split_by_sections", cfg.split_by_sections),
-            allow_adaptation=getattr(args, "translate_allow_adaptation", cfg.translate_allow_adaptation),
-            translation_repair=getattr(args, "translation_repair", cfg.use_translation_repair),
+            allow_adaptation=getattr(
+                args, "translate_allow_adaptation", cfg.translate_allow_adaptation
+            ),
+            translation_repair=getattr(
+                args, "translation_repair", cfg.use_translation_repair
+            ),
             fail_on_chunk_error=fail_on_chunk_error,
             debug_run=debug_run,
         )
         timings["translate"] = time.perf_counter() - start_stage
-        nested_timings.update(_load_repair_timing_detail(cfg.output_dir, text_path.stem))
+        nested_timings.update(
+            _load_repair_timing_detail(cfg.output_dir, text_path.stem)
+        )
         md_path = cfg.output_dir / f"{text_path.stem}_pt.md"
         start_stage = time.perf_counter()
         translated_md, translation_review = _apply_final_review(
@@ -1457,8 +1690,12 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
             debug_run.pt_output_rel = md_path.relative_to(cfg.output_dir).as_posix()
 
         if not _should_run_refine_after_translate(args, cfg):
-            logger.info("Refinamento LLM não executado; mantendo *_pt.md com revisão determinística final.")
-            _maybe_export_pdf(args=args, cfg=cfg, md_path=md_path, timings=timings, logger=logger)
+            logger.info(
+                "Refinamento LLM não executado; mantendo *_pt.md com revisão determinística final."
+            )
+            _maybe_export_pdf(
+                args=args, cfg=cfg, md_path=md_path, timings=timings, logger=logger
+            )
             if debug_run:
                 run_dir_rel = debug_run.run_dir.relative_to(cfg.output_dir).as_posix()
                 summary = {
@@ -1508,7 +1745,9 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
 
         current_stage = "refine"
         logger.info("Executando refine opcional para %s", md_path.name)
-        cleanup_mode = args.cleanup_before_refine or getattr(cfg, "cleanup_before_refine", "off")
+        cleanup_mode = args.cleanup_before_refine or getattr(
+            cfg, "cleanup_before_refine", "off"
+        )
         if cleanup_mode not in ("off", "auto", "on"):
             cleanup_mode = "off"
         refine_backend = LLMBackend(
@@ -1560,7 +1799,8 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
             backend=refine_backend,
             cfg=cfg,
             logger=logger,
-            progress_path=cfg.output_dir / f"{text_path.stem}_pt_refinado_progress.json",
+            progress_path=cfg.output_dir
+            / f"{text_path.stem}_pt_refinado_progress.json",
             resume_manifest=None,
             glossary_state=glossary_state,
             debug_chunks=getattr(args, "debug_chunks", False),
@@ -1568,7 +1808,9 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
             debug_run=debug_run,
         )
         timings["refine"] = time.perf_counter() - start_stage
-        logger.info("ConversÆo para PDF desativada temporariamente; sa¡da principal ‚ o arquivo .md refinado.")
+        logger.info(
+            "ConversÆo para PDF desativada temporariamente; sa¡da principal ‚ o arquivo .md refinado."
+        )
         start_stage = time.perf_counter()
         try:
             refined_text = read_text(output_refined)
@@ -1596,12 +1838,18 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
                 )
             write_text(output_refined, refined_text)
         except Exception as exc:
-            logger.warning("Falha ao aplicar pós-processamento final do refinado: %s", exc)
+            logger.warning(
+                "Falha ao aplicar pós-processamento final do refinado: %s", exc
+            )
         finally:
             timings["post_refine_normalize"] = time.perf_counter() - start_stage
-        _maybe_export_pdf(args=args, cfg=cfg, md_path=output_refined, timings=timings, logger=logger)
+        _maybe_export_pdf(
+            args=args, cfg=cfg, md_path=output_refined, timings=timings, logger=logger
+        )
         if debug_run:
-            debug_run.pt_refined_rel = output_refined.relative_to(cfg.output_dir).as_posix()
+            debug_run.pt_refined_rel = output_refined.relative_to(
+                cfg.output_dir
+            ).as_posix()
             run_dir_rel = debug_run.run_dir.relative_to(cfg.output_dir).as_posix()
             summary = {
                 "run_id": debug_run.run_id,
@@ -1658,9 +1906,19 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
             )
             try:
                 run_dir_rel = debug_run.run_dir.relative_to(cfg.output_dir).as_posix()
-                pre_rel = debug_run.preprocessed_rel or f"10_preprocess/{text_path.stem}_preprocessed.md"
-                desq_rel = debug_run.desquebrado_rel or f"20_desquebrar/{text_path.stem}_raw_desquebrado.md"
-                pt_rel = debug_run.pt_output_rel or (md_path.relative_to(cfg.output_dir).as_posix() if md_path else f"{text_path.stem}_pt.md")
+                pre_rel = (
+                    debug_run.preprocessed_rel
+                    or f"10_preprocess/{text_path.stem}_preprocessed.md"
+                )
+                desq_rel = (
+                    debug_run.desquebrado_rel
+                    or f"20_desquebrar/{text_path.stem}_raw_desquebrado.md"
+                )
+                pt_rel = debug_run.pt_output_rel or (
+                    md_path.relative_to(cfg.output_dir).as_posix()
+                    if md_path
+                    else f"{text_path.stem}_pt.md"
+                )
                 pt_ref_rel = debug_run.pt_refined_rel
                 pre_hash = debug_run.sha256_text(pre_text or "")
                 desq_hash = debug_run.sha256_text(pre_text or "")
@@ -1669,7 +1927,9 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
                 if output_refined and output_refined.exists():
                     try:
                         pt_ref_hash = debug_run.sha256_text(read_text(output_refined))
-                        pt_ref_rel = output_refined.relative_to(cfg.output_dir).as_posix()
+                        pt_ref_rel = output_refined.relative_to(
+                            cfg.output_dir
+                        ).as_posix()
                     except Exception:
                         pt_ref_hash = debug_run.sha256_text("")
                 summary = {
@@ -1729,11 +1989,15 @@ def run_refine(args, cfg: AppConfig, logger: logging.Logger) -> None:
         clear_cache(args.clear_cache)
         logger.info("Cache %s limpo em %s", args.clear_cache, cfg.output_dir)
     if hasattr(args, "desquebrar_mode"):
-        desquebrar_mode = getattr(args, "desquebrar_mode", getattr(cfg, "desquebrar_mode", "llm"))
+        desquebrar_mode = getattr(
+            args, "desquebrar_mode", getattr(cfg, "desquebrar_mode", "llm")
+        )
     else:
         desquebrar_mode = "llm"
     if desquebrar_mode == "safe":
-        logger.info("Modo safe afeta apenas o desquebrar; comando refina usa fluxo padrão de refine.")
+        logger.info(
+            "Modo safe afeta apenas o desquebrar; comando refina usa fluxo padrão de refine."
+        )
     md_files = find_markdowns(cfg.output_dir, args.input)
     if not md_files:
         raise SystemExit("Nenhum *_pt.md encontrado em saida/ ou caminho inválido.")
@@ -1763,12 +2027,18 @@ def run_refine(args, cfg: AppConfig, logger: logging.Logger) -> None:
 
     manual_path: Path | None = None
     manual_dir: Path | None = None
-    cleanup_mode = args.cleanup_before_refine or getattr(cfg, "cleanup_before_refine", "off")
+    cleanup_mode = args.cleanup_before_refine or getattr(
+        cfg, "cleanup_before_refine", "off"
+    )
     if cleanup_mode not in ("off", "auto", "on"):
         cleanup_mode = "off"
     if getattr(args, "use_glossary", False):
         manual_path = resolve_manual_glossary_path(args.manual_glossary)
-        manual_dir = Path(args.auto_glossary_dir) if getattr(args, "auto_glossary_dir", None) else None
+        manual_dir = (
+            Path(args.auto_glossary_dir)
+            if getattr(args, "auto_glossary_dir", None)
+            else None
+        )
 
     for md in md_files:
         stem = md.stem.replace("_pt", "")
@@ -1782,7 +2052,9 @@ def run_refine(args, cfg: AppConfig, logger: logging.Logger) -> None:
                 dynamic_path,
                 manual_dir if manual_dir else "nenhum",
             )
-            glossary_state = build_glossary_state(manual_path, dynamic_path, logger, manual_dir=manual_dir)
+            glossary_state = build_glossary_state(
+                manual_path, dynamic_path, logger, manual_dir=manual_dir
+            )
         output_md = cfg.output_dir / f"{stem}_pt_refinado.md"
         output_pdf = cfg.output_dir / f"{stem}_pt_refinado.pdf"
         progress_path = cfg.output_dir / f"{stem}_pt_refinado_progress.json"
@@ -1841,7 +2113,10 @@ def run_refine(args, cfg: AppConfig, logger: logging.Logger) -> None:
                     "modes": [k for k, v in editor_flags.items() if v],
                     "changes": editor_changes,
                 }
-                report_path.write_text(json.dumps(report_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+                report_path.write_text(
+                    json.dumps(report_payload, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
         source_sections = _load_source_sections(cfg, stem)
         source_text_path = cfg.output_dir / f"{stem}_raw_desquebrado.md"
         source_text = read_text(source_text_path) if source_text_path.exists() else ""
@@ -1873,11 +2148,18 @@ def run_pdf(args, cfg: AppConfig, logger: logging.Logger) -> None:
         raise SystemExit(f"Arquivo não encontrado: {md_path}")
     pdf_dir = cfg.output_dir / "pdf"
     pdf_output = pdf_dir / f"{md_path.stem}.pdf"
-    convert_markdown_to_pdf(md_path=md_path, output_path=pdf_output, cfg=cfg, logger=logger, title=md_path.stem)
+    convert_markdown_to_pdf(
+        md_path=md_path,
+        output_path=pdf_output,
+        cfg=cfg,
+        logger=logger,
+        title=md_path.stem,
+    )
     logger.info("PDF gerado em %s", pdf_output)
 
 
 def main() -> None:
+    """Processamento interno auxiliar."""
     cfg = load_config()
     parser = build_parser(cfg)
     args = parser.parse_args()

@@ -17,6 +17,7 @@ SHORT_TITLE_LEN = 25
 
 
 def _is_blank(line: str) -> bool:
+    """Verifica se a linha está completamente vazia ou contém apenas espaços."""
     return not line or not line.strip()
 
 
@@ -40,6 +41,7 @@ def _is_dialogue_start(line: str) -> bool:
 
 
 def _is_title_like(line: str) -> bool:
+    """Detecta se uma linha se parece com um título estrutural ou cabeçalho."""
     stripped = line.strip()
     if not stripped:
         return False
@@ -66,6 +68,10 @@ def _is_title_like(line: str) -> bool:
 
 
 def _should_join(current: str, nxt: str) -> bool:
+    """
+    Decide se a linha atual deve ser concatenada com a linha seguinte (nxt).
+    Aplica regras heurísticas para evitar juntar parágrafos distintos.
+    """
     # nxt ja deve ser uma linha com texto (o loop principal pula vazios)
     if _is_blank(current) or _is_blank(nxt):
         return False
@@ -85,6 +91,7 @@ def _should_join(current: str, nxt: str) -> bool:
 
 
 def _merge_lines(current: str, nxt: str) -> str:
+    """Une duas linhas, resolvendo hifenizações pendentes no fim da linha atual."""
     cur = current.rstrip()
     nxt_clean = nxt.lstrip()
     if cur.endswith("-"):
@@ -152,9 +159,15 @@ def desquebrar_safe(text: str) -> str:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Refinador deterministico (safe_refiner).")
-    parser.add_argument("--input", required=True, help="Arquivo de entrada extraido do PDF.")
-    parser.add_argument("--output", required=True, help="Arquivo de saida com reflow seguro.")
+    parser = argparse.ArgumentParser(
+        description="Refinador deterministico (safe_refiner)."
+    )
+    parser.add_argument(
+        "--input", required=True, help="Arquivo de entrada extraido do PDF."
+    )
+    parser.add_argument(
+        "--output", required=True, help="Arquivo de saida com reflow seguro."
+    )
     args = parser.parse_args()
 
     raw = Path(args.input).read_text(encoding="utf-8")

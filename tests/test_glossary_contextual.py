@@ -8,7 +8,10 @@ from tradutor.translate import translate_document
 
 
 class _PromptCaptureBackend:
+    """Processamento interno auxiliar."""
+
     def __init__(self) -> None:
+        """Processamento interno auxiliar."""
         self.backend = "stub"
         self.model = "stub"
         self.num_predict = 128
@@ -17,11 +20,19 @@ class _PromptCaptureBackend:
         self.prompts: list[str] = []
 
     def generate(self, prompt: str):
+        """Processamento interno auxiliar."""
         self.prompts.append(prompt)
-        return type("Resp", (), {"text": "### TEXTO_TRADUZIDO_INICIO\nTradução do escudo.\n### TEXTO_TRADUZIDO_FIM"})
+        return type(
+            "Resp",
+            (),
+            {
+                "text": "### TEXTO_TRADUZIDO_INICIO\nTradução do escudo.\n### TEXTO_TRADUZIDO_FIM"
+            },
+        )
 
 
 def test_glossary_injects_only_matching_terms(tmp_path: Path) -> None:
+    """Processamento interno auxiliar."""
     cfg = AppConfig(output_dir=tmp_path, split_by_sections=False)
     backend = _PromptCaptureBackend()
     logger = logging.getLogger("glossary-context")
@@ -47,14 +58,21 @@ def test_glossary_injects_only_matching_terms(tmp_path: Path) -> None:
 
 
 def test_glossary_matches_aliases(tmp_path: Path) -> None:
+    """Processamento interno auxiliar."""
     cfg = AppConfig(output_dir=tmp_path, split_by_sections=False)
     backend = _PromptCaptureBackend()
     logger = logging.getLogger("glossary-alias")
     manual_terms = [
-        {"key": "Magic Sword", "pt": "Espada Mágica", "aliases": ["Blade of Dawn", "Dawnblade"]},
+        {
+            "key": "Magic Sword",
+            "pt": "Espada Mágica",
+            "aliases": ["Blade of Dawn", "Dawnblade"],
+        },
         {"key": "Shield", "pt": "Escudo"},
     ]
-    input_text = ("The Blade of Dawn was legendary and revered across the lands. " * 8).strip()
+    input_text = (
+        "The Blade of Dawn was legendary and revered across the lands. " * 8
+    ).strip()
 
     translate_document(
         pdf_text=input_text,
@@ -72,8 +90,13 @@ def test_glossary_matches_aliases(tmp_path: Path) -> None:
 
 
 def test_glossary_fallback_does_not_enforce_terms(tmp_path: Path) -> None:
+    """Processamento interno auxiliar."""
+
     class _Backend:
+        """Processamento interno auxiliar."""
+
         def __init__(self) -> None:
+            """Processamento interno auxiliar."""
             self.backend = "stub"
             self.model = "stub"
             self.num_predict = 128
@@ -81,7 +104,14 @@ def test_glossary_fallback_does_not_enforce_terms(tmp_path: Path) -> None:
             self.repeat_penalty = 1.0
 
         def generate(self, prompt: str):
-            return type("Resp", (), {"text": "### TEXTO_TRADUZIDO_INICIO\nArt aparece aqui.\n### TEXTO_TRADUZIDO_FIM"})
+            """Processamento interno auxiliar."""
+            return type(
+                "Resp",
+                (),
+                {
+                    "text": "### TEXTO_TRADUZIDO_INICIO\nArt aparece aqui.\n### TEXTO_TRADUZIDO_FIM"
+                },
+            )
 
     cfg = AppConfig(output_dir=tmp_path, split_by_sections=False)
     backend = _Backend()
@@ -103,6 +133,7 @@ def test_glossary_fallback_does_not_enforce_terms(tmp_path: Path) -> None:
 
 
 def test_debug_manifest_records_chunk_glossary(tmp_path: Path) -> None:
+    """Processamento interno auxiliar."""
     cfg = AppConfig(output_dir=tmp_path, split_by_sections=False)
     backend = _PromptCaptureBackend()
     logger = logging.getLogger("glossary-debug-manifest")
@@ -130,7 +161,11 @@ def test_debug_manifest_records_chunk_glossary(tmp_path: Path) -> None:
         debug_run=debug_run,
     )
 
-    manifest = json.loads((debug_run.run_dir / "40_translate" / "translate_manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (debug_run.run_dir / "40_translate" / "translate_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
     chunk = manifest["chunks"][0]
     assert manifest["glossary"]["manual_terms_total"] == 2
     assert chunk["glossary"]["selection_mode"] == "matched"

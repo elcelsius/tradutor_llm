@@ -2,6 +2,7 @@ from tradutor.text_postprocess import fix_dialogue_artifacts
 
 
 def test_falas_coladas_com_espaco():
+    """Processamento interno auxiliar."""
     text = "“A!” “B!”"
     fixed, stats = fix_dialogue_artifacts(text)
     assert fixed == "“A!”\n\n“B!”"
@@ -9,25 +10,29 @@ def test_falas_coladas_com_espaco():
 
 
 def test_falas_coladas_sem_espaco():
+    """Processamento interno auxiliar."""
     text = "“A!””“B!”"
     fixed, _ = fix_dialogue_artifacts(text)
     assert fixed == "“A!”\n\n“B!”"
 
 
 def test_aspas_coladas_generico():
+    """Processamento interno auxiliar."""
     text = "Algo disse.” “Outra fala..."
     fixed, _ = fix_dialogue_artifacts(text)
     assert fixed.endswith("disse.”\n\n“Outra fala...")
 
 
 def test_remove_aspas_triplas():
-    text = "Algo suficiente.\"\"\"\n"
+    """Processamento interno auxiliar."""
+    text = 'Algo suficiente."""\n'
     fixed, stats = fix_dialogue_artifacts(text)
     assert fixed == "Algo suficiente.\n"
     assert stats["triple_quotes_removed"] == 1
 
 
 def test_linha_em_branco_dentro_de_fala():
+    """Processamento interno auxiliar."""
     text = "“Entendo.\n\nQuer dizer que sim.”"
     fixed, stats = fix_dialogue_artifacts(text)
     assert "\n\n" not in fixed
@@ -36,12 +41,14 @@ def test_linha_em_branco_dentro_de_fala():
 
 
 def test_paragrafo_fora_de_aspas_permanece():
+    """Processamento interno auxiliar."""
     original = "Paragrafo A.\n\nParagrafo B."
     fixed, _ = fix_dialogue_artifacts(original)
     assert fixed == original
 
 
 def test_idempotencia():
+    """Processamento interno auxiliar."""
     text = "“Oi!” “” “Tchau.”\n\nFora das aspas."
     once, _ = fix_dialogue_artifacts(text)
     twice, _ = fix_dialogue_artifacts(once)

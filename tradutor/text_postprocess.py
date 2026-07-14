@@ -142,11 +142,13 @@ def apply_structural_normalizers(text: str) -> tuple[str, dict]:
 
 
 def _is_dash_speech_line(line: str) -> bool:
+    """Processamento interno auxiliar."""
     stripped = line.strip()
     return stripped.startswith("—") and len(stripped) > 2
 
 
 def _dash_attribution_body(line: str) -> str | None:
+    """Processamento interno auxiliar."""
     stripped = line.strip()
     if not stripped.startswith("—"):
         return None
@@ -161,6 +163,7 @@ def _dash_attribution_body(line: str) -> str | None:
 
 
 def _merge_dash_attribution_lines(text: str) -> str:
+    """Processamento interno auxiliar."""
     if not text:
         return text
     lines = text.splitlines()
@@ -207,7 +210,9 @@ def apply_custom_normalizers(text: str, *, convert_quote_dialogues: bool = True)
         return text
 
     # Canoniza Touka
-    touka_pattern = re.compile(r"\b(?:too\s*[-‑–—]?\s*ka|tou\s*[-‑–—]?\s*ka)\b", flags=re.IGNORECASE)
+    touka_pattern = re.compile(
+        r"\b(?:too\s*[-‑–—]?\s*ka|tou\s*[-‑–—]?\s*ka)\b", flags=re.IGNORECASE
+    )
     text = touka_pattern.sub("Touka", text)
     text = re.sub(r"\bpoderam\b", "puderam", text, flags=re.IGNORECASE)
     text = re.sub(r"\bphew\b", "Ufa", text, flags=re.IGNORECASE)
@@ -224,7 +229,7 @@ def apply_custom_normalizers(text: str, *, convert_quote_dialogues: bool = True)
             normalized_lines.append("Glup.")
             continue
         # Fala inteira entre aspas (sem narração)
-        if convert_quote_dialogues and re.fullmatch(r'[\"“].+[\"”]', stripped):
+        if convert_quote_dialogues and re.fullmatch(r"[\"“].+[\"”]", stripped):
             inner = stripped[1:-1].strip()
             normalized_lines.append(f"— {inner}")
             continue
@@ -236,7 +241,7 @@ def apply_custom_normalizers(text: str, *, convert_quote_dialogues: bool = True)
     paragraphs = rebuilt.split("\n\n")
     merged_paragraphs: list[str] = []
     i = 0
-    speech_re = re.compile(r'^(?:[\"“].+[\"”]\s*|—\s?.+)$')
+    speech_re = re.compile(r"^(?:[\"“].+[\"”]\s*|—\s?.+)$")
     verb_re = re.compile(r"^(perguntou|disse|respondeu)\s+\w+\.?$", flags=re.IGNORECASE)
     while i < len(paragraphs):
         current = paragraphs[i].strip()

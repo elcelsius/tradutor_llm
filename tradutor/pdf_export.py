@@ -45,11 +45,17 @@ def _register_font(logger: logging.Logger) -> str:
             except Exception as exc:  # pragma: no cover
                 logger.warning("Falha ao registrar fonte %s: %s", path, exc)
                 continue
-    logger.warning("Nenhuma fonte preferencial encontrada; usando Helvetica (built-in).")
+    logger.warning(
+        "Nenhuma fonte preferencial encontrada; usando Helvetica (built-in)."
+    )
     return "Helvetica"
 
 
 def _build_styles(font_name: str) -> dict[str, ParagraphStyle]:
+    """
+    Constrói a folha de estilos (StyleSheet) do ReportLab, definindo
+    fontes, tamanhos, espaçamentos e hifenização para texto e diálogos.
+    """
     # Usa folha vazia para evitar KeyError por estilos duplicados do sample default.
     styles = StyleSheet1()
     body_leading = 11.5 * 1.35
@@ -109,11 +115,20 @@ def _build_styles(font_name: str) -> dict[str, ParagraphStyle]:
 
 
 def _is_dialogue_line(text: str) -> bool:
+    """Verifica se a linha é um diálogo iniciando com travessão."""
     stripped = text.lstrip()
-    return stripped.startswith("— ") or stripped.startswith("- ") or stripped.startswith("– ")
+    return (
+        stripped.startswith("— ")
+        or stripped.startswith("- ")
+        or stripped.startswith("– ")
+    )
 
 
 def _build_story(lines: Iterable[str], styles: dict[str, ParagraphStyle]):
+    """
+    Processa linha a linha do markdown, convertendo cabeçalhos,
+    diálogos e parágrafos normais em objetos Paragraph do ReportLab.
+    """
     story = []
     for raw in lines:
         line = raw.rstrip()

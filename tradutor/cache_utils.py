@@ -6,11 +6,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any
-import re
+from typing import Any, Dict
 
 _CACHE_BASE_DIR: Path = Path("saida")
 
@@ -22,6 +22,7 @@ def set_cache_base_dir(base_dir: str | Path) -> None:
 
 
 def _cache_dirs() -> dict[str, Path]:
+    """Retorna os caminhos absolutos dos diretórios de cache para cada etapa."""
     base = _CACHE_BASE_DIR
     return {
         "translate": base / "cache_traducao",
@@ -38,6 +39,7 @@ def chunk_hash(text: str) -> str:
 
 
 def _cache_path(mode: str, h: str) -> Path:
+    """Retorna o caminho do arquivo JSON correspondente ao hash de um chunk no modo especificado."""
     dirs = _cache_dirs()
     base = dirs.get(mode, _CACHE_BASE_DIR / "cache_misc")
     base.mkdir(parents=True, exist_ok=True)
@@ -45,10 +47,12 @@ def _cache_path(mode: str, h: str) -> Path:
 
 
 def cache_exists(mode: str, h: str) -> bool:
+    """Verifica se existe cache em disco para o chunk e modo informados."""
     return _cache_path(mode, h).exists()
 
 
 def load_cache(mode: str, h: str) -> Dict[str, Any]:
+    """Lê o arquivo de cache correspondente do disco. Retorna um dict vazio se não existir ou houver falha."""
     path = _cache_path(mode, h)
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -56,7 +60,13 @@ def load_cache(mode: str, h: str) -> Dict[str, Any]:
         return {}
 
 
-def save_cache(mode: str, h: str, raw_output: str, final_output: str, metadata: Dict[str, Any]) -> None:
+def save_cache(
+    mode: str, h: str, raw_output: str, final_output: str, metadata: Dict[str, Any]
+) -> None:
+    """
+    Grava as informações de um chunk traduzido/reparado no cache do disco.
+    A gravação ocorre de forma silenciosa e falhas de I/O são ignoradas.
+    """
     path = _cache_path(mode, h)
     payload = {
         "hash": h,
@@ -66,7 +76,9 @@ def save_cache(mode: str, h: str, raw_output: str, final_output: str, metadata: 
         "metadata": metadata or {},
     }
     try:
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
     except Exception:
         # falha silenciosa no cache não deve quebrar pipeline
         return
@@ -127,7 +139,9 @@ def detect_model_collapse(
         return (flag, reasons, details) if return_reasons else flag
 
     # Repetição de linhas (considera apenas linhas mais longas)
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip() and len(ln.strip()) >= 20]
+    lines = [
+        ln.strip() for ln in text.splitlines() if ln.strip() and len(ln.strip()) >= 20
+    ]
     details["line_candidates"] = len(lines)
     counts: dict[str, int] = {}
     for ln in lines:
@@ -155,7 +169,12 @@ def detect_model_collapse(
     # Símbolos indevidos
     symbol_count = sum(1 for ch in text if not ch.isalnum() and not ch.isspace())
     details["symbol_ratio"] = symbol_count / max(total_chars, 1)
-    if ("$$$$" in text) or ("<think>" in text) or ("<analysis>" in text) or details["symbol_ratio"] > 0.35:
+    if (
+        ("$$$$" in text)
+        or ("<think>" in text)
+        or ("<analysis>" in text)
+        or details["symbol_ratio"] > 0.35
+    ):
         reasons.append("bad_symbols")
     if "###" in text and "TEXTO_TRADUZIDO" not in text and "TEXTO_REFINADO" not in text:
         reasons.append("bad_symbols")
@@ -174,7 +193,14 @@ def detect_model_collapse(
             if ratio < 0.5 or ratio > 3.0:
                 reasons.append("bad_ratio")
 
-    strong = {"empty", "repeated_token_run", "bad_ratio", "bad_symbols", "excess_cjk", "repeated_lines"}
+    strong = {
+        "empty",
+        "repeated_token_run",
+        "bad_ratio",
+        "bad_symbols",
+        "excess_cjk",
+        "repeated_lines",
+    }
     flag = any(r in strong for r in reasons)
     return (flag, reasons, details) if return_reasons else flag
 

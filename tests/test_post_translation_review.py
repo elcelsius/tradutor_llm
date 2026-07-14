@@ -1,8 +1,12 @@
-from tradutor.post_translation_review import finalize_translation_text, review_translation_text
+from tradutor.post_translation_review import (
+    finalize_translation_text,
+    review_translation_text,
+)
 from tradutor.translate import ensure_section_heading, source_heading_to_pt
 
 
 def test_source_heading_to_pt() -> None:
+    """Processamento interno auxiliar."""
     assert source_heading_to_pt("Chapter 5:") == "# Capítulo 5:"
     assert source_heading_to_pt("Epilogue") == "# Epílogo"
     assert source_heading_to_pt("Afterword") == "# Pós-escrito"
@@ -10,13 +14,17 @@ def test_source_heading_to_pt() -> None:
 
 
 def test_ensure_section_heading_inserts_missing_heading() -> None:
-    text, changed = ensure_section_heading("Minha consciência voltou à tona.", "Chapter 5:")
+    """Processamento interno auxiliar."""
+    text, changed = ensure_section_heading(
+        "Minha consciência voltou à tona.", "Chapter 5:"
+    )
 
     assert changed is True
     assert text.startswith("# Capítulo 5:\n\nMinha consciência")
 
 
 def test_ensure_section_heading_does_not_duplicate_heading() -> None:
+    """Processamento interno auxiliar."""
     text, changed = ensure_section_heading("# Capítulo 2:\n\nTexto.", "Chapter 2:")
 
     assert changed is False
@@ -24,6 +32,7 @@ def test_ensure_section_heading_does_not_duplicate_heading() -> None:
 
 
 def test_review_does_not_restore_generic_heading_when_titled_heading_exists() -> None:
+    """Processamento interno auxiliar."""
     text = "# Capítulo 1: Após o Combate Mortal\n\nDepois que Sogou acordou."
 
     reviewed, report = review_translation_text(text, sections=[{"title": "Chapter 1:"}])
@@ -33,6 +42,7 @@ def test_review_does_not_restore_generic_heading_when_titled_heading_exists() ->
 
 
 def test_review_translation_restores_headings_and_applies_alias_fixes() -> None:
+    """Processamento interno auxiliar."""
     text = (
         "Prólogo em andamento.\n\n"
         "Após o confronto letal, Sogou dormiu.\n\n"
@@ -68,10 +78,12 @@ def test_review_translation_restores_headings_and_applies_alias_fixes() -> None:
             "category": "personagem",
             "gender": "masculino",
             "source_aliases": ["Mimori"],
-        }
+        },
     ]
 
-    reviewed, report = review_translation_text(text, sections=sections, glossary_terms=terms)
+    reviewed, report = review_translation_text(
+        text, sections=sections, glossary_terms=terms
+    )
 
     assert "# Capítulo 1:" in reviewed
     assert "# Capítulo 5:" in reviewed
@@ -87,7 +99,9 @@ def test_review_translation_restores_headings_and_applies_alias_fixes() -> None:
     assert "El-eles…" in reviewed
     assert "A Asagi acha" in reviewed
     assert "na Asagi como aliada" in reviewed
-    reviewed_male, _ = review_translation_text("A Mimori como aliada.", glossary_terms=terms)
+    reviewed_male, _ = review_translation_text(
+        "A Mimori como aliada.", glossary_terms=terms
+    )
     assert reviewed_male == "O Mimori como aliado."
     assert "manipulando a Asagi" in reviewed
     assert "Filhos de Vicius" in reviewed
@@ -96,14 +110,20 @@ def test_review_translation_restores_headings_and_applies_alias_fixes() -> None:
 
 
 def test_review_fixes_gendered_articles_for_feminine_creatures() -> None:
-    terms = [{"key": "Slei", "pt": "Slei", "category": "criatura", "gender": "feminino"}]
+    """Processamento interno auxiliar."""
+    terms = [
+        {"key": "Slei", "pt": "Slei", "category": "criatura", "gender": "feminino"}
+    ]
 
-    reviewed, _ = review_translation_text("O Slei avançou nas costas do Slei.", glossary_terms=terms)
+    reviewed, _ = review_translation_text(
+        "O Slei avançou nas costas do Slei.", glossary_terms=terms
+    )
 
     assert reviewed == "A Slei avançou nas costas da Slei."
 
 
 def test_review_applies_contextual_glossary_target_replacement() -> None:
+    """Processamento interno auxiliar."""
     terms = [
         {
             "key": "Deathmatch",
@@ -122,10 +142,14 @@ def test_review_applies_contextual_glossary_target_replacement() -> None:
 
     assert "Após o Combate Mortal" in reviewed
     assert "Depois do Combate Mortal" in reviewed
-    assert report.glossary_replacements["Após a Batalha de Morte->Após o Combate Mortal"] == 1
+    assert (
+        report.glossary_replacements["Após a Batalha de Morte->Após o Combate Mortal"]
+        == 1
+    )
 
 
 def test_review_collapses_duplicate_canonical_character_names() -> None:
+    """Processamento interno auxiliar."""
     text = (
         "Sogou Sogou Ayaka falou com Takao Takao Hijiri.\n\n"
         "Ikusaba Asagi Asagi respondeu. Sogou Ayaka Sogou Ayaka voltou."
@@ -163,6 +187,7 @@ def test_review_collapses_duplicate_canonical_character_names() -> None:
 
 
 def test_finalize_review_normalizes_all_caps_character_names_and_structure() -> None:
+    """Processamento interno auxiliar."""
     text = "Após o Deathmatch, depois que SOGOU viu SERAS, ela se acalmou."
     terms = [
         {
@@ -189,6 +214,7 @@ def test_finalize_review_normalizes_all_caps_character_names_and_structure() -> 
 
 
 def test_finalize_review_normalizes_caps_name_parts_and_creatures() -> None:
+    """Processamento interno auxiliar."""
     terms = [
         {
             "key": "Kirihara Takuto",
@@ -202,12 +228,15 @@ def test_finalize_review_normalizes_caps_name_parts_and_creatures() -> None:
         },
     ]
 
-    reviewed, _ = finalize_translation_text("KIRIHARA falou com PIGGYMARU.", glossary_terms=terms)
+    reviewed, _ = finalize_translation_text(
+        "KIRIHARA falou com PIGGYMARU.", glossary_terms=terms
+    )
 
     assert reviewed == "Kirihara falou com Piggymaru."
 
 
 def test_finalize_review_does_not_normalize_common_word_from_translated_title() -> None:
+    """Processamento interno auxiliar."""
     terms = [
         {
             "key": "Wildly Beautiful Emperor’s Elder Brother",
@@ -216,12 +245,15 @@ def test_finalize_review_does_not_normalize_common_word_from_translated_title() 
         }
     ]
 
-    reviewed, _ = finalize_translation_text("“ANTES DE MAIS NADA—vamos.”", glossary_terms=terms)
+    reviewed, _ = finalize_translation_text(
+        "“ANTES DE MAIS NADA—vamos.”", glossary_terms=terms
+    )
 
     assert "MAIS" in reviewed
 
 
 def test_review_normalizes_case_only_forbidden_target_alias() -> None:
+    """Processamento interno auxiliar."""
     terms = [
         {
             "key": "Kyokugen",
@@ -231,20 +263,26 @@ def test_review_normalizes_case_only_forbidden_target_alias() -> None:
         }
     ]
 
-    reviewed, report = review_translation_text("A habilidade de kyokugen pesa.", glossary_terms=terms)
+    reviewed, report = review_translation_text(
+        "A habilidade de kyokugen pesa.", glossary_terms=terms
+    )
 
     assert reviewed == "A habilidade de Kyokugen pesa."
     assert report.glossary_replacements == {"kyokugen->Kyokugen": 1}
 
 
 def test_finalize_review_closes_one_dangling_curly_quote() -> None:
-    reviewed, report = finalize_translation_text("“Primeira fala sem fechamento.\n\n“Segunda fala.”")
+    """Processamento interno auxiliar."""
+    reviewed, report = finalize_translation_text(
+        "“Primeira fala sem fechamento.\n\n“Segunda fala.”"
+    )
 
     assert reviewed == "“Primeira fala sem fechamento.”\n\n“Segunda fala.”"
     assert report["quote_balance_fixed"] is True
 
 
 def test_finalize_review_restores_one_missing_curly_open_quote() -> None:
+    """Processamento interno auxiliar."""
     reviewed, report = finalize_translation_text("Fala sem abertura.”\n\n“Outra fala.”")
 
     assert reviewed == "“Fala sem abertura.”\n\n“Outra fala.”"
@@ -252,13 +290,17 @@ def test_finalize_review_restores_one_missing_curly_open_quote() -> None:
 
 
 def test_finalize_review_collapses_blank_line_inside_same_quote() -> None:
-    reviewed, report = finalize_translation_text("“Primeira parte.\n\nContinuação da mesma fala.”")
+    """Processamento interno auxiliar."""
+    reviewed, report = finalize_translation_text(
+        "“Primeira parte.\n\nContinuação da mesma fala.”"
+    )
 
     assert reviewed == "“Primeira parte. Continuação da mesma fala.”"
     assert report["quote_blank_lines_fixed"] == 1
 
 
 def test_finalize_review_normalizes_straight_quotes_and_missing_spacing() -> None:
+    """Processamento interno auxiliar."""
     text = '"C-certamente…" Ela respirou. "Ehm… obrigada."'
 
     reviewed, report = finalize_translation_text(text)

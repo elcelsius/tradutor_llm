@@ -8,6 +8,7 @@ from tradutor.mojibake import MOJIBAKE_TOKENS
 
 
 def _iter_source_files() -> list[Path]:
+    """Processamento interno auxiliar."""
     root = Path(__file__).resolve().parents[1]
     sources: set[Path] = set()
     patterns = ("*.py", "*.md", "*.json")
@@ -20,6 +21,7 @@ def _iter_source_files() -> list[Path]:
 
 @pytest.mark.parametrize("path", _iter_source_files())
 def test_source_files_are_utf8_and_free_of_mojibake(path: Path) -> None:
+    """Processamento interno auxiliar."""
     try:
         content = path.read_text(encoding="utf-8")
     except UnicodeDecodeError as exc:

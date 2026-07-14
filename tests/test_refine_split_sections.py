@@ -2,6 +2,7 @@ from tradutor.refine import split_markdown_sections
 
 
 def test_split_markdown_sections_preserves_prefix_and_headings() -> None:
+    """Processamento interno auxiliar."""
     md = """Preamble text that should stay.
 
 # Capítulo 1: O começo

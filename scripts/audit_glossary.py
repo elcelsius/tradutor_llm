@@ -13,10 +13,14 @@ from tradutor.glossary_audit import audit_glossary_data, format_audit_report
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Audit glossary aliases and duplicate/conflicting terms.")
+    parser = argparse.ArgumentParser(
+        description="Audit glossary aliases and duplicate/conflicting terms."
+    )
     parser.add_argument("path", help="Glossary JSON path.")
     parser.add_argument("--json", action="store_true", help="Print full JSON report.")
-    parser.add_argument("--limit", type=int, default=20, help="Maximum issues shown in text mode.")
+    parser.add_argument(
+        "--limit", type=int, default=20, help="Maximum issues shown in text mode."
+    )
     parser.add_argument(
         "--fail-on-issues",
         action="store_true",
@@ -33,7 +37,9 @@ def main() -> int:
         print(format_audit_report(report, limit=args.limit))
 
     summary = report.get("summary", {})
-    has_blocking_issues = bool(summary.get("duplicate_keys") or summary.get("ambiguous_source_aliases"))
+    has_blocking_issues = bool(
+        summary.get("duplicate_keys") or summary.get("ambiguous_source_aliases")
+    )
     return 1 if args.fail_on_issues and has_blocking_issues else 0
 
 

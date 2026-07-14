@@ -11,7 +11,10 @@ from tradutor.translate import (
 
 
 class _PromptCaptureBackend:
+    """Processamento interno auxiliar."""
+
     def __init__(self) -> None:
+        """Processamento interno auxiliar."""
         self.backend = "stub"
         self.model = "stub"
         self.num_predict = 10
@@ -21,6 +24,7 @@ class _PromptCaptureBackend:
         self.calls = 0
 
     def generate(self, prompt: str):
+        """Processamento interno auxiliar."""
         self.calls += 1
         self.prompts.append(prompt)
         text = f"### TEXTO_TRADUZIDO_INICIO\nTexto traduzido do chunk {self.calls} com continuidade suficiente para teste.\n### TEXTO_TRADUZIDO_FIM"
@@ -28,10 +32,17 @@ class _PromptCaptureBackend:
 
 
 def test_build_recent_translation_context_uses_source_and_pt_tail() -> None:
+    """Processamento interno auxiliar."""
     context = build_recent_translation_context(
         [
-            {"source": "First source paragraph.", "target": "Primeiro parágrafo traduzido."},
-            {"source": "Second source paragraph.", "target": "Segundo parágrafo traduzido."},
+            {
+                "source": "First source paragraph.",
+                "target": "Primeiro parágrafo traduzido.",
+            },
+            {
+                "source": "Second source paragraph.",
+                "target": "Segundo parágrafo traduzido.",
+            },
         ],
         max_paragraphs=1,
         max_chars=500,
@@ -44,13 +55,17 @@ def test_build_recent_translation_context_uses_source_and_pt_tail() -> None:
 
 
 def test_translation_prompt_has_dialogue_specific_rules() -> None:
-    prompt = build_translation_prompt('"Are you okay?"\n\n"Yes."', chunk_profile="dialogue")
+    """Processamento interno auxiliar."""
+    prompt = build_translation_prompt(
+        '"Are you okay?"\n\n"Yes."', chunk_profile="dialogue"
+    )
 
     assert "FOCO DO TRECHO: DIÁLOGO" in prompt
     assert "fala natural em PT-BR" in prompt
 
 
 def test_translation_prompt_requests_silent_linguistic_review() -> None:
+    """Processamento interno auxiliar."""
     prompt = build_translation_prompt("The riders could take intense action.")
 
     assert "REVISÃO SILENCIOSA OBRIGATÓRIA" in prompt
@@ -58,11 +73,18 @@ def test_translation_prompt_requests_silent_linguistic_review() -> None:
 
 
 def test_classify_translation_chunk_dialogue_and_narration() -> None:
+    """Processamento interno auxiliar."""
     assert classify_translation_chunk('"Oi."\n\n"Sim."') == "dialogue"
-    assert classify_translation_chunk("The wind crossed the empty field under the gray sky.") == "narration"
+    assert (
+        classify_translation_chunk(
+            "The wind crossed the empty field under the gray sky."
+        )
+        == "narration"
+    )
 
 
 def test_translate_document_sends_sliding_context_to_next_chunk(tmp_path: Path) -> None:
+    """Processamento interno auxiliar."""
     cfg = AppConfig(
         output_dir=tmp_path,
         max_retries=1,

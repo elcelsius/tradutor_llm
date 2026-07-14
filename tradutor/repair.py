@@ -16,7 +16,13 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from .cache_utils import cache_exists, chunk_hash, detect_model_collapse, load_cache, save_cache
+from .cache_utils import (
+    cache_exists,
+    chunk_hash,
+    detect_model_collapse,
+    load_cache,
+    save_cache,
+)
 from .language_guardrails import detect_residual_english
 from .llm_backend import LLMBackend
 from .postprocess_translation import postprocess_translation
@@ -30,6 +36,11 @@ REPAIR_END_MARKER_RE = r"###\s*TEXTO_REPARADO_FIM"
 
 @dataclass
 class RepairResult:
+    """
+    Estrutura de dados que armazena o resultado de uma tentativa de reparo de tradução,
+    incluindo se houve mudança, tempo gasto, e problemas residuais.
+    """
+
     text: str
     changed: bool = False
     attempted: bool = False
@@ -44,6 +55,10 @@ class RepairResult:
 
 
 def repair_prompt_fingerprint() -> str:
+    """
+    Gera um hash unívoco para a estrutura base do prompt de reparo,
+    útil para controle de invalidação de cache.
+    """
     prompt = build_repair_prompt(
         source_text="{source}",
         translated_text="{translated}",
@@ -60,6 +75,10 @@ def build_repair_prompt(
     issues: list[dict[str, str]],
     glossary_text: str | None = None,
 ) -> str:
+    """
+    Constrói o prompt focado em consertar problemas detectados (residual inglês, perdas).
+    O LLM recebe orientações estritas para apenas consertar e não reescrever o texto todo.
+    """
     issue_lines = "\n".join(
         f"- {item.get('type', 'issue')}: {item.get('detail') or item.get('found') or ''}".rstrip()
         for item in issues
@@ -105,6 +124,10 @@ TRADUÇÃO ATUAL:
 
 
 def parse_repair_output(raw: str) -> str:
+    """
+    Extrai o texto contido entre as tags de início e fim geradas pelo LLM no modo reparo.
+    Se não achar as tags, utiliza a sanitização fallback do refine.
+    """
     match = re.search(
         rf"{REPAIR_START_MARKER_RE}\s*(.*?)(?:{REPAIR_END_MARKER_RE}\s*|$)",
         raw,
@@ -121,6 +144,10 @@ def detect_translation_repair_issues(
     translated_text: str,
     glossary_terms: list[dict] | None = None,
 ) -> list[dict[str, str]]:
+    """
+    Detecta de forma heurística se a tradução apresentou problemas críticos
+    que merecem um ciclo de reparo automático (como resquícios em inglês ou perdas drásticas de tamanho).
+    """
     issues: list[dict[str, str]] = []
     residual_english, reason = detect_residual_english(translated_text)
     if residual_english:
@@ -137,7 +164,9 @@ def detect_translation_repair_issues(
         )
     source_quote_lines = count_quote_lines(source_text)
     translated_quote_lines = count_quote_lines(translated_text)
-    if source_quote_lines >= 2 and translated_quote_lines <= max(1, int(source_quote_lines * 0.4)):
+    if source_quote_lines >= 2 and translated_quote_lines <= max(
+        1, int(source_quote_lines * 0.4)
+    ):
         issues.append(
             {
                 "type": "possible_dialogue_line_omission",
@@ -145,7 +174,11 @@ def detect_translation_repair_issues(
             }
         )
 
-    ratio = len(translated_text.strip()) / max(len(source_text.strip()), 1) if source_text.strip() else 1.0
+    ratio = (
+        len(translated_text.strip()) / max(len(source_text.strip()), 1)
+        if source_text.strip()
+        else 1.0
+    )
     if ratio < 0.55:
         issues.append({"type": "possibly_too_short", "detail": f"ratio {ratio:.2f}"})
 
@@ -154,8 +187,14 @@ def detect_translation_repair_issues(
         pt = str(term.get("pt", "")).strip()
         if not key or not pt or key.casefold() == pt.casefold():
             continue
-        if _contains(source_text, key) and _contains(translated_text, key) and not _contains(translated_text, pt):
-            issues.append({"type": "source_term_leak", "found": key, "detail": f"use {pt}"})
+        if (
+            _contains(source_text, key)
+            and _contains(translated_text, key)
+            and not _contains(translated_text, pt)
+        ):
+            issues.append(
+                {"type": "source_term_leak", "found": key, "detail": f"use {pt}"}
+            )
         bad_aliases = term.get("bad_aliases") or term.get("forbidden_aliases") or []
         if isinstance(bad_aliases, str):
             bad_aliases = [bad_aliases]
@@ -163,7 +202,9 @@ def detect_translation_repair_issues(
             for alias in bad_aliases:
                 alias_s = str(alias).strip()
                 if alias_s and _contains(translated_text, alias_s):
-                    issues.append({"type": "bad_alias", "found": alias_s, "detail": f"use {pt}"})
+                    issues.append(
+                        {"type": "bad_alias", "found": alias_s, "detail": f"use {pt}"}
+                    )
     return issues
 
 
@@ -187,16 +228,24 @@ def validate_repair_candidate(
 
     current_paragraphs = _paragraph_count(current)
     candidate_paragraphs = _paragraph_count(candidate)
-    if current_paragraphs >= 4 and candidate_paragraphs < max(2, int(current_paragraphs * 0.75)):
+    if current_paragraphs >= 4 and candidate_paragraphs < max(
+        2, int(current_paragraphs * 0.75)
+    ):
         return f"repair_removed_paragraphs:{candidate_paragraphs}/{current_paragraphs}"
 
     current_quote_lines = count_quote_lines(current)
     candidate_quote_lines = count_quote_lines(candidate)
-    if current_quote_lines >= 4 and candidate_quote_lines < max(2, int(current_quote_lines * 0.75)):
+    if current_quote_lines >= 4 and candidate_quote_lines < max(
+        2, int(current_quote_lines * 0.75)
+    ):
         return f"repair_removed_dialogue_lines:{candidate_quote_lines}/{current_quote_lines}"
 
     first_line = _first_meaningful_line(current)
-    if first_line and len(first_line) >= 30 and not detect_residual_english(first_line)[0]:
+    if (
+        first_line
+        and len(first_line) >= 30
+        and not detect_residual_english(first_line)[0]
+    ):
         head = candidate[: max(600, len(first_line) * 3)]
         if first_line not in head:
             return "repair_removed_opening"
@@ -215,6 +264,10 @@ def repair_translation_chunk(
     max_attempts: int = 2,
     cache_metadata: dict[str, Any] | None = None,
 ) -> RepairResult:
+    """
+    Coordena o ciclo de detecção e, se necessário, reparação de uma tradução imperfeita.
+    Faz uso de cache para economizar chamadas no caso de reparos já feitos anteriormente.
+    """
     started = time.perf_counter()
     issues = detect_translation_repair_issues(
         source_text=source_text,
@@ -222,7 +275,11 @@ def repair_translation_chunk(
         glossary_terms=glossary_terms,
     )
     if not issues:
-        return RepairResult(text=translated_text, issues=[], elapsed_seconds=time.perf_counter() - started)
+        return RepairResult(
+            text=translated_text,
+            issues=[],
+            elapsed_seconds=time.perf_counter() - started,
+        )
 
     metadata = {
         "mode": "repair",
@@ -280,13 +337,20 @@ def repair_translation_chunk(
             raw_output = response.text
         except Exception as exc:
             retry_reasons.append(f"llm_error:{exc}")
-            logger.warning("Repair falhou na chamada LLM tentativa %d/%d: %s", attempt, max_attempts, exc)
+            logger.warning(
+                "Repair falhou na chamada LLM tentativa %d/%d: %s",
+                attempt,
+                max_attempts,
+                exc,
+            )
             continue
         candidate = parse_repair_output(raw_output)
         candidate = postprocess_translation(candidate, source_text)
         if not candidate.strip():
             retry_reasons.append("empty_repair")
-        elif detect_model_collapse(candidate, original_len=len(translated_text), mode="refine"):
+        elif detect_model_collapse(
+            candidate, original_len=len(translated_text), mode="refine"
+        ):
             retry_reasons.append("collapse_detector")
         else:
             residual_english, residual_reason = detect_residual_english(candidate)
@@ -302,7 +366,13 @@ def repair_translation_chunk(
                     retry_reasons.append(validation_reason)
                     candidate = translated_text
                 else:
-                    save_cache("repair", cache_key, raw_output=raw_output, final_output=candidate, metadata=metadata)
+                    save_cache(
+                        "repair",
+                        cache_key,
+                        raw_output=raw_output,
+                        final_output=candidate,
+                        metadata=metadata,
+                    )
                     return RepairResult(
                         text=candidate,
                         changed=candidate.strip() != translated_text.strip(),
@@ -343,16 +413,21 @@ def repair_translation_chunk(
 
 
 def _contains(text: str, needle: str) -> bool:
+    """Processamento interno auxiliar."""
     if not text or not needle:
         return False
-    return bool(re.search(rf"(?<!\w){re.escape(needle)}(?!\w)", text, flags=re.IGNORECASE))
+    return bool(
+        re.search(rf"(?<!\w){re.escape(needle)}(?!\w)", text, flags=re.IGNORECASE)
+    )
 
 
 def _paragraph_count(text: str) -> int:
+    """Processamento interno auxiliar."""
     return len([part for part in re.split(r"\n\s*\n", text.strip()) if part.strip()])
 
 
 def _first_meaningful_line(text: str) -> str:
+    """Processamento interno auxiliar."""
     for line in text.splitlines():
         stripped = line.strip()
         if stripped:

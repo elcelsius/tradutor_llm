@@ -18,12 +18,18 @@ from tradutor.post_translation_review import (
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Apply deterministic post-translation review.")
+    parser = argparse.ArgumentParser(
+        description="Apply deterministic post-translation review."
+    )
     parser.add_argument("--input", required=True, help="Translated Markdown file.")
-    parser.add_argument("--output", required=True, help="Reviewed Markdown output path.")
+    parser.add_argument(
+        "--output", required=True, help="Reviewed Markdown output path."
+    )
     parser.add_argument("--sections", help="sections.json from debug run.")
     parser.add_argument("--glossary", help="Manual glossary JSON.")
-    parser.add_argument("--source", help="Optional source EN/cleaned Markdown for QA comparison.")
+    parser.add_argument(
+        "--source", help="Optional source EN/cleaned Markdown for QA comparison."
+    )
     parser.add_argument(
         "--finalize",
         action="store_true",
@@ -38,7 +44,9 @@ def main() -> int:
     terms = load_glossary_terms(args.glossary)
     text = input_path.read_text(encoding="utf-8")
     if args.finalize:
-        source_text = Path(args.source).read_text(encoding="utf-8") if args.source else ""
+        source_text = (
+            Path(args.source).read_text(encoding="utf-8") if args.source else ""
+        )
         reviewed, payload = finalize_translation_text(
             text,
             source_text=source_text,
@@ -46,7 +54,9 @@ def main() -> int:
             glossary_terms=terms,
         )
     else:
-        reviewed, report = review_translation_text(text, sections=sections, glossary_terms=terms)
+        reviewed, report = review_translation_text(
+            text, sections=sections, glossary_terms=terms
+        )
         payload = report.to_dict()
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -54,7 +64,9 @@ def main() -> int:
     if args.report:
         report_path = Path(args.report)
         report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        report_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
 

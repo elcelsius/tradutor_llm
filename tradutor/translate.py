@@ -1159,13 +1159,17 @@ def translate_document(
             current_section = section_id
         if starts_with_scene_boundary(chunk):
             context_entries = []
+        # Define a janela de contexto de tradução, carregando os blocos mais recentes
+        # para dar referência consistente de estilo ao LLM.
         previous_context = build_recent_translation_context(
             context_entries,
             max_paragraphs=context_paragraphs,
             max_chars=context_chars,
             include_pt=context_include_pt,
         )
-        h = chunk_hash(chunk)
+        
+        # Gera o hash (assinatura) deste trecho para checar se ele já foi traduzido antes
+        chunk_hash_val = chunk_hash(chunk)
         start_offset = chunk_info.get("start_offset")
         end_offset = chunk_info.get("end_offset")
         from_cache = False
@@ -1195,8 +1199,9 @@ def translate_document(
         repair_elapsed_seconds = 0.0
         pre_repair_text = ""
 
-        if cache_exists("translate", h):
-            data = load_cache("translate", h)
+        # Tenta carregar a tradução deste chunk do cache para pular processamento
+        if cache_exists("translate", chunk_hash_val):
+            data = load_cache("translate", chunk_hash_val)
             meta_ok = _is_cache_compatible(data)
             if not meta_ok:
                 logger.debug("Cache de tradução ignorado: assinatura diferente de backend/model/num_predict.")
@@ -1287,29 +1292,32 @@ def translate_document(
                             parsed_clean, _ = collapse_repeated_curly_quotes(parsed_clean)
                             sanitized_ratio = len(parsed_clean.strip()) / max(len(parsed_raw.strip()), 1) if parsed_raw.strip() else 1.0
                             sanitization_ratio = sanitized_ratio
-                            iq = _count_quotes(chunk)
-                            oq = _count_quotes(parsed_clean)
-                            iql = count_quote_lines(chunk)
-                            oql = count_quote_lines(parsed_clean)
+                            # Conta aspas na entrada e na saída para avaliar se diálogos foram perdidos ou inventados
+                            input_quotes_count = _count_quotes(chunk)
+                            output_quotes_count = _count_quotes(parsed_clean)
+                            input_quote_lines = count_quote_lines(chunk)
+                            output_quote_lines = count_quote_lines(parsed_clean)
+                            
+                            # Compara as métricas para determinar se a tradução é aceitável ou precisa de retry
                             clean_retry, clean_reason = needs_retry(
                                 chunk,
                                 parsed_clean,
-                                input_quotes=iq,
-                                output_quotes=oq,
-                                input_quote_lines=iql,
-                                output_quote_lines=oql,
+                                input_quotes=input_quotes_count,
+                                output_quotes=output_quotes_count,
+                                input_quote_lines=input_quote_lines,
+                                output_quote_lines=output_quote_lines,
                                 contamination_detected=bool(report.contamination_detected),
                                 sanitization_ratio=sanitized_ratio,
                             )
                             narrative_ratio = len(parsed_clean.strip()) / max(len(chunk.strip()), 1)
-                            if not clean_retry and iq == 0 and narrative_ratio < 0.7:
+                            if not clean_retry and input_quotes_count == 0 and narrative_ratio < 0.7:
                                 clean_retry = True
                                 clean_reason = "narrative_ratio_low"
                             residual_english, residual_english_reason = detect_residual_english(parsed_clean)
                             if not clean_retry and residual_english:
                                 clean_retry = True
                                 clean_reason = residual_english_reason
-                            raw_retry, _ = needs_retry(chunk, raw_candidate, input_quotes=iq, output_quotes=_count_quotes(raw_candidate), input_quote_lines=iql, output_quote_lines=count_quote_lines(raw_candidate), contamination_detected=False, sanitization_ratio=1.0)
+                            raw_retry, _ = needs_retry(chunk, raw_candidate, input_quotes=input_quotes_count, output_quotes=_count_quotes(raw_candidate), input_quote_lines=input_quote_lines, output_quote_lines=count_quote_lines(raw_candidate), contamination_detected=False, sanitization_ratio=1.0)
                             prefer_raw = report.contamination_detected and not raw_retry and (sanitized_ratio < 0.95 or "omissao_dialogo" in clean_reason)
                             retry = clean_retry or (report.contamination_detected and sanitized_ratio < 0.95) or (report.contamination_detected and "omissao_dialogo" in clean_reason)
                             retry_reason = clean_reason if clean_retry else ("sanitizacao_agressiva" if sanitized_ratio < 0.95 else retry_reason)
@@ -1317,12 +1325,12 @@ def translate_document(
                             guardrail_reason = ""
                             if dialogue_guardrails_mode != "off":
                                 guard_ratio = 0.5 if dialogue_guardrails_mode == "relaxed" else 0.4
-                                if iq >= 4 and oq < max(1, int(iq * guard_ratio)):
+                                if input_quotes_count >= 4 and output_quotes_count < max(1, int(input_quotes_count * guard_ratio)):
                                     guardrail_triggered = True
-                                    guardrail_reason = f"omissao_dialogo_guardrail_quotes ({oq}/{iq})"
-                                elif iql >= 2 and oql < max(1, int(iql * guard_ratio)):
+                                    guardrail_reason = f"omissao_dialogo_guardrail_quotes ({output_quotes_count}/{input_quotes_count})"
+                                elif input_quote_lines >= 2 and output_quote_lines < max(1, int(input_quote_lines * guard_ratio)):
                                     guardrail_triggered = True
-                                    guardrail_reason = f"omissao_dialogo_guardrail_linhas ({oql}/{iql})"
+                                    guardrail_reason = f"omissao_dialogo_guardrail_linhas ({output_quote_lines}/{input_quote_lines})"
                             if guardrail_triggered:
                                 retry = True
                                 retry_reason = guardrail_reason or retry_reason or "omissao_dialogo_guardrail"
@@ -1692,7 +1700,7 @@ def translate_document(
         if cache_payload is not None:
             save_cache(
                 "translate",
-                h,
+                chunk_hash_val,
                 raw_output=cache_raw_output,
                 final_output=final_output,
                 metadata=cache_payload,

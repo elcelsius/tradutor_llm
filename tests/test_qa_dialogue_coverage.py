@@ -2,6 +2,7 @@ from tradutor.qa import needs_retry
 
 
 def test_needs_retry_when_dialogue_quotes_missing() -> None:
+    """Processamento interno auxiliar."""
     input_text = '"A"\n"B"\n"C"\n"D"\n'
     output_text = '"A"\n"B"\n'
     retry, reason = needs_retry(input_text, output_text)
@@ -10,6 +11,7 @@ def test_needs_retry_when_dialogue_quotes_missing() -> None:
 
 
 def test_needs_retry_when_sanitization_aggressive() -> None:
+    """Processamento interno auxiliar."""
     input_text = "Hello\nWorld"
     output_text = "Hello"
     retry, reason = needs_retry(

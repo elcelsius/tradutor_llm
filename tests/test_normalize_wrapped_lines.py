@@ -2,6 +2,7 @@ from tradutor.desquebrar import normalize_wrapped_lines
 
 
 def test_normalize_wrapped_lines_joins_lowercase_followup() -> None:
+    """Processamento interno auxiliar."""
     raw = "He looked at her\nwith a faint smile."
     out = normalize_wrapped_lines(raw)
     assert "her with a faint smile." in out
@@ -9,6 +10,7 @@ def test_normalize_wrapped_lines_joins_lowercase_followup() -> None:
 
 
 def test_normalize_wrapped_lines_keeps_dialogue_and_headings() -> None:
+    """Processamento interno auxiliar."""
     raw = "“Eh?”\ncontinuou.\n# Heading\nnext line"
     out = normalize_wrapped_lines(raw)
     lines = out.splitlines()

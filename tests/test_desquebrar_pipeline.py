@@ -9,6 +9,7 @@ from tradutor.utils import setup_logging
 
 
 def _install_reportlab_stub() -> None:
+    """Processamento interno auxiliar."""
     fake_reportlab = types.ModuleType("reportlab")
     fake_lib = types.ModuleType("reportlab.lib")
     fake_enums = types.ModuleType("reportlab.lib.enums")
@@ -19,11 +20,17 @@ def _install_reportlab_stub() -> None:
     fake_styles = types.ModuleType("reportlab.lib.styles")
 
     class _DummyStyleSheet:
+        """Processamento interno auxiliar."""
+
         def add(self, *args, **kwargs):
+            """Processamento interno auxiliar."""
             return None
 
     class _DummyParagraphStyle:
+        """Processamento interno auxiliar."""
+
         def __init__(self, *args, **kwargs):
+            """Processamento interno auxiliar."""
             self.name = kwargs.get("name", "dummy")
 
     fake_styles.ParagraphStyle = _DummyParagraphStyle
@@ -67,6 +74,7 @@ def _install_reportlab_stub() -> None:
 
 
 def test_run_translate_uses_desquebrar_before_translate(monkeypatch, tmp_path):
+    """Processamento interno auxiliar."""
     _install_reportlab_stub()
     import tradutor.main as main  # noqa: WPS433 (import inside test for stub)
 
@@ -79,27 +87,40 @@ def test_run_translate_uses_desquebrar_before_translate(monkeypatch, tmp_path):
     calls: dict[str, object] = {}
 
     def fake_extract_pdf_text(path, logger):
+        """Processamento interno auxiliar."""
         return "raw pdf text"
 
     def fake_preprocess_text(text, logger=None, **kwargs):
+        """Processamento interno auxiliar."""
         if kwargs.get("return_stats"):
-            return "preprocessed text", {"chars_in": len(text), "chars_out": len("preprocessed text")}
+            return "preprocessed text", {
+                "chars_in": len(text),
+                "chars_out": len("preprocessed text"),
+            }
         return "preprocessed text"
 
     def fake_desquebrar_text(text, cfg, logger, backend, chunk_chars=None):
+        """Processamento interno auxiliar."""
         calls["chunk_chars"] = chunk_chars
-        return "texto desquebrado", types.SimpleNamespace(total_chunks=1, cache_hits=0, fallbacks=0)
+        return "texto desquebrado", types.SimpleNamespace(
+            total_chunks=1, cache_hits=0, fallbacks=0
+        )
 
     def fake_translate_document(pdf_text, backend, cfg, logger, **kwargs):
+        """Processamento interno auxiliar."""
         calls["translated_input"] = pdf_text
         calls["already_preprocessed"] = kwargs.get("already_preprocessed")
         return "conteudo traduzido"
 
     class DummyBackend:
+        """Processamento interno auxiliar."""
+
         def __init__(self, *args, **kwargs):
+            """Processamento interno auxiliar."""
             pass
 
         def generate(self, prompt):
+            """Processamento interno auxiliar."""
             pytest.fail("LLMBackend.generate should not be called in this test")
 
     monkeypatch.setattr(main, "extract_pdf_text", fake_extract_pdf_text)
@@ -141,6 +162,7 @@ def test_run_translate_uses_desquebrar_before_translate(monkeypatch, tmp_path):
 
 
 def test_run_translate_skips_desquebrar_when_disabled(monkeypatch, tmp_path):
+    """Processamento interno auxiliar."""
     _install_reportlab_stub()
     import tradutor.main as main  # noqa: WPS433
 
@@ -153,28 +175,42 @@ def test_run_translate_skips_desquebrar_when_disabled(monkeypatch, tmp_path):
     calls: dict[str, object] = {}
 
     def fake_extract_pdf_text(path, logger):
+        """Processamento interno auxiliar."""
         return "raw pdf text"
 
     def fake_preprocess_text(text, logger=None, **kwargs):
+        """Processamento interno auxiliar."""
         if kwargs.get("return_stats"):
-            return "preprocessed text", {"chars_in": len(text), "chars_out": len("preprocessed text")}
+            return "preprocessed text", {
+                "chars_in": len(text),
+                "chars_out": len("preprocessed text"),
+            }
         return "preprocessed text"
 
     def fake_translate_document(pdf_text, backend, cfg, logger, **kwargs):
+        """Processamento interno auxiliar."""
         calls["translated_input"] = pdf_text
         calls["already_preprocessed"] = kwargs.get("already_preprocessed")
         return "conteudo traduzido"
 
     class DummyBackend:
+        """Processamento interno auxiliar."""
+
         def __init__(self, *args, **kwargs):
+            """Processamento interno auxiliar."""
             pass
 
         def generate(self, prompt):
+            """Processamento interno auxiliar."""
             pytest.fail("LLMBackend.generate should not be called in this test")
 
     monkeypatch.setattr(main, "extract_pdf_text", fake_extract_pdf_text)
     monkeypatch.setattr(main, "preprocess_text", fake_preprocess_text)
-    monkeypatch.setattr(main, "desquebrar_text", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("should not call")))
+    monkeypatch.setattr(
+        main,
+        "desquebrar_text",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("should not call")),
+    )
     monkeypatch.setattr(main, "translate_document", fake_translate_document)
     monkeypatch.setattr(main, "LLMBackend", DummyBackend)
 
@@ -210,6 +246,7 @@ def test_run_translate_skips_desquebrar_when_disabled(monkeypatch, tmp_path):
 
 
 def test_run_translate_passes_per_work_glossary_state_to_refine(monkeypatch, tmp_path):
+    """Processamento interno auxiliar."""
     _install_reportlab_stub()
     import tradutor.main as main  # noqa: WPS433
 
@@ -239,21 +276,28 @@ def test_run_translate_passes_per_work_glossary_state_to_refine(monkeypatch, tmp
     monkeypatch.setattr(
         main,
         "preprocess_text",
-        lambda text, logger=None, **kwargs: ("preprocessed text", {"chars_in": len(text), "chars_out": 17})
-        if kwargs.get("return_stats")
-        else "preprocessed text",
+        lambda text, logger=None, **kwargs: (
+            ("preprocessed text", {"chars_in": len(text), "chars_out": 17})
+            if kwargs.get("return_stats")
+            else "preprocessed text"
+        ),
     )
 
     def fake_translate_document(pdf_text, backend, cfg, logger, **kwargs):
+        """Processamento interno auxiliar."""
         calls["translation_terms"] = kwargs.get("glossary_manual_terms")
         return "SOGOU chegou."
 
     def fake_refine_markdown_file(input_path, output_path, **kwargs):
+        """Processamento interno auxiliar."""
         calls["refine_glossary_state"] = kwargs.get("glossary_state")
         output_path.write_text("SOGOU chegou.", encoding="utf-8")
 
     class DummyBackend:
+        """Processamento interno auxiliar."""
+
         def __init__(self, *args, **kwargs):
+            """Processamento interno auxiliar."""
             pass
 
     monkeypatch.setattr(main, "translate_document", fake_translate_document)

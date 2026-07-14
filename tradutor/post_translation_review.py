@@ -16,12 +16,15 @@ from .translate import ensure_section_heading
 
 @dataclass
 class ReviewReport:
+    """Processamento interno auxiliar."""
+
     heading_fixes: int = 0
     glossary_replacements: dict[str, int] = field(default_factory=dict)
     text_replacements: dict[str, int] = field(default_factory=dict)
     all_caps_name_replacements: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        """Processamento interno auxiliar."""
         return {
             "heading_fixes": self.heading_fixes,
             "glossary_replacements": self.glossary_replacements,
@@ -42,6 +45,7 @@ def _sub_word(
         return re.subn(pattern, repl, text, flags=flags)
 
     def _replace(match: re.Match[str]) -> str:
+        """Processamento interno auxiliar."""
         found = match.group(0)
         if found.isupper():
             return repl.upper()
@@ -53,11 +57,13 @@ def _sub_word(
 
 
 def _record(counter: dict[str, int], key: str, count: int) -> None:
+    """Processamento interno auxiliar."""
     if count:
         counter[key] = counter.get(key, 0) + count
 
 
 def _term_string_list(value: Any) -> list[str]:
+    """Processamento interno auxiliar."""
     if isinstance(value, str):
         value = [value]
     if not isinstance(value, list):
@@ -66,12 +72,17 @@ def _term_string_list(value: Any) -> list[str]:
 
 
 def _term_variants_for_article_fix(term: dict) -> list[str]:
+    """Processamento interno auxiliar."""
     variants: list[str] = []
-    for field in ("pt", "key"):
-        value = str(term.get(field, "")).strip()
+    for key_field in ("pt", "key"):
+        value = str(term.get(key_field, "")).strip()
         if value:
             variants.append(value)
-            variants.extend(token for token in value.split() if token[:1].isupper() and len(token) >= 3)
+            variants.extend(
+                token
+                for token in value.split()
+                if token[:1].isupper() and len(token) >= 3
+            )
     variants.extend(_term_string_list(term.get("source_aliases")))
     variants.extend(_term_string_list(term.get("aliases")))
     variants.extend(_term_string_list(term.get("allowed_target_aliases")))
@@ -114,14 +125,22 @@ def apply_editorial_replacements(text: str, report: ReviewReport | None = None) 
     return text
 
 
-def apply_gendered_article_fixes(text: str, glossary_terms: list[dict], report: ReviewReport | None = None) -> str:
+def apply_gendered_article_fixes(
+    text: str, glossary_terms: list[dict], report: ReviewReport | None = None
+) -> str:
     """Corrige artigos e predicativos incompatíveis com gênero conhecido."""
     rpt = report or ReviewReport()
     for term in glossary_terms:
         gender = str(term.get("gender", "")).strip().casefold()
-        category = str(term.get("category") or term.get("type") or term.get("term_type") or "").strip().casefold()
+        category = (
+            str(term.get("category") or term.get("type") or term.get("term_type") or "")
+            .strip()
+            .casefold()
+        )
         if (not gender.startswith(("femin", "mascul"))) or (
-            "person" not in category and "personagem" not in category and "criatura" not in category
+            "person" not in category
+            and "personagem" not in category
+            and "criatura" not in category
         ):
             continue
         feminine = gender.startswith("femin")
@@ -153,15 +172,29 @@ def apply_gendered_article_fixes(text: str, glossary_terms: list[dict], report: 
                 text, count = re.subn(pattern, repl, text)
                 _record(rpt.text_replacements, f"{pattern}->{repl}", count)
             if feminine:
-                text, count = re.subn(rf"\b({escaped}) como aliado\b", r"\1 como aliada", text)
-                _record(rpt.text_replacements, f"{variant} como aliado->{variant} como aliada", count)
+                text, count = re.subn(
+                    rf"\b({escaped}) como aliado\b", r"\1 como aliada", text
+                )
+                _record(
+                    rpt.text_replacements,
+                    f"{variant} como aliado->{variant} como aliada",
+                    count,
+                )
             else:
-                text, count = re.subn(rf"\b({escaped}) como aliada\b", r"\1 como aliado", text)
-                _record(rpt.text_replacements, f"{variant} como aliada->{variant} como aliado", count)
+                text, count = re.subn(
+                    rf"\b({escaped}) como aliada\b", r"\1 como aliado", text
+                )
+                _record(
+                    rpt.text_replacements,
+                    f"{variant} como aliada->{variant} como aliado",
+                    count,
+                )
     return text
 
 
-def apply_glossary_bad_aliases(text: str, glossary_terms: list[dict], report: ReviewReport | None = None) -> str:
+def apply_glossary_bad_aliases(
+    text: str, glossary_terms: list[dict], report: ReviewReport | None = None
+) -> str:
     """Substitui apenas formas explicitamente proibidas pelo termo canonico."""
     rpt = report or ReviewReport()
     for term in glossary_terms:
@@ -196,7 +229,9 @@ def apply_glossary_bad_aliases(text: str, glossary_terms: list[dict], report: Re
     return text
 
 
-def apply_duplicate_canonical_name_fixes(text: str, glossary_terms: list[dict], report: ReviewReport | None = None) -> str:
+def apply_duplicate_canonical_name_fixes(
+    text: str, glossary_terms: list[dict], report: ReviewReport | None = None
+) -> str:
     """Colapsa duplicatas causadas por expansao indevida de nomes canonicos."""
     rpt = report or ReviewReport()
     for term in glossary_terms:
@@ -206,7 +241,11 @@ def apply_duplicate_canonical_name_fixes(text: str, glossary_terms: list[dict], 
         key = str(term.get("key", "")).strip()
         if key.casefold() != pt.casefold():
             continue
-        category = str(term.get("category") or term.get("type") or term.get("term_type") or "").strip().casefold()
+        category = (
+            str(term.get("category") or term.get("type") or term.get("term_type") or "")
+            .strip()
+            .casefold()
+        )
         if "person" not in category and "personagem" not in category:
             continue
         parts = pt.split()
@@ -230,17 +269,42 @@ def apply_duplicate_canonical_name_fixes(text: str, glossary_terms: list[dict], 
 
 
 def _is_named_entity_term(term: dict) -> bool:
-    category = str(term.get("category") or term.get("type") or term.get("term_type") or "").strip().casefold()
-    entity_markers = ("person", "personagem", "criatura", "local", "organiza", "organização", "raça", "apelido")
+    """Processamento interno auxiliar."""
+    category = (
+        str(term.get("category") or term.get("type") or term.get("term_type") or "")
+        .strip()
+        .casefold()
+    )
+    entity_markers = (
+        "person",
+        "personagem",
+        "criatura",
+        "local",
+        "organiza",
+        "organização",
+        "raça",
+        "apelido",
+    )
     return any(marker in category for marker in entity_markers)
 
 
 def _can_use_name_parts(term: dict) -> bool:
-    category = str(term.get("category") or term.get("type") or term.get("term_type") or "").strip().casefold()
-    return "person" in category or "personagem" in category or "criatura" in category or "apelido" in category
+    """Processamento interno auxiliar."""
+    category = (
+        str(term.get("category") or term.get("type") or term.get("term_type") or "")
+        .strip()
+        .casefold()
+    )
+    return (
+        "person" in category
+        or "personagem" in category
+        or "criatura" in category
+        or "apelido" in category
+    )
 
 
 def _looks_like_proper_name(value: str) -> bool:
+    """Processamento interno auxiliar."""
     words = re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿ]+", value)
     if not words:
         return False
@@ -249,11 +313,12 @@ def _looks_like_proper_name(value: str) -> bool:
 
 
 def _named_entity_variants(term: dict) -> list[str]:
+    """Processamento interno auxiliar."""
     variants: list[str] = []
-    for field in ("pt", "key", "source_aliases", "aliases", "allowed_target_aliases"):
-        value = term.get(field)
+    for key_field in ("pt", "key", "source_aliases", "aliases", "allowed_target_aliases"):
+        value = term.get(key_field)
         values = _term_string_list(value)
-        if field in {"pt", "key"} and isinstance(value, str):
+        if key_field in {"pt", "key"} and isinstance(value, str):
             values = [value.strip()] if value.strip() else []
         variants.extend(values)
 
@@ -263,7 +328,11 @@ def _named_entity_variants(term: dict) -> list[str]:
         # estes fariam palavras comuns em CAPS virarem falsos nomes próprios.
         canonical_pt = str(term.get("pt", "")).strip()
         source_key = str(term.get("key", "")).strip()
-        if canonical_pt and canonical_pt.casefold() == source_key.casefold() and _looks_like_proper_name(canonical_pt):
+        if (
+            canonical_pt
+            and canonical_pt.casefold() == source_key.casefold()
+            and _looks_like_proper_name(canonical_pt)
+        ):
             variants.extend(
                 part
                 for part in canonical_pt.split()
@@ -279,7 +348,9 @@ def _named_entity_variants(term: dict) -> list[str]:
     return sorted(unique.values(), key=len, reverse=True)
 
 
-def normalize_all_caps_entity_names(text: str, glossary_terms: list[dict], report: ReviewReport | None = None) -> str:
+def normalize_all_caps_entity_names(
+    text: str, glossary_terms: list[dict], report: ReviewReport | None = None
+) -> str:
     """Restaura a caixa canônica de entidades que vieram em CAPS do PDF.
 
     Só toca em nomes explícitos de personagens, criaturas, locais e grupos do
@@ -299,13 +370,19 @@ def normalize_all_caps_entity_names(text: str, glossary_terms: list[dict], repor
     return text
 
 
-def restore_headings_from_sections(text: str, sections: list[dict], report: ReviewReport | None = None) -> str:
+def restore_headings_from_sections(
+    text: str, sections: list[dict], report: ReviewReport | None = None
+) -> str:
     """Reinsere headings que existem no `sections.json` mas sumiram no texto traduzido."""
     rpt = report or ReviewReport()
     if not sections:
         return text
     paragraphs = re.split(r"\n\s*\n", text.strip())
-    section_titles = [str(sec.get("title", "")) for sec in sections if str(sec.get("title", "")).strip()]
+    section_titles = [
+        str(sec.get("title", ""))
+        for sec in sections
+        if str(sec.get("title", "")).strip()
+    ]
     section_titles = [title for title in section_titles if title.lower() != "full text"]
     for title in section_titles:
         heading, changed = ensure_section_heading("", title)
@@ -318,8 +395,14 @@ def restore_headings_from_sections(text: str, sections: list[dict], report: Revi
                 flags=re.IGNORECASE,
             )
         else:
-            heading_re = re.compile(rf"^#?\s*{re.escape(heading_plain)}\s*$", flags=re.IGNORECASE)
-        if any(heading_re.match(p.strip().splitlines()[0].strip()) for p in paragraphs if p.strip()):
+            heading_re = re.compile(
+                rf"^#?\s*{re.escape(heading_plain)}\s*$", flags=re.IGNORECASE
+            )
+        if any(
+            heading_re.match(p.strip().splitlines()[0].strip())
+            for p in paragraphs
+            if p.strip()
+        ):
             continue
         insert_idx = _guess_heading_insert_index(paragraphs, title)
         if insert_idx is None:
@@ -330,20 +413,35 @@ def restore_headings_from_sections(text: str, sections: list[dict], report: Revi
 
 
 def _guess_heading_insert_index(paragraphs: list[str], source_title: str) -> int | None:
+    """Processamento interno auxiliar."""
     title = source_title.strip().lower()
     if title.startswith("chapter 1"):
         return _find_first(
             paragraphs,
-            (r"^Após o confronto", r"^Depois do confronto", r"^Após o Deathmatch", r"^Após a ", r"^Depois que"),
+            (
+                r"^Após o confronto",
+                r"^Depois do confronto",
+                r"^Após o Deathmatch",
+                r"^Após a ",
+                r"^Depois que",
+            ),
         )
     if title.startswith("chapter 5"):
-        return _find_first(paragraphs, (r"^Minha consciência voltou", r"^Minha mente voltou", r"^A minha consciência voltou"))
+        return _find_first(
+            paragraphs,
+            (
+                r"^Minha consciência voltou",
+                r"^Minha mente voltou",
+                r"^A minha consciência voltou",
+            ),
+        )
     if title == "prologue":
         return 0
     return None
 
 
 def _find_first(paragraphs: list[str], patterns: tuple[str, ...]) -> int | None:
+    """Processamento interno auxiliar."""
     compiled = [re.compile(pattern, flags=re.IGNORECASE) for pattern in patterns]
     for idx, para in enumerate(paragraphs):
         first = para.strip().splitlines()[0].strip() if para.strip() else ""
@@ -363,7 +461,9 @@ def review_translation_text(
     reviewed = apply_editorial_replacements(reviewed, report)
     reviewed = apply_glossary_bad_aliases(reviewed, glossary_terms or [], report)
     reviewed = normalize_all_caps_entity_names(reviewed, glossary_terms or [], report)
-    reviewed = apply_duplicate_canonical_name_fixes(reviewed, glossary_terms or [], report)
+    reviewed = apply_duplicate_canonical_name_fixes(
+        reviewed, glossary_terms or [], report
+    )
     reviewed = apply_gendered_article_fixes(reviewed, glossary_terms or [], report)
     return reviewed, report
 
@@ -383,14 +483,18 @@ def finalize_translation_text(
     """
     terms = glossary_terms or []
     normalized = normalize_structure(final_pt_postprocess(text))
-    reviewed, editorial = review_translation_text(normalized, sections=sections, glossary_terms=terms)
+    reviewed, editorial = review_translation_text(
+        normalized, sections=sections, glossary_terms=terms
+    )
     reviewed = normalize_structure(final_pt_postprocess(reviewed))
     reviewed, quote_balance_fixed = fix_unbalanced_quotes(reviewed)
     if quote_balance_fixed:
         # ``fix_unbalanced_quotes`` pode inserir o fechamento antes da próxima
         # abertura. Quando essa abertura inicia um novo parágrafo, move o
         # fechamento para o fim da fala anterior antes da limpeza final.
-        reviewed = re.sub(r"(?m)([^\n])\n(?:[ \t]*\n)+[ \t]*”(?=“)", r"\1”\n\n", reviewed)
+        reviewed = re.sub(
+            r"(?m)([^\n])\n(?:[ \t]*\n)+[ \t]*”(?=“)", r"\1”\n\n", reviewed
+        )
         reviewed = normalize_structure(final_pt_postprocess(reviewed))
     reviewed, quote_blank_lines_fixed = fix_blank_lines_inside_quotes(reviewed)
     if quote_blank_lines_fixed:
@@ -405,6 +509,7 @@ def finalize_translation_text(
 
 
 def load_sections(path: str | Path | None) -> list[dict]:
+    """Processamento interno auxiliar."""
     if not path:
         return []
     p = Path(path)
@@ -415,9 +520,12 @@ def load_sections(path: str | Path | None) -> list[dict]:
 
 
 def load_glossary_terms(path: str | Path | None) -> list[dict]:
+    """Processamento interno auxiliar."""
     if not path:
         return []
     import logging
 
-    state = build_glossary_state(Path(path), None, logging.getLogger(__name__), manual_dir=None)
+    state = build_glossary_state(
+        Path(path), None, logging.getLogger(__name__), manual_dir=None
+    )
     return state.manual_terms if state else []

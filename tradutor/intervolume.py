@@ -11,10 +11,11 @@ import json
 import re
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, Tuple, Any
+from typing import Any, Dict, List
 
 
 def _volume_key(name: str) -> str:
+    """Processamento interno auxiliar."""
     m = re.search(r"vol[\s_-]*(\d+)", name, flags=re.IGNORECASE)
     if m:
         return f"Vol {int(m.group(1)):02d}"
@@ -22,6 +23,7 @@ def _volume_key(name: str) -> str:
 
 
 def load_volume_texts(volume_dir: str) -> Dict[str, str]:
+    """Processamento interno auxiliar."""
     base = Path(volume_dir)
     volumes: Dict[str, str] = {}
     for path in sorted(base.glob("*.md")):
@@ -34,7 +36,9 @@ def load_volume_texts(volume_dir: str) -> Dict[str, str]:
     return volumes
 
 
-def load_glossaries(glossario_dir: str, master_glossario: str | None = None) -> Dict[str, Dict]:
+def load_glossaries(
+    glossario_dir: str, master_glossario: str | None = None
+) -> Dict[str, Dict]:
     base = Path(glossario_dir)
     gloss: Dict[str, Dict] = {}
     for path in sorted(base.glob("glossario_vol*.json")):
@@ -54,6 +58,7 @@ def load_glossaries(glossario_dir: str, master_glossario: str | None = None) -> 
 
 
 def build_character_registry(glossarios: Dict[str, Dict]) -> Dict[str, Dict[str, Any]]:
+    """Processamento interno auxiliar."""
     registry: Dict[str, Dict[str, Any]] = {}
     for vol_key, data in glossarios.items():
         terms = data.get("terms") if isinstance(data, dict) else None
@@ -68,7 +73,16 @@ def build_character_registry(glossarios: Dict[str, Dict]) -> Dict[str, Dict[str,
             pt = str(term.get("pt", "")).strip()
             if not key:
                 continue
-            entry = registry.setdefault(key, {"key": key, "pt": pt or key, "aliases": set(), "volumes": set(), "gender": None})
+            entry = registry.setdefault(
+                key,
+                {
+                    "key": key,
+                    "pt": pt or key,
+                    "aliases": set(),
+                    "volumes": set(),
+                    "gender": None,
+                },
+            )
             entry["volumes"].add(vol_key)
             aliases = term.get("aliases") or term.get("alias") or []
             if isinstance(aliases, str):
@@ -77,7 +91,9 @@ def build_character_registry(glossarios: Dict[str, Dict]) -> Dict[str, Dict[str,
                 entry["aliases"].add(str(al).strip())
             # inferência simples de gênero a partir de notes
             notes = str(term.get("notes", "")).lower()
-            if any(tok in notes for tok in ["heroína", "ela", "sacerdotisa", "princesa"]):
+            if any(
+                tok in notes for tok in ["heroína", "ela", "sacerdotisa", "princesa"]
+            ):
                 entry["gender"] = entry["gender"] or "F"
             if any(tok in notes for tok in ["herói", "ele", "guerreiro", "príncipe"]):
                 entry["gender"] = entry["gender"] or "M"
@@ -88,11 +104,16 @@ def build_character_registry(glossarios: Dict[str, Dict]) -> Dict[str, Dict[str,
     return registry
 
 
-def check_term_consistency(volumes: Dict[str, str], glossarios: Dict[str, Dict], master_glossario: Dict | None = None) -> List[Dict]:
+def check_term_consistency(
+    volumes: Dict[str, str],
+    glossarios: Dict[str, Dict],
+    master_glossario: Dict | None = None,
+) -> List[Dict]:
     issues: List[Dict] = []
     key_map: Dict[str, Dict[str, set]] = defaultdict(lambda: defaultdict(set))
 
     def add_terms(source_key: str, data: Dict):
+        """Processamento interno auxiliar."""
         terms = data.get("terms") if isinstance(data, dict) else None
         if not isinstance(terms, list):
             return
@@ -129,20 +150,35 @@ def check_term_consistency(volumes: Dict[str, str], glossarios: Dict[str, Dict],
 
 
 def _count_pronouns(text: str) -> Dict[str, int]:
+    """Processamento interno auxiliar."""
     counts = defaultdict(int)
-    for pron in ["ele", "ela", "dele", "dela", "seu", "sua", "o guerreiro", "a guerreira"]:
+    for pron in [
+        "ele",
+        "ela",
+        "dele",
+        "dela",
+        "seu",
+        "sua",
+        "o guerreiro",
+        "a guerreira",
+    ]:
         counts[pron] = len(re.findall(rf"\b{pron}\b", text, flags=re.IGNORECASE))
     return counts
 
 
-def check_gender_consistency(volumes: Dict[str, str], character_registry: Dict[str, Dict[str, Any]]) -> List[Dict]:
+def check_gender_consistency(
+    volumes: Dict[str, str], character_registry: Dict[str, Dict[str, Any]]
+) -> List[Dict]:
     issues: List[Dict] = []
     for name, info in character_registry.items():
         aliases = [name] + list(info.get("aliases", []))
         per_volume: Dict[str, Dict[str, int]] = {}
         for vol_key, text in volumes.items():
             snippet = text
-            if not any(re.search(rf"\b{re.escape(a)}\b", text, flags=re.IGNORECASE) for a in aliases):
+            if not any(
+                re.search(rf"\b{re.escape(a)}\b", text, flags=re.IGNORECASE)
+                for a in aliases
+            ):
                 continue
             per_volume[vol_key] = _count_pronouns(snippet)
         if not per_volume:
@@ -164,7 +200,10 @@ def check_gender_consistency(volumes: Dict[str, str], character_registry: Dict[s
                         "character": name,
                         "expected": "F",
                         "volume": vol_key,
-                        "evidence": {"masculine_pronouns": masc_v, "feminine_pronouns": fem_v},
+                        "evidence": {
+                            "masculine_pronouns": masc_v,
+                            "feminine_pronouns": fem_v,
+                        },
                         "suggestion": f"Revisar trechos em {vol_key} onde {name} recebe pronomes masculinos.",
                     }
                 )
@@ -176,14 +215,19 @@ def check_gender_consistency(volumes: Dict[str, str], character_registry: Dict[s
                         "character": name,
                         "expected": "M",
                         "volume": vol_key,
-                        "evidence": {"masculine_pronouns": masc_v, "feminine_pronouns": fem_v},
+                        "evidence": {
+                            "masculine_pronouns": masc_v,
+                            "feminine_pronouns": fem_v,
+                        },
                         "suggestion": f"Revisar trechos em {vol_key} onde {name} recebe pronomes femininos.",
                     }
                 )
     return issues
 
 
-def check_voice_consistency(volumes: Dict[str, str], character_registry: Dict[str, Dict[str, Any]]) -> List[Dict]:
+def check_voice_consistency(
+    volumes: Dict[str, str], character_registry: Dict[str, Dict[str, Any]]
+) -> List[Dict]:
     issues: List[Dict] = []
     informal_tokens = {"cara", "mano", "hein", "uh", "ah", "né"}
     formal_tokens = {"vós", "senhor", "senhora", "venerável", "humilde"}
@@ -192,7 +236,10 @@ def check_voice_consistency(volumes: Dict[str, str], character_registry: Dict[st
         aliases = [name] + list(info.get("aliases", []))
         per_volume_style = {}
         for vol_key, text in volumes.items():
-            if not any(re.search(rf"\b{re.escape(a)}\b", text, flags=re.IGNORECASE) for a in aliases):
+            if not any(
+                re.search(rf"\b{re.escape(a)}\b", text, flags=re.IGNORECASE)
+                for a in aliases
+            ):
                 continue
             inf = sum(text.lower().count(tok) for tok in informal_tokens)
             form = sum(text.lower().count(tok) for tok in formal_tokens)
@@ -204,7 +251,10 @@ def check_voice_consistency(volumes: Dict[str, str], character_registry: Dict[st
         for vol_key, style in per_volume_style.items():
             if vol_key == base_vol:
                 continue
-            if base["formal"] > base["informal"] * 2 and style["informal"] > style["formal"] * 2:
+            if (
+                base["formal"] > base["informal"] * 2
+                and style["informal"] > style["formal"] * 2
+            ):
                 issues.append(
                     {
                         "type": "voice_inconsistency",
@@ -218,6 +268,7 @@ def check_voice_consistency(volumes: Dict[str, str], character_registry: Dict[st
 
 
 def check_lore_timeline_consistency(volumes: Dict[str, str]) -> List[Dict]:
+    """Processamento interno auxiliar."""
     issues: List[Dict] = []
     patterns = {
         "perdeu_braco": re.compile(r"perdeu o braço direito", flags=re.IGNORECASE),
@@ -239,7 +290,10 @@ def check_lore_timeline_consistency(volumes: Dict[str, str]) -> List[Dict]:
                 "severity": "info",
                 "entity": "braço direito",
                 "description": "Menção a perder braço direito e depois usá-lo.",
-                "evidence": {"perdeu": hits["perdeu_braco"], "usou": hits["usou_braco"]},
+                "evidence": {
+                    "perdeu": hits["perdeu_braco"],
+                    "usou": hits["usou_braco"],
+                },
             }
         )
     if hits["morreu"] and hits["vivo"]:
@@ -282,16 +336,31 @@ def run_intervolume_checks(
         "checks_enabled": checks,
         "issues": issues,
     }
-    Path(output).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    Path(output).write_text(
+        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     return report
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
+    """Processamento interno auxiliar."""
     p = argparse.ArgumentParser(description="Consistência inter-volume (QA)")
-    p.add_argument("--volumes", required=True, help="Diretório com arquivos .md refinados")
-    p.add_argument("--glossario-dir", required=True, help="Diretório com glossarios por volume (glossario_volXX.json)")
-    p.add_argument("--master-glossario", help="Arquivo MASTER_GLOSSARIO.json (opcional)")
-    p.add_argument("--output", default="saida/consistencia_intervolume.json", help="Arquivo de saída do relatório")
+    p.add_argument(
+        "--volumes", required=True, help="Diretório com arquivos .md refinados"
+    )
+    p.add_argument(
+        "--glossario-dir",
+        required=True,
+        help="Diretório com glossarios por volume (glossario_volXX.json)",
+    )
+    p.add_argument(
+        "--master-glossario", help="Arquivo MASTER_GLOSSARIO.json (opcional)"
+    )
+    p.add_argument(
+        "--output",
+        default="saida/consistencia_intervolume.json",
+        help="Arquivo de saída do relatório",
+    )
     p.add_argument("--no-check-terms", action="store_true")
     p.add_argument("--no-check-gender", action="store_true")
     p.add_argument("--no-check-voice", action="store_true")
@@ -300,6 +369,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: List[str] | None = None) -> None:
+    """Processamento interno auxiliar."""
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
     checks = {

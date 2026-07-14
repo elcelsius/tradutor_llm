@@ -16,7 +16,9 @@ except ImportError as exc:  # pragma: no cover
     ) from exc
 
 
-def extract_pdf_text(pdf_path: Union[str, Path], logger: Optional[logging.Logger] = None) -> str:
+def extract_pdf_text(
+    pdf_path: Union[str, Path], logger: Optional[logging.Logger] = None
+) -> str:
     """
     Extrai texto de um PDF usando PyMuPDF (fitz).
     Retorna o texto concatenado de todas as páginas.
@@ -38,6 +40,8 @@ def extract_pdf_text(pdf_path: Union[str, Path], logger: Optional[logging.Logger
     text = "\n\n".join(chunks).strip()
 
     if logger is not None:
-        logger.debug("PDF %s extraído com %d caracteres (PyMuPDF)", path.name, len(text))
+        logger.debug(
+            "PDF %s extraído com %d caracteres (PyMuPDF)", path.name, len(text)
+        )
 
     return text

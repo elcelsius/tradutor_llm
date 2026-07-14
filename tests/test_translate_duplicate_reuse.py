@@ -7,7 +7,10 @@ from tradutor.translate import translate_document
 
 
 class _NumberAwareBackend:
+    """Processamento interno auxiliar."""
+
     def __init__(self) -> None:
+        """Processamento interno auxiliar."""
         self.backend = "stub"
         self.model = "stub"
         self.num_predict = 10
@@ -16,8 +19,11 @@ class _NumberAwareBackend:
         self.calls = 0
 
     def generate(self, prompt: str):
+        """Processamento interno auxiliar."""
         self.calls += 1
-        match = re.search(r'TEXTO A SER TRADUZIDO:\n\"\"\"(.*)\"\"\"', prompt, flags=re.DOTALL)
+        match = re.search(
+            r"TEXTO A SER TRADUZIDO:\n\"\"\"(.*)\"\"\"", prompt, flags=re.DOTALL
+        )
         chunk = match.group(1) if match else prompt
         numbers = re.findall(r"\b(\d+)\b", chunk)
         number = numbers[-1] if numbers else "0"
@@ -30,7 +36,10 @@ class _NumberAwareBackend:
 
 
 def test_translate_near_duplicate_blocks_number_change(tmp_path: Path) -> None:
-    cfg = AppConfig(output_dir=tmp_path, split_by_sections=True, translate_chunk_chars=120)
+    """Processamento interno auxiliar."""
+    cfg = AppConfig(
+        output_dir=tmp_path, split_by_sections=True, translate_chunk_chars=120
+    )
     backend = _NumberAwareBackend()
     logger = logging.getLogger("translate-duplicate")
 

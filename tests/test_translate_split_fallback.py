@@ -7,7 +7,10 @@ from tradutor.utils import setup_logging
 
 
 class _StubBackend:
+    """Processamento interno auxiliar."""
+
     def __init__(self) -> None:
+        """Processamento interno auxiliar."""
         self.backend = "stub"
         self.model = "stub"
         self.num_predict = 256
@@ -15,11 +18,15 @@ class _StubBackend:
         self.repeat_penalty = 1.0
 
     def generate(self, prompt: str):
+        """Processamento interno auxiliar."""
         long_pt = "X" * 4000
-        return types.SimpleNamespace(text=f"### TEXTO_TRADUZIDO_INICIO\n{long_pt}\n### TEXTO_TRADUZIDO_FIM")
+        return types.SimpleNamespace(
+            text=f"### TEXTO_TRADUZIDO_INICIO\n{long_pt}\n### TEXTO_TRADUZIDO_FIM"
+        )
 
 
 def test_translate_disables_split_when_sections_suspect(caplog) -> None:
+    """Processamento interno auxiliar."""
     cfg = AppConfig(split_by_sections=True, translate_chunk_chars=5000)
     logger = setup_logging(logging.ERROR)
     long_preamble = "A" * 4000

@@ -1,22 +1,30 @@
 import logging
 import re
 import sys
-import types
 
 # Stub minimal PyMuPDF to avoid external dependency in the smoke test environment.
 if "fitz" not in sys.modules:
+
     class _DummyDoc:
+        """Processamento interno auxiliar."""
+
         def __enter__(self):
+            """Processamento interno auxiliar."""
             return self
 
         def __exit__(self, *args, **kwargs):
+            """Processamento interno auxiliar."""
             return False
 
         def __iter__(self):
+            """Processamento interno auxiliar."""
             return iter([])
 
     class _DummyFitz:
+        """Processamento interno auxiliar."""
+
         def open(self, *args, **kwargs):
+            """Processamento interno auxiliar."""
             return _DummyDoc()
 
     sys.modules["fitz"] = _DummyFitz()
@@ -29,7 +37,10 @@ from tradutor.utils import setup_logging
 
 
 class FakeBackend:
+    """Processamento interno auxiliar."""
+
     def generate(self, prompt: str) -> LLMResponse:
+        """Processamento interno auxiliar."""
         return LLMResponse(
             text="### TEXTO_TRADUZIDO_INICIO\nPrimeiro paragrafo em portugues.\n\nSegundo paragrafo em portugues, continuando a ideia.\n### TEXTO_TRADUZIDO_FIM",
             latency=0.01,
@@ -37,6 +48,7 @@ class FakeBackend:
 
 
 def test_translate_document_smoke() -> None:
+    """Processamento interno auxiliar."""
     cfg = AppConfig()
     logger = setup_logging(logging.DEBUG)
     pdf_text = (
@@ -58,5 +70,5 @@ def test_translate_document_smoke() -> None:
     assert "<think>" not in lower_result
     for meta in META_PATTERNS_TRANSLATE:
         assert re.search(meta, lower_result) is None, f"Contem meta: {meta}"
-    lines = [l for l in result.splitlines() if l.strip()]
+    lines = [line for line in result.splitlines() if line.strip()]
     assert len(lines) >= 2, "Deve haver pelo menos dois paragrafos/linhas nao vazias."

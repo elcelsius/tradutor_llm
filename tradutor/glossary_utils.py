@@ -59,7 +59,12 @@ def _is_valid_dynamic_term(candidate: str, logger: logging.Logger) -> bool:
 
 
 def _build_index(terms: List[GlossaryEntry]) -> GlossaryIndex:
-    return {normalize_key(str(term.get("key", ""))): term for term in terms if str(term.get("key", "")).strip()}
+    """Processamento interno auxiliar."""
+    return {
+        normalize_key(str(term.get("key", ""))): term
+        for term in terms
+        if str(term.get("key", "")).strip()
+    }
 
 
 def _build_manual_pt_index(terms: List[GlossaryEntry]) -> GlossaryPtIndex:
@@ -76,6 +81,7 @@ def _build_manual_pt_index(terms: List[GlossaryEntry]) -> GlossaryPtIndex:
 
 
 def _string_list(value: Any) -> list[str]:
+    """Processamento interno auxiliar."""
     if isinstance(value, str):
         value = [value]
     if not isinstance(value, list):
@@ -90,7 +96,10 @@ def _as_bool(value: Any) -> bool:
     return bool(value)
 
 
-def _merge_indexes(manual_index: GlossaryIndex, dynamic_index: GlossaryIndex) -> GlossaryIndex:
+def _merge_indexes(
+    manual_index: GlossaryIndex, dynamic_index: GlossaryIndex
+) -> GlossaryIndex:
+    """Processamento interno auxiliar."""
     merged = dict(manual_index)
     for key, entry in dynamic_index.items():
         if key not in merged:
@@ -99,8 +108,11 @@ def _merge_indexes(manual_index: GlossaryIndex, dynamic_index: GlossaryIndex) ->
 
 
 def _load_terms(path: Path, source: str, logger: logging.Logger) -> List[GlossaryEntry]:
+    """Processamento interno auxiliar."""
     if not path.exists():
-        logger.info("Glossário %s não encontrado em %s; prosseguindo com vazio.", source, path)
+        logger.info(
+            "Glossário %s não encontrado em %s; prosseguindo com vazio.", source, path
+        )
         return []
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -109,7 +121,11 @@ def _load_terms(path: Path, source: str, logger: logging.Logger) -> List[Glossar
         return []
     raw_terms = data.get("terms") if isinstance(data, dict) else None
     if not isinstance(raw_terms, list):
-        logger.warning("Formato inesperado no glossário %s em %s; usando lista vazia.", source, path)
+        logger.warning(
+            "Formato inesperado no glossário %s em %s; usando lista vazia.",
+            source,
+            path,
+        )
         return []
 
     terms: List[GlossaryEntry] = []
@@ -120,9 +136,15 @@ def _load_terms(path: Path, source: str, logger: logging.Logger) -> List[Glossar
         pt = str(entry.get("pt", "")).strip()
         if not key or not pt:
             continue
-        source_aliases = _string_list(entry.get("source_aliases") or entry.get("aliases") or [])
-        bad_aliases = _string_list(entry.get("bad_aliases") or entry.get("forbidden_aliases") or [])
-        allowed_target_aliases = _string_list(entry.get("allowed_target_aliases") or entry.get("target_aliases") or [])
+        source_aliases = _string_list(
+            entry.get("source_aliases") or entry.get("aliases") or []
+        )
+        bad_aliases = _string_list(
+            entry.get("bad_aliases") or entry.get("forbidden_aliases") or []
+        )
+        allowed_target_aliases = _string_list(
+            entry.get("allowed_target_aliases") or entry.get("target_aliases") or []
+        )
         raw_target_replacements = entry.get("target_replacements") or {}
         target_replacements = (
             {
@@ -152,7 +174,9 @@ def _load_terms(path: Path, source: str, logger: logging.Logger) -> List[Glossar
             # inglês. Esta flag mantém a busca no original restrita ao uso
             # grafado como nome de habilidade, por exemplo `Freeze` e não
             # `body freeze`.
-            "source_case_sensitive": _as_bool(entry.get("source_case_sensitive", False)),
+            "source_case_sensitive": _as_bool(
+                entry.get("source_case_sensitive", False)
+            ),
         }
         for field in ("enforce", "gender", "type", "term_type"):
             if field in entry:
@@ -168,7 +192,10 @@ def _load_terms_from_dir(dir_path: Path, logger: logging.Logger) -> List[Glossar
     Mantém apenas a primeira ocorrência de cada key para evitar sobrescritas acidentais.
     """
     if not dir_path.exists():
-        logger.info("Diretório de glossário não encontrado em %s; prosseguindo sem auto-glossary.", dir_path)
+        logger.info(
+            "Diretório de glossário não encontrado em %s; prosseguindo sem auto-glossary.",
+            dir_path,
+        )
         return []
     if not dir_path.is_dir():
         logger.warning("Caminho de auto-glossary não é um diretório: %s", dir_path)
@@ -190,6 +217,8 @@ def _load_terms_from_dir(dir_path: Path, logger: logging.Logger) -> List[Glossar
 
 @dataclass
 class GlossaryState:
+    """Processamento interno auxiliar."""
+
     manual_terms: List[GlossaryEntry]
     dynamic_terms: List[GlossaryEntry]
     manual_index: GlossaryIndex
@@ -236,11 +265,15 @@ def build_glossary_state(
     return state
 
 
-def format_glossary_for_prompt(combined_index: GlossaryIndex, limit: int = DEFAULT_GLOSSARY_PROMPT_LIMIT) -> str:
+def format_glossary_for_prompt(
+    combined_index: GlossaryIndex, limit: int = DEFAULT_GLOSSARY_PROMPT_LIMIT
+) -> str:
     """Gera bloco de texto para o prompt a partir do glossário combinado."""
     if not combined_index:
         return ""
-    entries = sorted(combined_index.values(), key=lambda e: normalize_key(str(e.get("key", ""))))[:limit]
+    entries = sorted(
+        combined_index.values(), key=lambda e: normalize_key(str(e.get("key", "")))
+    )[:limit]
     lines = ["GLOSSÁRIO CANÔNICO (use SEMPRE estas traduções):"]
     for entry in entries:
         key = str(entry.get("key", "")).strip()
@@ -258,7 +291,9 @@ def format_glossary_for_prompt(combined_index: GlossaryIndex, limit: int = DEFAU
     return "\n".join(lines)
 
 
-def format_manual_pairs_for_translation(manual_terms: list[GlossaryEntry], limit: int | None = 30) -> str:
+def format_manual_pairs_for_translation(
+    manual_terms: list[GlossaryEntry], limit: int | None = 30
+) -> str:
     """Formata pares EN->PT do glossário manual para uso no prompt de tradução."""
     if not manual_terms:
         return ""
@@ -325,6 +360,7 @@ def select_terms_for_chunk(
     chunk_norm = chunk_compact.lower()
 
     def _matches_term(term_value: str, *, case_sensitive: bool) -> bool:
+        """Processamento interno auxiliar."""
         term_value = term_value.strip()
         if not term_value:
             return False
@@ -343,7 +379,9 @@ def select_terms_for_chunk(
             continue
         aliases = _string_list(term.get("source_aliases") or term.get("aliases") or [])
         if not aliases:
-            aliases = _string_list(term.get("source_aliases_norm") or term.get("aliases_norm") or [])
+            aliases = _string_list(
+                term.get("source_aliases_norm") or term.get("aliases_norm") or []
+            )
         case_sensitive = _as_bool(term.get("source_case_sensitive", False))
         matched = _matches_term(key, case_sensitive=case_sensitive) or any(
             _matches_term(alias, case_sensitive=case_sensitive) for alias in aliases
@@ -351,10 +389,14 @@ def select_terms_for_chunk(
         if matched:
             matches.append(term)
             seen.add(key_norm)
-    matches = sorted(matches, key=lambda e: normalize_key(str(e.get("key", ""))))[:match_limit]
+    matches = sorted(matches, key=lambda e: normalize_key(str(e.get("key", ""))))[
+        :match_limit
+    ]
     if matches:
         return matches, len(matches)
-    fallback = sorted(manual_terms, key=lambda e: normalize_key(str(e.get("key", ""))))[:fallback_limit]
+    fallback = sorted(manual_terms, key=lambda e: normalize_key(str(e.get("key", ""))))[
+        :fallback_limit
+    ]
     return fallback, 0
 
 
@@ -376,6 +418,7 @@ def select_terms_for_target_text(
     compact = re.sub(r"\s+", " ", target_text.lower())
 
     def _contains(value: str) -> bool:
+        """Processamento interno auxiliar."""
         value_norm = normalize_key(value)
         if not value_norm:
             return False
@@ -391,15 +434,21 @@ def select_terms_for_target_text(
             continue
         variants = [str(term.get("pt", "")).strip()]
         variants.extend(_string_list(term.get("allowed_target_aliases")))
-        variants.extend(_string_list(term.get("bad_aliases") or term.get("forbidden_aliases")))
+        variants.extend(
+            _string_list(term.get("bad_aliases") or term.get("forbidden_aliases"))
+        )
         replacements = term.get("target_replacements") or {}
         if isinstance(replacements, dict):
-            variants.extend(str(alias).strip() for alias in replacements if str(alias).strip())
+            variants.extend(
+                str(alias).strip() for alias in replacements if str(alias).strip()
+            )
         if any(_contains(variant) for variant in variants):
             selected.append(term)
             seen.add(key_norm)
 
-    selected = sorted(selected, key=lambda entry: normalize_key(str(entry.get("key", ""))))[:match_limit]
+    selected = sorted(
+        selected, key=lambda entry: normalize_key(str(entry.get("key", "")))
+    )[:match_limit]
     return selected, len(selected)
 
 
@@ -419,6 +468,7 @@ def parse_glossary_suggestions(block: str) -> List[GlossaryEntry]:
     current: GlossaryEntry = {}
 
     def flush_current() -> None:
+        """Processamento interno auxiliar."""
         if current.get("key") and current.get("pt"):
             suggestions.append(
                 {
@@ -520,17 +570,26 @@ def apply_suggestions_to_state(
 
         pt_norm = normalize_value(pt) if pt else ""
         if pt_norm and pt_norm in state.manual_pt_index:
-            logger.debug("Ignorando sugestão de glossário para '%s' (pt já definido no manual).", key_raw)
+            logger.debug(
+                "Ignorando sugestão de glossário para '%s' (pt já definido no manual).",
+                key_raw,
+            )
             continue
 
         if key_norm in state.manual_index:
-            logger.debug("Ignorando sugestão de glossário para '%s' (definido no manual).", key_raw)
+            logger.debug(
+                "Ignorando sugestão de glossário para '%s' (definido no manual).",
+                key_raw,
+            )
             continue
 
         existing = state.dynamic_index.get(key_norm)
         if existing:
             if existing.get("locked"):
-                logger.debug("Entrada dinâmica '%s' está bloqueada; não será alterada.", existing.get("key"))
+                logger.debug(
+                    "Entrada dinâmica '%s' está bloqueada; não será alterada.",
+                    existing.get("key"),
+                )
                 continue
             updated = False
             if term_pt and term_pt != existing.get("pt"):
@@ -545,7 +604,9 @@ def apply_suggestions_to_state(
                 updated = True
             if updated:
                 changed = True
-                logger.info("Glossário dinâmico atualizado para '%s' -> %s", key_raw, pt)
+                logger.info(
+                    "Glossário dinâmico atualizado para '%s' -> %s", key_raw, pt
+                )
             continue
 
         candidate = term_pt.strip()
@@ -563,7 +624,9 @@ def apply_suggestions_to_state(
         state.dynamic_terms.append(new_entry)
         state.dynamic_index[key_norm] = new_entry
         changed = True
-        logger.info("Nova entrada adicionada ao glossário dinâmico: %s -> %s", key_raw, pt)
+        logger.info(
+            "Nova entrada adicionada ao glossário dinâmico: %s -> %s", key_raw, pt
+        )
 
     if changed:
         state.refresh_combined()
@@ -575,10 +638,20 @@ def save_dynamic_glossary(state: GlossaryState, logger: logging.Logger) -> None:
     if state.dynamic_path is None:
         return
     state.dynamic_path.parent.mkdir(parents=True, exist_ok=True)
-    sorted_terms = sorted(state.dynamic_terms, key=lambda t: normalize_key(str(t.get("key", ""))))
+    sorted_terms = sorted(
+        state.dynamic_terms, key=lambda t: normalize_key(str(t.get("key", "")))
+    )
     payload = {"terms": sorted_terms}
     try:
-        state.dynamic_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        logger.info("Glossário dinâmico salvo em %s (termos: %d).", state.dynamic_path, len(sorted_terms))
+        state.dynamic_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        logger.info(
+            "Glossário dinâmico salvo em %s (termos: %d).",
+            state.dynamic_path,
+            len(sorted_terms),
+        )
     except Exception as exc:  # pragma: no cover - I/O edge case
-        logger.warning("Falha ao salvar glossário dinâmico em %s: %s", state.dynamic_path, exc)
+        logger.warning(
+            "Falha ao salvar glossário dinâmico em %s: %s", state.dynamic_path, exc
+        )

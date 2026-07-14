@@ -7,7 +7,10 @@ from tradutor.translate import translate_document
 
 
 class _StubBackend:
+    """Processamento interno auxiliar."""
+
     def __init__(self) -> None:
+        """Processamento interno auxiliar."""
         self.backend = "stub"
         self.model = "stub"
         self.num_predict = 10
@@ -15,11 +18,13 @@ class _StubBackend:
         self.repeat_penalty = 1.0
 
     def generate(self, prompt: str):
+        """Processamento interno auxiliar."""
         text = "### TEXTO_TRADUZIDO_INICIO\nsaida qualquer\n### TEXTO_TRADUZIDO_FIM"
         return type("Resp", (), {"text": text})
 
 
 def test_translate_collapse_fallback_uses_original(monkeypatch, tmp_path: Path) -> None:
+    """Processamento interno auxiliar."""
     cfg = AppConfig(output_dir=tmp_path, max_retries=1, split_by_sections=False)
     backend = _StubBackend()
     logger = logging.getLogger("collapse-fallback")

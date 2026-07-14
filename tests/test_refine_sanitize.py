@@ -3,6 +3,7 @@ from tradutor.sanitizer import sanitize_refine_output
 
 
 def test_sanitize_removes_trailing_triple_quotes():
+    """Processamento interno auxiliar."""
     raw = 'Texto suficiente."""\nLinha ok.'
     cleaned, ok, info = sanitize_refine_chunk_output(raw, raw, logger=None, label="t1")
     assert ok
@@ -12,6 +13,7 @@ def test_sanitize_removes_trailing_triple_quotes():
 
 
 def test_sanitize_collapses_blank_lines_inside_quotes():
+    """Processamento interno auxiliar."""
     raw = "“Entendo.\n\nQuer dizer...”\n\nFora do dialogo."
     cleaned, ok, _ = sanitize_refine_chunk_output(raw, raw, logger=None, label="t2")
     assert ok
@@ -21,6 +23,7 @@ def test_sanitize_collapses_blank_lines_inside_quotes():
 
 
 def test_sanitize_joins_standalone_closing_quote_after_blank_line() -> None:
+    """Processamento interno auxiliar."""
     raw = "“Entendo?\n\n”\n\nFora do dialogo."
 
     cleaned, ok, _ = sanitize_refine_chunk_output(raw, raw, logger=None, label="t2b")
@@ -31,6 +34,7 @@ def test_sanitize_joins_standalone_closing_quote_after_blank_line() -> None:
 
 
 def test_sanitize_splits_glued_dialogues():
+    """Processamento interno auxiliar."""
     raw = "“Oi.” “Tchau.”"
     cleaned, ok, info = sanitize_refine_chunk_output(raw, raw, logger=None, label="t3")
     assert ok
@@ -39,6 +43,7 @@ def test_sanitize_splits_glued_dialogues():
 
 
 def test_sanitize_keeps_dialogue_tag_attached():
+    """Processamento interno auxiliar."""
     raw = "“Oi.”\n\nperguntou Marla."
     cleaned, ok, _ = sanitize_refine_chunk_output(raw, raw, logger=None, label="t4")
     assert ok
@@ -47,6 +52,7 @@ def test_sanitize_keeps_dialogue_tag_attached():
 
 
 def test_sanitize_rejects_quote_to_dash_dialogue_conversion():
+    """Processamento interno auxiliar."""
     original = '"Oi", disse Marla.\n\n"Sim", respondeu ele.'
     raw = '— Oi", disse Marla.\n\n— Sim", respondeu ele.'
     _, ok, info = sanitize_refine_chunk_output(raw, original, logger=None, label="t5")
@@ -55,6 +61,7 @@ def test_sanitize_rejects_quote_to_dash_dialogue_conversion():
 
 
 def test_sanitize_allows_existing_dash_dialogues():
+    """Processamento interno auxiliar."""
     original = "— Oi, disse Marla.\n\n— Sim, respondeu ele."
     raw = "— Oi, disse Marla.\n\n— Sim, respondeu ele."
     _, ok, info = sanitize_refine_chunk_output(raw, original, logger=None, label="t6")
@@ -63,6 +70,7 @@ def test_sanitize_allows_existing_dash_dialogues():
 
 
 def test_sanitize_rejects_large_paragraph_reflow():
+    """Processamento interno auxiliar."""
     original = "Um.\n\nDois.\n\nTres.\n\nQuatro."
     raw = "Um.\n\nDois.\n\nTres.\n\nQuatro.\n\nCinco.\n\nSeis.\n\nSete."
     _, ok, info = sanitize_refine_chunk_output(raw, original, logger=None, label="t7")
@@ -71,6 +79,7 @@ def test_sanitize_rejects_large_paragraph_reflow():
 
 
 def test_sanitize_rejects_single_paragraph_split_in_refine_chunk():
+    """Processamento interno auxiliar."""
     original = "Um.\n\nDois.\n\nTres.\n\nQuatro."
     raw = "Um.\n\nDois.\n\nTres.\n\nQuatro.\n\nCinco."
     _, ok, info = sanitize_refine_chunk_output(raw, original, logger=None, label="t7b")
@@ -79,9 +88,12 @@ def test_sanitize_rejects_single_paragraph_split_in_refine_chunk():
 
 
 def test_sanitize_allows_own_glued_dialogue_split():
+    """Processamento interno auxiliar."""
     original = "Um.\n\nDois.\n\nTres.\n\n“Oi.” “Tchau.”"
     raw = original
-    cleaned, ok, info = sanitize_refine_chunk_output(raw, original, logger=None, label="t7c")
+    cleaned, ok, info = sanitize_refine_chunk_output(
+        raw, original, logger=None, label="t7c"
+    )
     assert ok
     assert "”\n\n“" in cleaned
     assert info["dialogue_splits"] == 1
@@ -89,6 +101,7 @@ def test_sanitize_allows_own_glued_dialogue_split():
 
 
 def test_sanitize_rejects_large_line_reflow_inside_paragraphs():
+    """Processamento interno auxiliar."""
     original = "Um. Dois. Tres. Quatro.\n\nCinco. Seis. Sete. Oito."
     raw = "Um.\nDois.\nTres.\nQuatro.\n\nCinco.\nSeis.\nSete.\nOito."
     _, ok, info = sanitize_refine_chunk_output(raw, original, logger=None, label="t8")
@@ -97,6 +110,7 @@ def test_sanitize_rejects_large_line_reflow_inside_paragraphs():
 
 
 def test_sanitize_refine_output_removes_refined_markers_only():
+    """Processamento interno auxiliar."""
     raw = "# Titulo\n\n### TEXTO_REFINADO_INICIO\n\nTexto refinado.\n\n### TEXTO_REFINADO_FIM"
 
     cleaned = sanitize_refine_output(raw)
@@ -107,6 +121,7 @@ def test_sanitize_refine_output_removes_refined_markers_only():
 
 
 def test_sanitize_refine_output_extracts_delimited_body_after_meta_intro():
+    """Processamento interno auxiliar."""
     raw = (
         "Aqui está a revisão do texto:\n\n***\n\n"
         "Texto revisado, sem metacomentários.\n\n***\n\n"
@@ -117,12 +132,14 @@ def test_sanitize_refine_output_extracts_delimited_body_after_meta_intro():
 
 
 def test_sanitize_refine_output_preserves_scene_separators_without_meta_intro():
+    """Processamento interno auxiliar."""
     raw = "Cena um.\n\n***\n\nCena dois.\n\n***\n\nCena três."
 
     assert sanitize_refine_output(raw) == raw
 
 
 def test_sanitize_refine_output_extracts_named_review_body_and_drops_notes():
+    """Processamento interno auxiliar."""
     raw = (
         "Aqui está a revisão:\n\n**Texto Revisado:**\n\n"
         "Texto da novel.\n\n---\n\n### Principais Ajustes Feitos:\n- Nota."
@@ -132,10 +149,13 @@ def test_sanitize_refine_output_extracts_named_review_body_and_drops_notes():
 
 
 def test_sanitize_requests_retry_for_new_malformed_quote_boundary():
+    """Processamento interno auxiliar."""
     original = "“Ah, tudo bem.”"
     raw = "”“Ah, tudo bem.”"
 
-    _, ok, info = sanitize_refine_chunk_output(raw, original, logger=None, label="quote-boundary")
+    _, ok, info = sanitize_refine_chunk_output(
+        raw, original, logger=None, label="quote-boundary"
+    )
 
     assert ok
     assert info["soft_retry"]
@@ -143,10 +163,13 @@ def test_sanitize_requests_retry_for_new_malformed_quote_boundary():
 
 
 def test_sanitize_requests_retry_for_extra_balanced_quote_pair() -> None:
+    """Processamento interno auxiliar."""
     original = "“Primeira fala.”"
     raw = "“Primeira fala.”\n\n“Fala inventada.”"
 
-    _, ok, info = sanitize_refine_chunk_output(raw, original, logger=None, label="quote-count")
+    _, ok, info = sanitize_refine_chunk_output(
+        raw, original, logger=None, label="quote-count"
+    )
 
     assert ok
     assert info["soft_retry"]

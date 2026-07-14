@@ -6,6 +6,7 @@ from tradutor.desquebrar import (
 
 
 def test_hardwrap_join():
+    """Processamento interno auxiliar."""
     text = "... voice, which\nmysteriously came ..."
 
     normalized, joins = normalize_hardwrap_joins(text)
@@ -15,6 +16,7 @@ def test_hardwrap_join():
 
 
 def test_internal_hyphen_dominance_applies():
+    """Processamento interno auxiliar."""
     text = "understand\nunderstand\nunderstand\nunder-stand"
 
     normalized, stats = normalize_internal_hyphen_by_dominance(text)
@@ -25,6 +27,7 @@ def test_internal_hyphen_dominance_applies():
 
 
 def test_internal_hyphen_keeps_legit_compound():
+    """Processamento interno auxiliar."""
     text = "demi-humans are here.\nDemihumans are rare."
 
     normalized, stats = normalize_internal_hyphen_by_dominance(text)
@@ -34,6 +37,7 @@ def test_internal_hyphen_keeps_legit_compound():
 
 
 def test_internal_hyphen_keeps_honorific():
+    """Processamento interno auxiliar."""
     text = "Zine-sama greeted everyone."
 
     normalized, stats = normalize_internal_hyphen_by_dominance(text)
@@ -43,6 +47,7 @@ def test_internal_hyphen_keeps_honorific():
 
 
 def test_scene_separator_isolated():
+    """Processamento interno auxiliar."""
     text = "Line A\n***\nLine B"
 
     normalized, fixes = normalize_scene_separators(text)

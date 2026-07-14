@@ -2,6 +2,7 @@ from scripts.migrate_glossary_aliases import migrate
 
 
 def _term(data: dict, key: str) -> dict:
+    """Processamento interno auxiliar."""
     for entry in data["terms"]:
         if entry["key"] == key:
             return entry
@@ -9,6 +10,7 @@ def _term(data: dict, key: str) -> dict:
 
 
 def test_migrate_separates_ambiguous_belzegea_aliases() -> None:
+    """Processamento interno auxiliar."""
     data = {
         "terms": [
             {
@@ -30,6 +32,7 @@ def test_migrate_separates_ambiguous_belzegea_aliases() -> None:
 
 
 def test_migrate_moves_clear_noncanonical_target_forms_to_bad_aliases() -> None:
+    """Processamento interno auxiliar."""
     data = {
         "terms": [
             {
@@ -54,11 +57,24 @@ def test_migrate_moves_clear_noncanonical_target_forms_to_bad_aliases() -> None:
 
 
 def test_migrate_removes_cross_term_character_aliases() -> None:
+    """Processamento interno auxiliar."""
     data = {
         "terms": [
-            {"key": "Anael", "pt": "Anael", "aliases": ["Erika Anaorbael", "Mistress Anael"]},
-            {"key": "Erika Anaorbael", "pt": "Erika Anaorbael", "aliases": ["Forbidden Witch", "Erika"]},
-            {"key": "Forbidden Witch", "pt": "Bruxa Proibida", "aliases": ["the Forbidden Witch"]},
+            {
+                "key": "Anael",
+                "pt": "Anael",
+                "aliases": ["Erika Anaorbael", "Mistress Anael"],
+            },
+            {
+                "key": "Erika Anaorbael",
+                "pt": "Erika Anaorbael",
+                "aliases": ["Forbidden Witch", "Erika"],
+            },
+            {
+                "key": "Forbidden Witch",
+                "pt": "Bruxa Proibida",
+                "aliases": ["the Forbidden Witch"],
+            },
             {"key": "Lil'ella", "pt": "Lil'ella", "aliases": []},
             {"key": "Lokiella", "pt": "Lokiella", "aliases": ["Lil'ella", "Loki-ella"]},
         ]
@@ -72,6 +88,7 @@ def test_migrate_removes_cross_term_character_aliases() -> None:
 
 
 def test_migrate_removes_redundant_source_alias_equal_to_key() -> None:
+    """Processamento interno auxiliar."""
     data = {
         "terms": [
             {

@@ -2,6 +2,7 @@ from tradutor.section_splitter import split_into_sections
 
 
 def test_split_into_sections_detects_titles() -> None:
+    """Processamento interno auxiliar."""
     text = "Front\n\nPrologue\nLine A\n\nChapter 1: Start\nLine B\n\nEpilogue\nLine C"
     sections = split_into_sections(text)
     assert len(sections) == 4  # inclui preâmbulo
@@ -15,6 +16,7 @@ def test_split_into_sections_detects_titles() -> None:
 
 
 def test_split_into_sections_when_no_markers_returns_full_text() -> None:
+    """Processamento interno auxiliar."""
     text = "No markers here.\nJust text."
     sections = split_into_sections(text)
     assert len(sections) == 1
@@ -23,6 +25,7 @@ def test_split_into_sections_when_no_markers_returns_full_text() -> None:
 
 
 def test_split_adds_preamble_before_first_marker() -> None:
+    """Processamento interno auxiliar."""
     text = "Intro text here.\n\nChapter 1:\nBody of chapter one."
     sections = split_into_sections(text)
     assert len(sections) == 2
@@ -33,6 +36,7 @@ def test_split_adds_preamble_before_first_marker() -> None:
 
 
 def test_split_handles_colon_without_title_and_epilogue() -> None:
+    """Processamento interno auxiliar."""
     text = "Chapter 1:\nBody\n\nEpilogue\nThe end."
     sections = split_into_sections(text)
     assert len(sections) == 2
@@ -41,6 +45,7 @@ def test_split_handles_colon_without_title_and_epilogue() -> None:
 
 
 def test_split_ignores_empty_toc_entries() -> None:
+    """Processamento interno auxiliar."""
     text = "Prologue\n\nChapter 1\n\nEpilogue\nClosing text."
     sections = split_into_sections(text)
     # Prologue e Chapter 1 sem corpo são ignorados; mantém Epilogue
@@ -50,6 +55,7 @@ def test_split_ignores_empty_toc_entries() -> None:
 
 
 def test_split_ignores_numeric_toc_entries() -> None:
+    """Processamento interno auxiliar."""
     text = "Chapter 1\n1\nChapter 2\n2\nChapter 3\nBody text."
     sections = split_into_sections(text)
     assert len(sections) == 1

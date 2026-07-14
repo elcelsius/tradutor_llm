@@ -2,6 +2,7 @@ from tradutor.refine import build_refine_prompt
 
 
 def test_gender_instruction_present() -> None:
+    """Processamento interno auxiliar."""
     prompt = build_refine_prompt("dummy")
     lower = prompt.lower()
     assert "gênero" in lower
@@ -10,6 +11,7 @@ def test_gender_instruction_present() -> None:
 
 
 def test_refine_prompt_preserves_dialogue_and_paragraph_style() -> None:
+    """Processamento interno auxiliar."""
     prompt = build_refine_prompt("dummy")
     lower = prompt.lower()
     assert "não converta travessões em aspas" in lower

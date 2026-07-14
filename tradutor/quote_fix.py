@@ -116,7 +116,9 @@ def repair_missing_open_quotes_per_paragraph(
     return "".join(parts), fixes
 
 
-def fix_unbalanced_quotes(text: str, logger: logging.Logger | None = None, label: str | None = None) -> Tuple[str, bool]:
+def fix_unbalanced_quotes(
+    text: str, logger: logging.Logger | None = None, label: str | None = None
+) -> Tuple[str, bool]:
     """
     Se houver exatamente uma aspa curva faltando, tenta restaurar a contraparte.
     Retorna (texto_corrigido, alterado).
@@ -166,14 +168,20 @@ def fix_unbalanced_quotes(text: str, logger: logging.Logger | None = None, label
     return text, False
 
 
-def fix_blank_lines_inside_quotes(text: str, logger: logging.Logger | None = None, label: str | None = None) -> Tuple[str, int]:
+def fix_blank_lines_inside_quotes(
+    text: str, logger: logging.Logger | None = None, label: str | None = None
+) -> Tuple[str, int]:
     """
     Remove parágrafos em branco dentro de blocos entre “ e ”.
     Converte \\n\\s*\\n para um único \\n quando in_quote.
     """
     cleaned, fixes = _collapse_blank_lines_in_quotes(text)
     if fixes and logger:
-        logger.debug("Correção de linhas em branco dentro de aspas%s: %d", f" ({label})" if label else "", fixes)
+        logger.debug(
+            "Correção de linhas em branco dentro de aspas%s: %d",
+            f" ({label})" if label else "",
+            fixes,
+        )
     return cleaned, fixes
 
 

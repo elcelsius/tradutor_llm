@@ -14,7 +14,9 @@ from .config import AppConfig
 from .utils import ensure_dir
 
 
-def select_font_path(preferred: str | Path | None, fallbacks: Iterable[str]) -> Path | None:
+def select_font_path(
+    preferred: str | Path | None, fallbacks: Iterable[str]
+) -> Path | None:
     """
     Retorna o primeiro caminho de fonte existente dentre preferida e fallbacks.
     """
@@ -83,7 +85,9 @@ def convert_markdown_to_pdf(
         from reportlab.pdfbase.ttfonts import TTFont
         from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
     except Exception as exc:  # pragma: no cover - depende de reportlab instalado
-        raise RuntimeError("ReportLab não está instalado; instale reportlab para gerar PDFs.") from exc
+        raise RuntimeError(
+            "ReportLab não está instalado; instale reportlab para gerar PDFs."
+        ) from exc
 
     if not md_path.exists():
         raise FileNotFoundError(md_path)
@@ -148,7 +152,16 @@ def convert_markdown_to_pdf(
         story.append(Paragraph(_inline_markdown_to_html(title), heading_style))
         story.append(Spacer(1, cfg.pdf_font_size * 0.6))
 
-    heading_keywords = ("prólogo", "prologo", "capítulo", "capitulo", "epílogo", "epilogo", "interlúdio", "interludio")
+    heading_keywords = (
+        "prólogo",
+        "prologo",
+        "capítulo",
+        "capitulo",
+        "epílogo",
+        "epilogo",
+        "interlúdio",
+        "interludio",
+    )
 
     for para in paragraphs:
         if not para.strip():

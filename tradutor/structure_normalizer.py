@@ -7,7 +7,6 @@ from __future__ import annotations
 import re
 from typing import List
 
-
 _SIMPLE_CHAPTER_RE = re.compile(
     r"^(?:#\s*)?cap[ií]tulo\s+(?P<number>\d+):?\s*$",
     re.IGNORECASE,
@@ -40,6 +39,7 @@ def normalize_structure(text: str) -> str:
     )
 
     def add_blank() -> None:
+        """Processamento interno auxiliar."""
         if normalized and normalized[-1] == "":
             return
         normalized.append("")
@@ -64,7 +64,9 @@ def normalize_structure(text: str) -> str:
                 if next_idx < len(lines)
                 else None
             )
-            if duplicate and duplicate.group("number") == titled_chapter.group("number"):
+            if duplicate and duplicate.group("number") == titled_chapter.group(
+                "number"
+            ):
                 normalized.append(
                     f"# Capítulo {titled_chapter.group('number')}: {titled_chapter.group('subtitle')}"
                 )
@@ -88,7 +90,9 @@ def normalize_structure(text: str) -> str:
         if split_chapter:
             title, body = split_chapter
             previous_heading_idx = _last_nonblank_index(normalized)
-            if previous_heading_idx is not None and _SIMPLE_CHAPTER_RE.match(normalized[previous_heading_idx].strip()):
+            if previous_heading_idx is not None and _SIMPLE_CHAPTER_RE.match(
+                normalized[previous_heading_idx].strip()
+            ):
                 normalized[previous_heading_idx] = f"# Capítulo 1: {title}"
                 add_blank()
                 normalized.append(body)
@@ -107,7 +111,9 @@ def normalize_structure(text: str) -> str:
         if chapter_match:
             subtitle, subtitle_idx = _next_chapter_subtitle(lines, i + 1)
             if subtitle:
-                normalized.append(f"# Capítulo {chapter_match.group('number')}: {subtitle}")
+                normalized.append(
+                    f"# Capítulo {chapter_match.group('number')}: {subtitle}"
+                )
                 add_blank()
                 i = subtitle_idx + 1
                 continue
@@ -157,6 +163,7 @@ def normalize_structure(text: str) -> str:
 
 
 def _last_nonblank_index(lines: list[str]) -> int | None:
+    """Processamento interno auxiliar."""
     for idx in range(len(lines) - 1, -1, -1):
         if lines[idx].strip():
             return idx
@@ -183,17 +190,22 @@ def _next_chapter_subtitle(lines: list[str], start: int) -> tuple[str | None, in
 
 
 def _looks_like_chapter_subtitle(line: str) -> bool:
-    if not line or line.startswith(("#", "\"", "“", "—")):
+    """Processamento interno auxiliar."""
+    if not line or line.startswith(("#", '"', "“", "—")):
         return False
     if line.endswith((".", "!", "?")) or line.isupper():
         return False
     words = line.split()
     if not 2 <= len(words) <= 8 or len(line) > 90:
         return False
-    return bool(re.fullmatch(r"[A-Za-zÀ-ÖØ-öø-ÿ0-9'’,:;—\- ]+", line)) and line[:1].isupper()
+    return (
+        bool(re.fullmatch(r"[A-Za-zÀ-ÖØ-öø-ÿ0-9'’,:;—\- ]+", line))
+        and line[:1].isupper()
+    )
 
 
 def _split_character_time_label(line: str) -> tuple[str, str] | None:
+    """Processamento interno auxiliar."""
     match = _TIME_LABEL_RE.match(line)
     if not match:
         return None
@@ -201,6 +213,7 @@ def _split_character_time_label(line: str) -> tuple[str, str] | None:
 
 
 def _split_deathmatch_chapter_title(line: str) -> tuple[str, str] | None:
+    """Processamento interno auxiliar."""
     patterns = [
         r"^(?:Depois do Deathmatch|Depois do Combate Mortal)\s+(?P<body>(?:DEPOIS QUE|Depois que)\b.*)$",
         r"^Após o (?:Deathmatch|combate mortal|Combate Mortal),?\s+(?P<body>(?:depois que|Depois que|após|Após)\b.*)$",

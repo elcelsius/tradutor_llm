@@ -7,17 +7,22 @@ from tradutor.utils import setup_logging
 
 
 class _StubBackend:
+    """Processamento interno auxiliar."""
+
     def __init__(self, outputs):
+        """Processamento interno auxiliar."""
         self.outputs = outputs
         self.calls = 0
 
     def generate(self, prompt):
+        """Processamento interno auxiliar."""
         out = self.outputs[self.calls]
         self.calls += 1
         return types.SimpleNamespace(text=out)
 
 
 def _run_desquebrar(original, llm_output, **cfg_overrides):
+    """Processamento interno auxiliar."""
     cfg = AppConfig(desquebrar_chunk_chars=500, **cfg_overrides)
     logger = setup_logging()
     backend = _StubBackend([llm_output])
@@ -26,8 +31,9 @@ def _run_desquebrar(original, llm_output, **cfg_overrides):
 
 
 def test_desquebrar_stray_quote_line_vol8_case():
+    """Processamento interno auxiliar."""
     original = "“devices.”\n“Oh, what…”"
-    llm_output = "“devices.”\n\"\n“Oh, what…”."
+    llm_output = '“devices.”\n"\n“Oh, what…”.'
 
     result, stats, backend = _run_desquebrar(original, llm_output)
 
@@ -38,6 +44,7 @@ def test_desquebrar_stray_quote_line_vol8_case():
 
 
 def test_desquebrar_fallback_on_stray_quote_line():
+    """Processamento interno auxiliar."""
     original = "Mechanical devices.\nOh, what a savage prospect…"
     llm_output = 'Mechanical devices.\n"\nOh, what a savage prospect…'
 
@@ -51,6 +58,7 @@ def test_desquebrar_fallback_on_stray_quote_line():
 
 
 def test_desquebrar_fixes_stutter_space():
+    """Processamento interno auxiliar."""
     original = "D- do."
     llm_output = "D- do."
 
@@ -61,6 +69,7 @@ def test_desquebrar_fixes_stutter_space():
 
 
 def test_desquebrar_fixes_hyphen_linewrap():
+    """Processamento interno auxiliar."""
     original = "hang-\nups"
     llm_output = "hang-\nups"
 
@@ -71,6 +80,7 @@ def test_desquebrar_fixes_hyphen_linewrap():
 
 
 def test_desquebrar_isolates_asterisks():
+    """Processamento interno auxiliar."""
     original = "alpha\n***\nomega"
     llm_output = "alpha\n***\nomega"
 
@@ -81,6 +91,7 @@ def test_desquebrar_isolates_asterisks():
 
 
 def test_desquebrar_hyphen_and_asterisks_postprocess(tmp_path):
+    """Processamento interno auxiliar."""
     original = "D- do\nhang-\nups\nbefore\n***\nafter"
     llm_output = original
 

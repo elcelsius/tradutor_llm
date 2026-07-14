@@ -23,11 +23,18 @@ from .config import BackendType
 
 @dataclass
 class LLMResponse:
+    """Encapsula a resposta retornada por um provedor de LLM junto com a latência da requisição."""
+
     text: str
     latency: float
 
 
 class LLMBackend:
+    """
+    Abstração unificada para interagir com diferentes provedores de LLM (Ollama, Gemini, etc).
+    Gerencia configurações como temperatura, modelo, timeouts e o roteamento da requisição.
+    """
+
     def __init__(
         self,
         backend: BackendType,
@@ -44,6 +51,7 @@ class LLMBackend:
         api_mode: str = "generate",
         think: bool | None = None,
     ) -> None:
+        """Processamento interno auxiliar."""
         self.backend = backend
         self.model = model
         self.temperature = temperature
@@ -59,6 +67,7 @@ class LLMBackend:
         self.think = think
 
     def generate(self, prompt: str) -> LLMResponse:
+        """Envia o prompt para o backend configurado e retorna a resposta formatada."""
         start = time.perf_counter()
         if self.backend == "ollama":
             text = self._call_ollama(prompt)
@@ -70,6 +79,7 @@ class LLMBackend:
         return LLMResponse(text=text, latency=latency)
 
     def _call_ollama(self, prompt: str) -> str:
+        """Processamento interno auxiliar."""
         if self.api_mode == "chat":
             return self._call_ollama_chat(prompt)
         if self.api_mode != "generate":
@@ -104,6 +114,7 @@ class LLMBackend:
         return data["response"].strip()
 
     def _call_ollama_chat(self, prompt: str) -> str:
+        """Processamento interno auxiliar."""
         url = f"{self.base_url}/api/chat"
         payload = {
             "model": self.model,
@@ -132,10 +143,13 @@ class LLMBackend:
 
         message = data.get("message")
         if not isinstance(message, dict) or "content" not in message:
-            raise ValueError(f"Resposta inválida do Ollama chat: {json.dumps(data)[:200]}")
+            raise ValueError(
+                f"Resposta inválida do Ollama chat: {json.dumps(data)[:200]}"
+            )
         return (message.get("content") or "").strip()
 
     def _call_gemini(self, prompt: str) -> str:
+        """Processamento interno auxiliar."""
         if genai is None:
             raise RuntimeError("google-generativeai não instalado.")
         api_key = self.gemini_api_key or os.getenv("GEMINI_API_KEY")
@@ -144,7 +158,9 @@ class LLMBackend:
         genai.configure(api_key=api_key)
         try:
             model = genai.GenerativeModel(self.model)
-            response = model.generate_content(prompt, generation_config={"temperature": self.temperature})
+            response = model.generate_content(
+                prompt, generation_config={"temperature": self.temperature}
+            )
         except Exception as exc:
             self.logger.error("Erro ao chamar Gemini: %s", exc)
             raise

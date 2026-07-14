@@ -81,8 +81,12 @@ def _extract_delimited_refine_text(text: str) -> str:
             prefix = text[: marker_match.start()].strip()
             # Um título Markdown pode ficar fora dos marcadores sem ser
             # metacomentário do modelo. Preserve apenas esse prefixo estrito.
-            prefix_lines = [line.strip() for line in prefix.splitlines() if line.strip()]
-            if prefix_lines and all(re.fullmatch(r"#{1,6}\s+.+", line) for line in prefix_lines):
+            prefix_lines = [
+                line.strip() for line in prefix.splitlines() if line.strip()
+            ]
+            if prefix_lines and all(
+                re.fullmatch(r"#{1,6}\s+.+", line) for line in prefix_lines
+            ):
                 return f"{prefix}\n\n{candidate}"
             return candidate
 
@@ -104,7 +108,10 @@ def _extract_delimited_refine_text(text: str) -> str:
 
     preamble = text[: delimiters[0].start()]
     postamble = text[delimiters[1].end() :]
-    if not (REFINE_META_PREAMBLE_RE.search(preamble) or REFINE_META_PREAMBLE_RE.search(postamble)):
+    if not (
+        REFINE_META_PREAMBLE_RE.search(preamble)
+        or REFINE_META_PREAMBLE_RE.search(postamble)
+    ):
         return text
 
     candidate = text[delimiters[0].end() : delimiters[1].start()].strip()
@@ -113,6 +120,8 @@ def _extract_delimited_refine_text(text: str) -> str:
 
 @dataclass
 class SanitizationReport:
+    """Processamento interno auxiliar."""
+
     removed_think_blocks: int = 0
     removed_meta_lines: int = 0
     removed_repeated_lines: int = 0
@@ -125,12 +134,14 @@ class SanitizationReport:
 
 
 def _remove_think_blocks(text: str) -> Tuple[str, int]:
+    """Processamento interno auxiliar."""
     pattern = re.compile(r"<think>.*?</think>", flags=re.IGNORECASE | re.DOTALL)
     new_text, count = pattern.subn("", text)
     return new_text, count
 
 
 def _remove_meta_lines(text: str, patterns: List[str]) -> Tuple[str, int, bool]:
+    """Processamento interno auxiliar."""
     lines = text.splitlines()
     kept: List[str] = []
     removed = 0
@@ -146,6 +157,7 @@ def _remove_meta_lines(text: str, patterns: List[str]) -> Tuple[str, int, bool]:
 
 
 def _collapse_repeated_lines(text: str) -> Tuple[str, int]:
+    """Processamento interno auxiliar."""
     lines = text.splitlines()
     kept: List[str] = []
     removed = 0
@@ -160,6 +172,7 @@ def _collapse_repeated_lines(text: str) -> Tuple[str, int]:
 
 
 def _collapse_repeated_paragraphs(text: str) -> Tuple[str, int]:
+    """Processamento interno auxiliar."""
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
     kept: List[str] = []
     removed = 0
@@ -174,6 +187,7 @@ def _collapse_repeated_paragraphs(text: str) -> Tuple[str, int]:
 
 
 def _strip_empty_lines(text: str) -> Tuple[str, int]:
+    """Processamento interno auxiliar."""
     lines = text.splitlines()
     kept: List[str] = []
     removed = 0
@@ -277,7 +291,11 @@ def sanitize_text(
     # remove aspas triplas soltas no fim de linha
     text = re.sub(r'"""\s*$', "", text, flags=re.MULTILINE)
     text = text.replace("<think>", "").replace("</think>", "")
-    report.removed_lines_count = report.removed_meta_lines + report.removed_repeated_lines + report.removed_empty_lines
+    report.removed_lines_count = (
+        report.removed_meta_lines
+        + report.removed_repeated_lines
+        + report.removed_empty_lines
+    )
 
     text = text.strip()
     if not text:

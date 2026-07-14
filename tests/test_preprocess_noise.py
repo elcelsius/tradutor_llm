@@ -1,16 +1,15 @@
-import types
 import json
+import types
 from pathlib import Path
-
-import pytest
 
 from tradutor.config import AppConfig
 from tradutor.llm_backend import LLMResponse
 from tradutor.preprocess import preprocess_text
-from tradutor.utils import setup_logging, read_text
+from tradutor.utils import read_text, setup_logging
 
 
 def test_preprocess_removes_watermarks_and_toc() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "OceanofPDF.com",
@@ -37,6 +36,7 @@ def test_preprocess_removes_watermarks_and_toc() -> None:
 
 
 def test_preprocess_removes_oceanofpdf_variations() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             " OCEANOF PDF . COM ",
@@ -50,6 +50,7 @@ def test_preprocess_removes_oceanofpdf_variations() -> None:
 
 
 def test_preprocess_removes_newsletter_and_gomanga_url() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "Thank you for reading!",
@@ -67,6 +68,7 @@ def test_preprocess_removes_newsletter_and_gomanga_url() -> None:
 
 
 def test_preprocess_removes_tail_toc_block() -> None:
+    """Processamento interno auxiliar."""
     tail_toc = "\n".join(
         [
             "Table of Contents",
@@ -99,6 +101,7 @@ def test_preprocess_removes_tail_toc_block() -> None:
 
 
 def test_preprocess_removes_tail_newsletter_block() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "Story core stays before.",
@@ -118,6 +121,7 @@ def test_preprocess_removes_tail_newsletter_block() -> None:
 
 
 def test_preprocess_keeps_narrative_with_contents_word() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "The book's contents were mysterious and deep.",
@@ -129,6 +133,7 @@ def test_preprocess_keeps_narrative_with_contents_word() -> None:
 
 
 def test_preprocess_removes_repeated_headers_and_keeps_story() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             *["SCAN GROUP" for _ in range(6)],
@@ -144,6 +149,7 @@ def test_preprocess_removes_repeated_headers_and_keeps_story() -> None:
 
 
 def test_preprocess_preserves_dialogue_with_sign_up_phrase() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             '"Sign up for glory," she whispered.',
@@ -158,6 +164,7 @@ def test_preprocess_preserves_dialogue_with_sign_up_phrase() -> None:
 
 
 def test_preprocess_preserves_narrative_support_us_phrase() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "It seems that some were accessories that provided bonuses to stats,",
@@ -176,6 +183,7 @@ def test_preprocess_preserves_narrative_support_us_phrase() -> None:
 
 
 def test_preprocess_preserves_narrative_promo_like_phrases() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "They asked whether he would join our side before sunset.",
@@ -201,6 +209,7 @@ def test_preprocess_preserves_narrative_promo_like_phrases() -> None:
 
 
 def test_preprocess_keeps_dialogue_without_url() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "— Sign up?",
@@ -212,6 +221,7 @@ def test_preprocess_keeps_dialogue_without_url() -> None:
 
 
 def test_preprocess_fixes_ocr_spacing() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "W E RE FINALLY here.",
@@ -228,6 +238,7 @@ def test_preprocess_fixes_ocr_spacing() -> None:
 
 
 def test_preprocess_fixes_spaced_caps_and_hyphen_wraps() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "F IRST OFF— we go.",
@@ -256,6 +267,7 @@ def test_preprocess_fixes_spaced_caps_and_hyphen_wraps() -> None:
 
 
 def test_preprocess_reflows_paragraphs_and_preserves_story_start() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "Table of Contents",
@@ -277,10 +289,12 @@ def test_preprocess_reflows_paragraphs_and_preserves_story_start() -> None:
     # reflow should have merged mid-sentence breaks
     assert "waited for her reply" in cleaned
     assert stats["reflow_merges"] >= 1
-    import re
+
     assert len(cleaned.splitlines()) < len(raw.splitlines())
 
+
 def test_preprocess_does_not_remove_contents_word() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "The contents of the report were alarming.",
@@ -293,6 +307,7 @@ def test_preprocess_does_not_remove_contents_word() -> None:
 
 
 def test_preprocess_idempotent() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "Prologue",
@@ -308,6 +323,7 @@ def test_preprocess_idempotent() -> None:
 
 
 def test_preprocess_removes_soft_hyphen_and_spaced_caps() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "This is an over\u00adwhelming problem.",
@@ -325,6 +341,7 @@ def test_preprocess_removes_soft_hyphen_and_spaced_caps() -> None:
 
 
 def test_preprocess_removes_inline_watermarks_after_merge() -> None:
+    """Processamento interno auxiliar."""
     raw = "This line has OceanofPDF.com inside and Zerobooks nearby."
     cleaned, stats = preprocess_text(raw, return_stats=True)
     assert "OceanofPDF" not in cleaned
@@ -335,12 +352,14 @@ def test_preprocess_removes_inline_watermarks_after_merge() -> None:
 
 
 def test_preprocess_respects_long_paragraph_with_discord_token() -> None:
+    """Processamento interno auxiliar."""
     long_para = " ".join(["discord"] + ["word"] * 100)  # > 200 chars
     cleaned = preprocess_text(long_para)
     assert "discord" in cleaned  # n„o remove par·grafo longo
 
 
 def test_preprocess_custom_noise_glossary_path(tmp_path: Path) -> None:
+    """Processamento interno auxiliar."""
     glossary = {
         "line_contains": ["customspam"],
         "line_compact_contains": [],
@@ -357,6 +376,7 @@ def test_preprocess_custom_noise_glossary_path(tmp_path: Path) -> None:
 
 
 def test_preprocess_merges_freeze_on_kirihara_and_sentence_case() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "Prologue",
@@ -372,6 +392,7 @@ def test_preprocess_merges_freeze_on_kirihara_and_sentence_case() -> None:
 
 
 def test_preprocess_removes_watermark_globally_and_merges_dash_continuation() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "A normal line before.",
@@ -388,12 +409,16 @@ def test_preprocess_removes_watermark_globally_and_merges_dash_continuation() ->
     assert "Join our Discord" not in cleaned
     assert "A normal line before." in cleaned
     assert "Final narrative line after spam." in cleaned
-    assert "He lost consciousness —falling asleep on the spot." in cleaned or "He lost consciousness—falling asleep on the spot." in cleaned
+    assert (
+        "He lost consciousness —falling asleep on the spot." in cleaned
+        or "He lost consciousness—falling asleep on the spot." in cleaned
+    )
     assert stats["watermarks_remaining"] == 0
     assert len(cleaned.splitlines()) < len(raw.splitlines())
 
 
 def test_preprocess_keeps_dialogue_on_new_paragraph() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "Eventually—Sogou opened her mouth to speak, eyes still downturned.",
@@ -412,6 +437,7 @@ def test_preprocess_keeps_dialogue_on_new_paragraph() -> None:
 
 
 def test_preprocess_preserves_short_dialogue_lines() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "“Eh?!”",
@@ -428,6 +454,7 @@ def test_preprocess_preserves_short_dialogue_lines() -> None:
 
 
 def test_preprocess_preserves_isolated_ellipsis_line() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "“I don't think it's feasible.”",
@@ -443,6 +470,7 @@ def test_preprocess_preserves_isolated_ellipsis_line() -> None:
 
 
 def test_preprocess_merges_quote_continuation_and_keeps_ellipsis_line() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "It's even possible that Mimori Touka believes that from",
@@ -460,6 +488,7 @@ def test_preprocess_merges_quote_continuation_and_keeps_ellipsis_line() -> None:
 
 
 def test_preprocess_fixes_under_merge_and_spam_block() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "Comes up in",
@@ -478,6 +507,7 @@ def test_preprocess_fixes_under_merge_and_spam_block() -> None:
 
 
 def test_preprocess_preserves_question_dialogue_as_paragraph() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "“?”",
@@ -491,6 +521,7 @@ def test_preprocess_preserves_question_dialogue_as_paragraph() -> None:
 
 
 def test_preprocess_still_removes_short_noise_lines() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "OceanofPDF.com",
@@ -507,6 +538,7 @@ def test_preprocess_still_removes_short_noise_lines() -> None:
 
 
 def test_preprocess_preserves_plain_ellipsis_line() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "She insisted it was for our safety.",
@@ -522,6 +554,7 @@ def test_preprocess_preserves_plain_ellipsis_line() -> None:
 
 
 def test_preprocess_preserves_feasible_erratic_pause() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "Unfortunately, I don’t think it’s feasible for us to build a cooperative working relationship with Kirihara-kun at present.",
@@ -531,12 +564,19 @@ def test_preprocess_preserves_feasible_erratic_pause() -> None:
     )
     cleaned = preprocess_text(raw)
     lines = cleaned.splitlines()
-    assert any("feasible for us to build a cooperative working relationship" in ln for ln in lines)
+    assert any(
+        "feasible for us to build a cooperative working relationship" in ln
+        for ln in lines
+    )
     assert "..." in lines
-    assert any("Given the erratic and unstable nature of Kirihara-kun’s actions" in ln for ln in lines)
+    assert any(
+        "Given the erratic and unstable nature of Kirihara-kun’s actions" in ln
+        for ln in lines
+    )
 
 
 def test_preprocess_preserves_curly_ellipsis_dialogue_line() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "And I know that Mimori-kun isn’t lying to us.”",
@@ -552,6 +592,7 @@ def test_preprocess_preserves_curly_ellipsis_dialogue_line() -> None:
 
 
 def test_preprocess_preserves_multiple_curly_ellipsis_lines_even_if_repeated() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "Does Piggymaru remind her of some character in a book?",
@@ -567,6 +608,7 @@ def test_preprocess_preserves_multiple_curly_ellipsis_lines_even_if_repeated() -
 
 
 def test_preprocess_removes_oceanofpdf_watermark_line() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "OceanofPDF.com",
@@ -576,10 +618,14 @@ def test_preprocess_removes_oceanofpdf_watermark_line() -> None:
     cleaned, stats = preprocess_text(raw, return_stats=True)
     assert "OceanofPDF" not in cleaned
     assert "Real content survives." in cleaned
-    assert any("oceanofpdf" in item.get("text", "").lower() for item in stats.get("removed_full", []))
+    assert any(
+        "oceanofpdf" in item.get("text", "").lower()
+        for item in stats.get("removed_full", [])
+    )
 
 
 def test_preprocess_keeps_punctuation_spacing_after_ocr_merge() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "M IMORI-KUN? Is that a person’s name…?",
@@ -590,6 +636,7 @@ def test_preprocess_keeps_punctuation_spacing_after_ocr_merge() -> None:
 
 
 def test_preprocess_keeps_spaces_between_words_upper_sequences() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "E HHH?! This little bird is Mistress Anael’s familiar?!",
@@ -602,6 +649,7 @@ def test_preprocess_keeps_spaces_between_words_upper_sequences() -> None:
 
 
 def test_preprocess_removes_advert_header_variants() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "On Light Novels by Universal",
@@ -618,6 +666,7 @@ def test_preprocess_removes_advert_header_variants() -> None:
 
 
 def test_preprocess_merges_across_removed_footer_gap() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "To think she had gained the ability to see through lies, thought",
@@ -631,6 +680,7 @@ def test_preprocess_merges_across_removed_footer_gap() -> None:
 
 
 def test_preprocess_report_includes_suspects_and_counts() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "Prologue",
@@ -647,6 +697,7 @@ def test_preprocess_report_includes_suspects_and_counts() -> None:
 
 
 def test_preprocess_keeps_ellipsis_dialogue_between_anchors() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "And I know that Mimori-kun isn’t lying to us.”",
@@ -661,6 +712,7 @@ def test_preprocess_keeps_ellipsis_dialogue_between_anchors() -> None:
 
 
 def test_preprocess_keeps_interjection_eh() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "My collaborator is Nyantan Kikipat.”",
@@ -675,12 +727,14 @@ def test_preprocess_keeps_interjection_eh() -> None:
 
 
 def test_preprocess_preserves_scene_separators() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(["***", "***", "Scene continues.", "***"])
     cleaned = preprocess_text(raw)
     assert cleaned.count("***") >= 2
 
 
 def test_preprocess_preserves_prologue_header() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "Table of Contents",
@@ -696,6 +750,7 @@ def test_preprocess_preserves_prologue_header() -> None:
 
 
 def test_preprocess_preserves_prologue_body_with_toc() -> None:
+    """Processamento interno auxiliar."""
     raw = "\n".join(
         [
             "Table of Contents",
@@ -718,11 +773,17 @@ def test_preprocess_preserves_prologue_body_with_toc() -> None:
     assert "Kirihara" in cleaned
     assert "Table of Contents" not in cleaned
     assert "OceanofPDF" not in cleaned
-    assert cleaned.splitlines()[0].startswith("Prologue") or "FIRST OFF" in cleaned.splitlines()[0]
+    assert (
+        cleaned.splitlines()[0].startswith("Prologue")
+        or "FIRST OFF" in cleaned.splitlines()[0]
+    )
 
 
 class FakeLLMBackend:
+    """Processamento interno auxiliar."""
+
     def __init__(self, *args, **kwargs):
+        """Processamento interno auxiliar."""
         self.backend = "fake"
         self.model = "fake"
         self.temperature = kwargs.get("temperature")
@@ -730,10 +791,15 @@ class FakeLLMBackend:
         self.repeat_penalty = kwargs.get("repeat_penalty")
 
     def generate(self, prompt: str) -> LLMResponse:
-        return LLMResponse(text="### TEXTO_TRADUZIDO_INICIO\nTexto limpo.\n### TEXTO_TRADUZIDO_FIM", latency=0.01)
+        """Processamento interno auxiliar."""
+        return LLMResponse(
+            text="### TEXTO_TRADUZIDO_INICIO\nTexto limpo.\n### TEXTO_TRADUZIDO_FIM",
+            latency=0.01,
+        )
 
 
 def test_run_translate_preprocess_cleans_noise(monkeypatch, tmp_path: Path) -> None:
+    """Processamento interno auxiliar."""
     import tradutor.main as main  # noqa: WPS433
 
     sample_pdf = tmp_path / "sample.pdf"
@@ -755,7 +821,11 @@ def test_run_translate_preprocess_cleans_noise(monkeypatch, tmp_path: Path) -> N
 
     monkeypatch.setattr(main, "extract_pdf_text", lambda path, logger: noisy_text)
     monkeypatch.setattr(main, "LLMBackend", FakeLLMBackend)
-    monkeypatch.setattr(main, "translate_document", lambda pdf_text, backend, cfg, logger, **kwargs: "texto traduzido")
+    monkeypatch.setattr(
+        main,
+        "translate_document",
+        lambda pdf_text, backend, cfg, logger, **kwargs: "texto traduzido",
+    )
 
     cfg = AppConfig(data_dir=tmp_path, output_dir=tmp_path)
     logger = setup_logging()

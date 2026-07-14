@@ -7,7 +7,10 @@ from tradutor.refine import refine_markdown_file
 
 
 class _NumberAwareBackend:
+    """Processamento interno auxiliar."""
+
     def __init__(self) -> None:
+        """Processamento interno auxiliar."""
         self.backend = "stub"
         self.model = "stub"
         self.num_predict = 10
@@ -16,6 +19,7 @@ class _NumberAwareBackend:
         self.calls = 0
 
     def generate(self, prompt: str):
+        """Processamento interno auxiliar."""
         self.calls += 1
         match = re.search(
             r"Texto para revisao \(PT-BR\):\s*\"\"\"(.*)\"\"\"",
@@ -29,7 +33,10 @@ class _NumberAwareBackend:
 
 
 def test_refine_near_duplicate_blocks_number_change(tmp_path: Path) -> None:
-    cfg = AppConfig(output_dir=tmp_path, refine_chunk_chars=120, refine_guardrails="off")
+    """Processamento interno auxiliar."""
+    cfg = AppConfig(
+        output_dir=tmp_path, refine_chunk_chars=120, refine_guardrails="off"
+    )
     backend = _NumberAwareBackend()
     logger = logging.getLogger("refine-duplicate")
 

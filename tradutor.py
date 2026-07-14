@@ -10,6 +10,7 @@ Exemplo:
 from __future__ import annotations
 
 import sys
+
 from tradutor.main import main
 
 

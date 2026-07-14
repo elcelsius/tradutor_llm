@@ -86,10 +86,13 @@ MIXED_GENDER_PATTERNS = (
     (r"\bpreparada\b.{0,50}\bpronto\b", "preparada/pronto"),
     (r"\bpreparado\b.{0,50}\bpronta\b", "preparado/pronta"),
 )
-MASCULINE_NOUN_CONTEXT_RE = re.compile(r"\b(?:olhar|rosto|semblante|sorriso|tom)\b", re.IGNORECASE)
+MASCULINE_NOUN_CONTEXT_RE = re.compile(
+    r"\b(?:olhar|rosto|semblante|sorriso|tom)\b", re.IGNORECASE
+)
 
 
 def _term_variants(term: GlossaryEntry) -> list[str]:
+    """Processamento interno auxiliar."""
     variants = [str(term.get("key", "")).strip()]
     aliases = term.get("source_aliases") or term.get("aliases") or []
     if isinstance(aliases, str):
@@ -100,22 +103,30 @@ def _term_variants(term: GlossaryEntry) -> list[str]:
 
 
 def _bad_aliases(term: GlossaryEntry) -> list[str]:
+    """Processamento interno auxiliar."""
     aliases = term.get("bad_aliases") or term.get("forbidden_aliases") or []
     if isinstance(aliases, str):
         aliases = [aliases]
     if not isinstance(aliases, list):
         aliases = []
     target_replacements = term.get("target_replacements") or {}
-    replacement_aliases = target_replacements.keys() if isinstance(target_replacements, dict) else []
+    replacement_aliases = (
+        target_replacements.keys() if isinstance(target_replacements, dict) else []
+    )
     return list(
         dict.fromkeys(
             [str(alias).strip() for alias in aliases if str(alias).strip()]
-            + [str(alias).strip() for alias in replacement_aliases if str(alias).strip()]
+            + [
+                str(alias).strip()
+                for alias in replacement_aliases
+                if str(alias).strip()
+            ]
         )
     )
 
 
 def _allowed_target_aliases(term: GlossaryEntry) -> list[str]:
+    """Processamento interno auxiliar."""
     aliases = term.get("allowed_target_aliases") or term.get("target_aliases") or []
     if isinstance(aliases, str):
         aliases = [aliases]
@@ -125,6 +136,7 @@ def _allowed_target_aliases(term: GlossaryEntry) -> list[str]:
 
 
 def _contains(text: str, needle: str, *, case_sensitive: bool = False) -> bool:
+    """Processamento interno auxiliar."""
     if not text or not needle:
         return False
     flags = 0 if case_sensitive else re.IGNORECASE
@@ -133,6 +145,7 @@ def _contains(text: str, needle: str, *, case_sensitive: bool = False) -> bool:
 
 
 def _snippet(text: str, needle: str, radius: int = 70) -> str:
+    """Processamento interno auxiliar."""
     match = re.search(re.escape(needle), text, flags=re.IGNORECASE)
     if not match:
         return ""
@@ -162,6 +175,7 @@ def _add_issue(
 
 
 def _is_character(term: GlossaryEntry) -> bool:
+    """Processamento interno auxiliar."""
     category = str(term.get("category", "")).strip().lower()
     term_type = str(term.get("type") or term.get("term_type") or "").strip().lower()
     return category == "personagem" or term_type == "personagem"
@@ -180,21 +194,29 @@ def _check_glossary(
             continue
 
         variants = _term_variants(term)
-        allowed_target_aliases = {alias.casefold() for alias in _allowed_target_aliases(term)}
+        allowed_target_aliases = {
+            alias.casefold() for alias in _allowed_target_aliases(term)
+        }
         source_case_sensitive = bool(term.get("source_case_sensitive", False))
-        source_has_key = _contains(source_text, key, case_sensitive=source_case_sensitive)
+        source_has_key = _contains(
+            source_text, key, case_sensitive=source_case_sensitive
+        )
         source_has_term = source_has_key or any(
             _contains(source_text, variant, case_sensitive=source_case_sensitive)
             for variant in variants[1:]
         )
         target_has_pt = _contains(translated_text, pt)
-        target_has_allowed_alias = any(_contains(translated_text, alias) for alias in allowed_target_aliases)
+        target_has_allowed_alias = any(
+            _contains(translated_text, alias) for alias in allowed_target_aliases
+        )
 
         for bad_alias in _bad_aliases(term):
             # Quando o alias só difere por caixa, a forma canônica não pode
             # ser denunciada como erro: `Kyokugen` != `kyokugen`.
             case_sensitive_alias = bad_alias.casefold() == pt.casefold()
-            if _contains(translated_text, bad_alias, case_sensitive=case_sensitive_alias):
+            if _contains(
+                translated_text, bad_alias, case_sensitive=case_sensitive_alias
+            ):
                 _add_issue(
                     issues,
                     "bad_alias_in_target",
@@ -227,7 +249,11 @@ def _check_glossary(
         # quando a chave apareceu literalmente ou quando a entrada foi marcada
         # como obrigatória para aliases também.
         requires_canonical = source_has_term if term.get("enforce") else source_has_key
-        if requires_canonical and key != pt and not (target_has_pt or target_has_allowed_alias):
+        if (
+            requires_canonical
+            and key != pt
+            and not (target_has_pt or target_has_allowed_alias)
+        ):
             _add_issue(
                 issues,
                 "missing_canonical_term",
@@ -238,7 +264,9 @@ def _check_glossary(
             )
 
 
-def _check_default_source_leaks(translated_text: str, issues: list[dict[str, str]]) -> None:
+def _check_default_source_leaks(
+    translated_text: str, issues: list[dict[str, str]]
+) -> None:
     for phrase in DEFAULT_SOURCE_LEAKS:
         if _contains(translated_text, phrase):
             _add_issue(
@@ -261,7 +289,11 @@ def _check_default_source_leaks(translated_text: str, issues: list[dict[str, str
         )
 
 
-def _check_gender(translated_text: str, glossary_terms: list[GlossaryEntry], issues: list[dict[str, str]]) -> None:
+def _check_gender(
+    translated_text: str,
+    glossary_terms: list[GlossaryEntry],
+    issues: list[dict[str, str]],
+) -> None:
     sentences = re.split(r"(?<=[.!?…])\s+|\n+", translated_text)
     for sentence in sentences:
         if not sentence.strip():
@@ -286,7 +318,11 @@ def _check_gender(translated_text: str, glossary_terms: list[GlossaryEntry], iss
         names = [pt, key]
         if " " in pt:
             names.extend(part for part in pt.split() if len(part) > 3)
-        markers = FEMININE_MASCULINE_MARKERS if gender == "feminino" else MASCULINE_FEMININE_MARKERS
+        markers = (
+            FEMININE_MASCULINE_MARKERS
+            if gender == "feminino"
+            else MASCULINE_FEMININE_MARKERS
+        )
         marker_pattern = "|".join(re.escape(marker) for marker in markers)
         verb_pattern = r"(?:é|era|está|estava|foi|ficou|parecia|permaneceu|continuou|voltou|sentou(?:-se)?)"
         for sentence in sentences:
@@ -314,6 +350,7 @@ def _check_gender(translated_text: str, glossary_terms: list[GlossaryEntry], iss
 
 
 def _check_structure(translated_text: str, issues: list[dict[str, str]]) -> None:
+    """Processamento interno auxiliar."""
     marker = TRANSLATION_MARKER_RE.search(translated_text)
     if marker:
         _add_issue(
@@ -357,7 +394,9 @@ def _check_structure(translated_text: str, issues: list[dict[str, str]]) -> None
             found=stray_marker.group(0),
             snippet=_snippet(translated_text, stray_marker.group(0)),
         )
-    spacing_match = re.search(r"(?:[”\"](?=[“\"])|[.!?…](?=[“\"][A-Za-zÀ-ÿ]))", translated_text)
+    spacing_match = re.search(
+        r"(?:[”\"](?=[“\"])|[.!?…](?=[“\"][A-Za-zÀ-ÿ]))", translated_text
+    )
     if spacing_match:
         _add_issue(
             issues,
@@ -412,6 +451,7 @@ def run_translation_quality_checks(
 
 
 def format_quality_cell(report: dict[str, Any] | None) -> str:
+    """Processamento interno auxiliar."""
     if not report:
         return ""
     by_type = report.get("issues_by_type") or {}

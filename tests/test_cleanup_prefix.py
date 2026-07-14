@@ -2,6 +2,7 @@ from tradutor.cleanup import cleanup_before_refine
 
 
 def test_dedupe_prefix_lines_removes_truncated_and_is_idempotent():
+    """Processamento interno auxiliar."""
     text = (
         "A habilidade única do Kirihara   agora estava no nível 3, e ele\n"
         "A habilidade única do Kirihara agora estava no nível 3, e ele havia aprendido...\n"
@@ -19,6 +20,7 @@ def test_dedupe_prefix_lines_removes_truncated_and_is_idempotent():
 
 
 def test_cleanup_does_not_merge_line_followed_by_quote():
+    """Processamento interno auxiliar."""
     text = "Ele olhou para o pano branco.\n“Mmm?”\n"
     cleaned, stats = cleanup_before_refine(text)
     assert "pano branco.\n“Mmm?”" in cleaned

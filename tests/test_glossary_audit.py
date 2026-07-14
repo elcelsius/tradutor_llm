@@ -2,6 +2,7 @@ from tradutor.glossary_audit import audit_glossary_data, is_probably_portuguese_
 
 
 def test_glossary_audit_finds_ambiguous_and_portuguese_source_aliases() -> None:
+    """Processamento interno auxiliar."""
     data = {
         "terms": [
             {
@@ -27,6 +28,7 @@ def test_glossary_audit_finds_ambiguous_and_portuguese_source_aliases() -> None:
 
 
 def test_portuguese_alias_heuristic_ignores_english_noise() -> None:
+    """Processamento interno auxiliar."""
     assert is_probably_portuguese_alias("Quatro Anciãos Sagrados")
     assert is_probably_portuguese_alias("Rei Matador de Monstros")
     assert not is_probably_portuguese_alias("Mya-a-ah")

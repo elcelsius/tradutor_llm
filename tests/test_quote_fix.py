@@ -7,6 +7,7 @@ from tradutor.quote_fix import (
 
 
 def test_fix_unbalanced_quotes_inserts_closing_before_narration():
+    """Processamento interno auxiliar."""
     text = (
         "… “Essa coisa de cavaleiro é só para manter as aparências do reino, sabe? "
         "Ele bebeu um gole antes de continuar. “O Rei Caçador de Monstros…”"
@@ -20,6 +21,7 @@ def test_fix_unbalanced_quotes_inserts_closing_before_narration():
 
 
 def test_fix_no_change_when_balanced():
+    """Processamento interno auxiliar."""
     balanced = "“Olá.” Ele disse. “Tchau.”"
     fixed, changed = fix_unbalanced_quotes(balanced, logger=None, label="test2")
     assert not changed
@@ -27,9 +29,12 @@ def test_fix_no_change_when_balanced():
 
 
 def test_repair_missing_open_quote_when_global_counts_are_misleading():
+    """Processamento interno auxiliar."""
     text = "Fala que perdeu a abertura.”\n\n“Fala já íntegra.”"
 
-    fixed, fixes = repair_missing_open_quotes_per_paragraph(text, logger=None, label="local")
+    fixed, fixes = repair_missing_open_quotes_per_paragraph(
+        text, logger=None, label="local"
+    )
 
     assert fixes == 1
     assert fixed.startswith("“Fala que perdeu a abertura.”")
@@ -37,15 +42,19 @@ def test_repair_missing_open_quote_when_global_counts_are_misleading():
 
 
 def test_repair_missing_open_quote_keeps_paired_inline_quote_unchanged():
+    """Processamento interno auxiliar."""
     text = "A expressão “bem-vindo” continua corretamente delimitada."
 
-    fixed, fixes = repair_missing_open_quotes_per_paragraph(text, logger=None, label="local")
+    fixed, fixes = repair_missing_open_quotes_per_paragraph(
+        text, logger=None, label="local"
+    )
 
     assert fixes == 0
     assert fixed == text
 
 
 def test_fix_blank_lines_inside_quotes_collapses():
+    """Processamento interno auxiliar."""
     text = "“Ele falou algo.\n\nContinuou a frase.”\n\nFora do diálogo."
     cleaned, fixes = fix_blank_lines_inside_quotes(text, logger=None, label="blank")
     assert fixes == 1

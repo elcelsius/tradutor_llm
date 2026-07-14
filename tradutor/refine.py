@@ -4,28 +4,37 @@ Refinamento capítulo a capítulo de arquivos Markdown.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
-import os
 import re
 import time
-import hashlib
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Tuple, Callable
+from typing import Callable, Dict, List, Tuple
 
-from .desquebrar import normalize_md_paragraphs
-
+from .advanced_preprocess import clean_text as advanced_clean
+from .anti_hallucination import anti_hallucination_filter
+from .cache_utils import (
+    cache_exists,
+    chunk_hash,
+    detect_model_collapse,
+    is_duplicate_reuse_safe,
+    is_near_duplicate,
+    load_cache,
+    save_cache,
+    set_cache_base_dir,
+)
+from .cleanup import cleanup_before_refine, detect_glued_dialogues, detect_obvious_dupes
 from .config import AppConfig
+from .debug_run import DebugRunWriter
+from .desquebrar import normalize_md_paragraphs
 from .glossary_utils import (
     DEFAULT_GLOSSARY_PROMPT_LIMIT,
-    GLOSSARIO_SUGERIDO_FIM,
-    GLOSSARIO_SUGERIDO_INICIO,
     GlossaryState,
     apply_suggestions_to_state,
-    build_glossary_state,
     format_glossary_for_prompt,
     normalize_key,
     parse_glossary_suggestions,
@@ -33,43 +42,42 @@ from .glossary_utils import (
     select_terms_for_target_text,
     split_refined_and_suggestions,
 )
+from .language_guardrails import detect_residual_english
 from .llm_backend import LLMBackend
 from .preprocess import chunk_for_refine, paragraphs_from_text
-from .sanitizer import sanitize_refine_output
-from .utils import ensure_dir, read_text, timed, write_text
-from .cache_utils import (
-    cache_exists,
-    chunk_hash,
-    detect_model_collapse,
-    load_cache,
-    save_cache,
-    is_near_duplicate,
-    is_duplicate_reuse_safe,
-    set_cache_base_dir,
-)
 from .qa import (
     has_curly_quote_balance_regression,
     has_curly_quote_count_regression,
     has_malformed_quote_boundary,
     needs_retry,
 )
-from .advanced_preprocess import clean_text as advanced_clean
-from .anti_hallucination import anti_hallucination_filter
-from .cleanup import cleanup_before_refine, detect_obvious_dupes, detect_glued_dialogues
-from .quote_fix import collapse_repeated_curly_quotes, fix_unbalanced_quotes, count_curly_quotes, fix_blank_lines_inside_quotes
-from .text_postprocess import apply_structural_normalizers, apply_custom_normalizers, fix_dialogue_artifacts
-from .debug_run import DebugRunWriter
-from .language_guardrails import detect_residual_english
+from .quote_fix import (
+    collapse_repeated_curly_quotes,
+    count_curly_quotes,
+    fix_blank_lines_inside_quotes,
+    fix_unbalanced_quotes,
+)
+from .sanitizer import sanitize_refine_output
+from .text_postprocess import (
+    apply_custom_normalizers,
+    apply_structural_normalizers,
+    fix_dialogue_artifacts,
+)
+from .utils import ensure_dir, read_text, timed, write_text
 
 REFINE_PIPELINE_VERSION = "16"
 
 
 def refine_prompt_fingerprint() -> str:
-    template = build_refine_prompt("{section}", glossary_enabled=True, glossary_block="{glossary}")
+    """Processamento interno auxiliar."""
+    template = build_refine_prompt(
+        "{section}", glossary_enabled=True, glossary_block="{glossary}"
+    )
     return hashlib.sha256(template.encode("utf-8")).hexdigest()
 
 
 def _cache_signature_from(cfg: AppConfig, backend: LLMBackend) -> dict:
+    """Processamento interno auxiliar."""
     return {
         "backend": getattr(backend, "backend", None),
         "model": getattr(backend, "model", None),
@@ -83,16 +91,20 @@ def _cache_signature_from(cfg: AppConfig, backend: LLMBackend) -> dict:
 
 
 def _glossary_hash(glossary_state: GlossaryState | None) -> str | None:
+    """Processamento interno auxiliar."""
     if not glossary_state:
         return None
     try:
-        payload = json.dumps(glossary_state.combined_index, ensure_ascii=False, sort_keys=True)
+        payload = json.dumps(
+            glossary_state.combined_index, ensure_ascii=False, sort_keys=True
+        )
     except Exception:
         return None
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _is_cache_compatible(data: dict, signature: dict) -> bool:
+    """Processamento interno auxiliar."""
     meta = data.get("metadata")
     if not isinstance(meta, dict):
         return False
@@ -101,6 +113,8 @@ def _is_cache_compatible(data: dict, signature: dict) -> bool:
 
 @dataclass
 class RefineStats:
+    """Processamento interno auxiliar."""
+
     total_blocks: int = 0
     success_blocks: int = 0
     error_blocks: int = 0
@@ -108,6 +122,8 @@ class RefineStats:
 
 @dataclass
 class RefineProgress:
+    """Processamento interno auxiliar."""
+
     total_blocks: int
     refined_blocks: set[int]
     error_blocks: set[int]
@@ -122,6 +138,7 @@ _GLOBAL_BLOCK_INDEX: int = 0
 
 @contextmanager
 def processing_context(stats: RefineStats, progress: RefineProgress | None):
+    """Processamento interno auxiliar."""
     global _CURRENT_STATS, _CURRENT_PROGRESS, _GLOBAL_BLOCK_INDEX
     prev_stats = _CURRENT_STATS
     prev_progress = _CURRENT_PROGRESS
@@ -138,6 +155,7 @@ def processing_context(stats: RefineStats, progress: RefineProgress | None):
 
 
 def _next_block_index() -> int:
+    """Processamento interno auxiliar."""
     global _GLOBAL_BLOCK_INDEX
     _GLOBAL_BLOCK_INDEX += 1
     return _GLOBAL_BLOCK_INDEX
@@ -153,6 +171,7 @@ def _write_guardrail_debug_file(
     collapse_flag: bool,
     collapse_details: dict | None = None,
 ) -> None:
+    """Processamento interno auxiliar."""
     if not reasons and not collapse_flag:
         return
     debug_dir = Path(base_dir) / "debug_refine_guardrails"
@@ -167,9 +186,14 @@ def _write_guardrail_debug_file(
         "collapse_details": collapse_details or {},
         "timestamp": datetime.now().isoformat(),
     }
-    path = debug_dir / f"refine_chunk{chunk_index:03d}_block{block_index:04d}_guardrails.json"
+    path = (
+        debug_dir
+        / f"refine_chunk{chunk_index:03d}_block{block_index:04d}_guardrails.json"
+    )
     try:
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
     except Exception:
         return
 
@@ -222,18 +246,24 @@ def has_meta_noise(text: str) -> bool:
 
 
 def _count_paragraphs(text: str) -> int:
+    """Processamento interno auxiliar."""
     return len([p for p in re.split(r"\n\s*\n", text.strip()) if p.strip()])
 
 
 def _count_leading_quote_dialogues(text: str) -> int:
-    return sum(1 for line in text.splitlines() if line.strip().startswith(('"', "“", "”")))
+    """Processamento interno auxiliar."""
+    return sum(
+        1 for line in text.splitlines() if line.strip().startswith(('"', "“", "”"))
+    )
 
 
 def _count_leading_dash_dialogues(text: str) -> int:
+    """Processamento interno auxiliar."""
     return sum(1 for line in text.splitlines() if line.strip().startswith("—"))
 
 
 def _count_nonblank_lines(text: str) -> int:
+    """Processamento interno auxiliar."""
     return sum(1 for line in text.splitlines() if line.strip())
 
 
@@ -256,35 +286,37 @@ def _dialogue_or_paragraph_regression(
     cleaned_nonblank_lines = _count_nonblank_lines(cleaned)
 
     introduced_dash_dialogues = (
-        original_dash_lines == 0
-        and original_quote_lines > 0
-        and cleaned_dash_lines > 0
+        original_dash_lines == 0 and original_quote_lines > 0 and cleaned_dash_lines > 0
     )
     introduced_quote_dialogues = (
         original_quote_lines == 0
         and original_dash_lines > 0
         and cleaned_quote_lines > 0
     )
-    lost_dash_dialogues = (
-        original_dash_lines >= 2
-        and cleaned_dash_lines < max(1, original_dash_lines - 1)
+    lost_dash_dialogues = original_dash_lines >= 2 and cleaned_dash_lines < max(
+        1, original_dash_lines - 1
     )
-    lost_quote_dialogues = (
-        original_quote_lines >= 2
-        and cleaned_quote_lines < max(1, original_quote_lines - 1)
+    lost_quote_dialogues = original_quote_lines >= 2 and cleaned_quote_lines < max(
+        1, original_quote_lines - 1
     )
 
     paragraph_structure_changed = False
     if original_paragraphs >= 4:
         max_paragraphs = original_paragraphs + max(0, allowed_paragraph_increase)
-        min_paragraphs = max(1, original_paragraphs - max(0, allowed_paragraph_decrease))
-        paragraph_structure_changed = cleaned_paragraphs > max_paragraphs or cleaned_paragraphs < min_paragraphs
+        min_paragraphs = max(
+            1, original_paragraphs - max(0, allowed_paragraph_decrease)
+        )
+        paragraph_structure_changed = (
+            cleaned_paragraphs > max_paragraphs or cleaned_paragraphs < min_paragraphs
+        )
 
     line_structure_changed = False
     if original_nonblank_lines >= 2:
         max_lines = original_nonblank_lines + max(0, allowed_line_increase)
         min_lines = max(1, original_nonblank_lines - max(0, allowed_line_decrease))
-        line_structure_changed = cleaned_nonblank_lines > max_lines or cleaned_nonblank_lines < min_lines
+        line_structure_changed = (
+            cleaned_nonblank_lines > max_lines or cleaned_nonblank_lines < min_lines
+        )
 
     return {
         "dialogue_style_changed": introduced_dash_dialogues
@@ -317,7 +349,11 @@ def sanitize_refine_chunk_output(
     - descola falas consecutivas (" " -> "\\n\\n")
     - evita quebra entre fala e tag de fala ("", perguntou")
     """
-    stats = {"blank_lines_fixed": 0, "dialogue_splits": 0, "repeated_curly_quotes_fixed": 0}
+    stats = {
+        "blank_lines_fixed": 0,
+        "dialogue_splits": 0,
+        "repeated_curly_quotes_fixed": 0,
+    }
     cleaned = re.sub(r'"""+\s*$', "", text, flags=re.MULTILINE)
     cleaned, repeated_curly_quotes_fixed = collapse_repeated_curly_quotes(cleaned)
     stats["repeated_curly_quotes_fixed"] = repeated_curly_quotes_fixed
@@ -336,7 +372,9 @@ def sanitize_refine_chunk_output(
     artifacts = '"""' in cleaned
     input_malformed_quote_boundary = has_malformed_quote_boundary(original)
     malformed_quote_boundary = has_malformed_quote_boundary(cleaned)
-    introduced_malformed_quote_boundary = malformed_quote_boundary and not input_malformed_quote_boundary
+    introduced_malformed_quote_boundary = (
+        malformed_quote_boundary and not input_malformed_quote_boundary
+    )
     structure_info = _dialogue_or_paragraph_regression(
         original,
         cleaned,
@@ -366,17 +404,21 @@ def sanitize_refine_chunk_output(
         # uma fala com um fechamento espúrio (”“Fala). Refaça uma vez antes
         # de recorrer ao chunk original.
         soft_retry = True
-    return cleaned, ok, {
-        "artifacts": artifacts,
-        "quotes_balanced": quotes_balanced,
-        "introduced_extra_curly_quotes": introduced_extra_curly_quotes,
-        "malformed_quote_boundary": malformed_quote_boundary,
-        "introduced_malformed_quote_boundary": introduced_malformed_quote_boundary,
-        "regression_dialogue": regression_dialogue,
-        "soft_retry": soft_retry,
-        **structure_info,
-        **stats,
-    }
+    return (
+        cleaned,
+        ok,
+        {
+            "artifacts": artifacts,
+            "quotes_balanced": quotes_balanced,
+            "introduced_extra_curly_quotes": introduced_extra_curly_quotes,
+            "malformed_quote_boundary": malformed_quote_boundary,
+            "introduced_malformed_quote_boundary": introduced_malformed_quote_boundary,
+            "regression_dialogue": regression_dialogue,
+            "soft_retry": soft_retry,
+            **structure_info,
+            **stats,
+        },
+    )
 
 
 def save_refine_debug_files(
@@ -393,6 +435,7 @@ def save_refine_debug_files(
     base = f"sec{section_index:03d}_chunk{chunk_index:03d}"
 
     def _write(name: str, content: str) -> None:
+        """Processamento interno auxiliar."""
         path = output_dir / f"{base}_{name}.txt"
         path.write_text(content, encoding="utf-8")
 
@@ -403,6 +446,7 @@ def save_refine_debug_files(
 
 
 def _write_progress(progress: RefineProgress | None, logger: logging.Logger) -> None:
+    """Processamento interno auxiliar."""
     if progress is None or progress.progress_path is None:
         return
     data = {
@@ -413,9 +457,13 @@ def _write_progress(progress: RefineProgress | None, logger: logging.Logger) -> 
         "chunks": {str(idx): text for idx, text in progress.chunk_outputs.items()},
     }
     try:
-        progress.progress_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        progress.progress_path.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
     except Exception as exc:  # pragma: no cover - I/O edge case
-        logger.warning("Falha ao gravar manifesto de refine em %s: %s", progress.progress_path, exc)
+        logger.warning(
+            "Falha ao gravar manifesto de refine em %s: %s", progress.progress_path, exc
+        )
 
 
 def _prepare_progress(
@@ -478,7 +526,9 @@ def _prepare_progress(
     )
 
 
-def build_refine_prompt(section: str, glossary_enabled: bool = False, glossary_block: str | None = None) -> str:
+def build_refine_prompt(
+    section: str, glossary_enabled: bool = False, glossary_block: str | None = None
+) -> str:
     glossary_section = ""
     if glossary_enabled and glossary_block:
         glossary_section = (
@@ -560,6 +610,8 @@ Comece a resposta exatamente com `### TEXTO_REFINADO_INICIO`; não escreva intro
 \"\"\"{section}\"\"\"
 """
     return prompt
+
+
 def split_markdown_sections(md_text: str) -> List[Tuple[str, str]]:
     """
     Divide o Markdown em seções por headings `#` até `######`.
@@ -605,12 +657,18 @@ def refine_section(
     debug_run: DebugRunWriter | None = None,
     manifest_chunks: list[dict] | None = None,
 ) -> str:
+    """
+    Executa o processo de refinamento em uma única seção (capítulo) do texto,
+    dividindo-a em chunks menores e processando cada um iterativamente.
+    """
     if metrics is None:
         metrics = {}
     if seen_chunks is None:
         seen_chunks = []
     paragraphs = paragraphs_from_text(body)
-    chunks = chunk_for_refine(paragraphs, max_chars=cfg.refine_chunk_chars, logger=logger)
+    chunks = chunk_for_refine(
+        paragraphs, max_chars=cfg.refine_chunk_chars, logger=logger
+    )
     logger.info("Refinando seção %s (%d chunks)", title or f"#{index}", len(chunks))
     refined_parts: List[str] = []
     stats = _CURRENT_STATS
@@ -620,7 +678,11 @@ def refine_section(
 
     for c_idx, chunk in enumerate(chunks, start=1):
         block_idx = _next_block_index()
-        record_chunk = bool(debug_run and manifest_chunks is not None and debug_run.should_write_chunk(block_idx))
+        record_chunk = bool(
+            debug_run
+            and manifest_chunks is not None
+            and debug_run.should_write_chunk(block_idx)
+        )
         if stats:
             stats.total_blocks += 1
         guard_mode = getattr(cfg, "refine_guardrails", "strict")
@@ -633,43 +695,65 @@ def refine_section(
         from_duplicate = False
         error_message: str | None = None
 
-        def _maybe_write_debug_files(original_text: str, llm_raw_text: str | None, final_text: str) -> None:
+        def _maybe_write_debug_files(
+            original_text: str, llm_raw_text: str | None, final_text: str
+        ) -> None:
             if not debug_run or not debug_run.should_write_chunk(block_idx):
                 return
             debug_stage_dir = debug_run.stage_dir("60_refine") / "debug_refine"
             debug_stage_dir.mkdir(parents=True, exist_ok=True)
             debug_run.write_text(
-                debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_original_pt.txt"),
+                debug_run.rel_path(
+                    debug_stage_dir / f"chunk{block_idx:03d}_original_pt.txt"
+                ),
                 original_text,
             )
             debug_run.write_text(
-                debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_context.txt"),
+                debug_run.rel_path(
+                    debug_stage_dir / f"chunk{block_idx:03d}_context.txt"
+                ),
                 "",
             )
             if llm_raw_text is not None:
                 raw_hash = debug_run.sha256_text(llm_raw_text)
                 if not debug_run.store_llm_raw:
                     llm_payload = f"[[OMITTED]]\n[[SHA256:{raw_hash}]]\n"
-                elif debug_run.max_chars_per_file and len(llm_raw_text) > debug_run.max_chars_per_file:
+                elif (
+                    debug_run.max_chars_per_file
+                    and len(llm_raw_text) > debug_run.max_chars_per_file
+                ):
                     truncated = llm_raw_text[: debug_run.max_chars_per_file]
-                    llm_payload = f"{truncated}\n\n[[TRUNCATED]]\n[[SHA256:{raw_hash}]]\n"
+                    llm_payload = (
+                        f"{truncated}\n\n[[TRUNCATED]]\n[[SHA256:{raw_hash}]]\n"
+                    )
                 else:
                     llm_payload = llm_raw_text
                 debug_run.write_text(
-                    debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_llm_raw.txt"),
+                    debug_run.rel_path(
+                        debug_stage_dir / f"chunk{block_idx:03d}_llm_raw.txt"
+                    ),
                     llm_payload,
                     allow_truncate=False,
                 )
             debug_run.write_text(
-                debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_final_pt.txt"),
+                debug_run.rel_path(
+                    debug_stage_dir / f"chunk{block_idx:03d}_final_pt.txt"
+                ),
                 final_text,
             )
 
         def _apply_normalizers(text: str) -> tuple[str, dict]:
+            """Processamento interno auxiliar."""
             normalized, norm_stats = apply_structural_normalizers(text)
-            normalized = apply_custom_normalizers(normalized, convert_quote_dialogues=False)
-            metrics["dialogue_splits"] = metrics.get("dialogue_splits", 0) + norm_stats.get("dialogue_splits", 0)
-            metrics["triple_quotes_removed"] = metrics.get("triple_quotes_removed", 0) + norm_stats.get("triple_quotes_removed", 0)
+            normalized = apply_custom_normalizers(
+                normalized, convert_quote_dialogues=False
+            )
+            metrics["dialogue_splits"] = metrics.get(
+                "dialogue_splits", 0
+            ) + norm_stats.get("dialogue_splits", 0)
+            metrics["triple_quotes_removed"] = metrics.get(
+                "triple_quotes_removed", 0
+            ) + norm_stats.get("triple_quotes_removed", 0)
             return normalized, norm_stats
 
         def record_block(
@@ -682,8 +766,14 @@ def refine_section(
             normalizer_stats: dict | None = None,
             guardrail_reasons: list[str] | None = None,
         ) -> None:
-            ratio = (len(final_text.strip()) / max(len(chunk.strip()), 1)) if chunk.strip() else 0.0
-            residual_english, residual_english_reason = detect_residual_english(final_text)
+            ratio = (
+                (len(final_text.strip()) / max(len(chunk.strip()), 1))
+                if chunk.strip()
+                else 0.0
+            )
+            residual_english, residual_english_reason = detect_residual_english(
+                final_text
+            )
             block_metrics.append(
                 {
                     "block_index": block_idx,
@@ -698,15 +788,28 @@ def refine_section(
                     "from_cache": from_cache,
                     "from_duplicate": from_duplicate,
                     "collapse_detected": collapse,
-                    "dialogue_splits": (normalizer_stats or {}).get("dialogue_splits", 0),
-                    "triple_quotes_removed": (normalizer_stats or {}).get("triple_quotes_removed", 0),
+                    "dialogue_splits": (normalizer_stats or {}).get(
+                        "dialogue_splits", 0
+                    ),
+                    "triple_quotes_removed": (normalizer_stats or {}).get(
+                        "triple_quotes_removed", 0
+                    ),
                     "guardrail_reasons": guardrail_reasons or [],
                 }
             )
+
         llm_raw: str | None = None
         for prev_chunk, prev_final in seen_chunks:
-            if is_near_duplicate(prev_chunk, chunk) and is_duplicate_reuse_safe(prev_chunk, chunk):
-                logger.info("Chunk ref-%d/%d-%d/%d marcado como duplicado; reuso habilitado.", index, total, c_idx, len(chunks))
+            if is_near_duplicate(prev_chunk, chunk) and is_duplicate_reuse_safe(
+                prev_chunk, chunk
+            ):
+                logger.info(
+                    "Chunk ref-%d/%d-%d/%d marcado como duplicado; reuso habilitado.",
+                    index,
+                    total,
+                    c_idx,
+                    len(chunks),
+                )
                 normalized_dup, norm_stats = _apply_normalizers(prev_final)
                 refined_parts.append(normalized_dup)
                 metrics["duplicates"] = metrics.get("duplicates", 0) + 1
@@ -718,7 +821,9 @@ def refine_section(
                     progress.error_blocks.discard(block_idx)
                     progress.chunk_outputs[block_idx] = normalized_dup
                 _write_progress(progress, logger)
-                record_block(normalized_dup, from_duplicate=True, normalizer_stats=norm_stats)
+                record_block(
+                    normalized_dup, from_duplicate=True, normalizer_stats=norm_stats
+                )
                 if debug_writer:
                     debug_writer(
                         {
@@ -736,10 +841,18 @@ def refine_section(
                 if record_chunk:
                     debug_stage_dir = debug_run.stage_dir("60_refine") / "debug_refine"
                     outputs_payload = {
-                        "debug_original": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_original_pt.txt"),
-                        "debug_context": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_context.txt"),
-                        "debug_llm_raw": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_llm_raw.txt"),
-                        "debug_final": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_final_pt.txt"),
+                        "debug_original": debug_run.rel_path(
+                            debug_stage_dir / f"chunk{block_idx:03d}_original_pt.txt"
+                        ),
+                        "debug_context": debug_run.rel_path(
+                            debug_stage_dir / f"chunk{block_idx:03d}_context.txt"
+                        ),
+                        "debug_llm_raw": debug_run.rel_path(
+                            debug_stage_dir / f"chunk{block_idx:03d}_llm_raw.txt"
+                        ),
+                        "debug_final": debug_run.rel_path(
+                            debug_stage_dir / f"chunk{block_idx:03d}_final_pt.txt"
+                        ),
                         "output_hash": debug_run.sha256_text(normalized_dup),
                     }
                     manifest_chunks.append(
@@ -759,12 +872,18 @@ def refine_section(
                             "contamination_detected": False,
                             "sanitization_ratio": None,
                             "normalizers": {
-                                "triple_quotes_removed": norm_stats.get("triple_quotes_removed", 0),
+                                "triple_quotes_removed": norm_stats.get(
+                                    "triple_quotes_removed", 0
+                                ),
                                 "dialogue_splits": norm_stats.get("dialogue_splits", 0),
                             },
                             "lengths": {
                                 "chars_out": len(normalized_dup),
-                                "ratio_out_in": round(len(normalized_dup.strip()) / max(len(chunk.strip()), 1), 3)
+                                "ratio_out_in": round(
+                                    len(normalized_dup.strip())
+                                    / max(len(chunk.strip()), 1),
+                                    3,
+                                )
                                 if chunk.strip()
                                 else 0.0,
                             },
@@ -776,11 +895,19 @@ def refine_section(
         if cache_exists("refine", h):
             data = load_cache("refine", h)
             if not _is_cache_compatible(data, cache_signature):
-                logger.debug("Cache de refine ignorado: assinatura diferente de backend/model/num_predict.")
+                logger.debug(
+                    "Cache de refine ignorado: assinatura diferente de backend/model/num_predict."
+                )
             else:
                 cached = data.get("final_output")
                 if cached:
-                    logger.info("Reusando cache de refine para bloco ref-%d/%d-%d/%d", index, total, c_idx, len(chunks))
+                    logger.info(
+                        "Reusando cache de refine para bloco ref-%d/%d-%d/%d",
+                        index,
+                        total,
+                        c_idx,
+                        len(chunks),
+                    )
                     normalized_cached, norm_stats = _apply_normalizers(cached)
                     refined_parts.append(normalized_cached)
                     metrics["cache_hits"] = metrics.get("cache_hits", 0) + 1
@@ -792,7 +919,9 @@ def refine_section(
                         progress.error_blocks.discard(block_idx)
                         progress.chunk_outputs[block_idx] = normalized_cached
                     _write_progress(progress, logger)
-                    record_block(normalized_cached, from_cache=True, normalizer_stats=norm_stats)
+                    record_block(
+                        normalized_cached, from_cache=True, normalizer_stats=norm_stats
+                    )
                     if debug_writer:
                         debug_writer(
                             {
@@ -808,12 +937,23 @@ def refine_section(
                         )
                     _maybe_write_debug_files(chunk, None, normalized_cached)
                     if record_chunk:
-                        debug_stage_dir = debug_run.stage_dir("60_refine") / "debug_refine"
+                        debug_stage_dir = (
+                            debug_run.stage_dir("60_refine") / "debug_refine"
+                        )
                         outputs_payload = {
-                            "debug_original": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_original_pt.txt"),
-                            "debug_context": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_context.txt"),
-                            "debug_llm_raw": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_llm_raw.txt"),
-                            "debug_final": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_final_pt.txt"),
+                            "debug_original": debug_run.rel_path(
+                                debug_stage_dir
+                                / f"chunk{block_idx:03d}_original_pt.txt"
+                            ),
+                            "debug_context": debug_run.rel_path(
+                                debug_stage_dir / f"chunk{block_idx:03d}_context.txt"
+                            ),
+                            "debug_llm_raw": debug_run.rel_path(
+                                debug_stage_dir / f"chunk{block_idx:03d}_llm_raw.txt"
+                            ),
+                            "debug_final": debug_run.rel_path(
+                                debug_stage_dir / f"chunk{block_idx:03d}_final_pt.txt"
+                            ),
                             "output_hash": debug_run.sha256_text(normalized_cached),
                         }
                         manifest_chunks.append(
@@ -833,12 +973,20 @@ def refine_section(
                                 "contamination_detected": False,
                                 "sanitization_ratio": None,
                                 "normalizers": {
-                                    "triple_quotes_removed": norm_stats.get("triple_quotes_removed", 0),
-                                    "dialogue_splits": norm_stats.get("dialogue_splits", 0),
+                                    "triple_quotes_removed": norm_stats.get(
+                                        "triple_quotes_removed", 0
+                                    ),
+                                    "dialogue_splits": norm_stats.get(
+                                        "dialogue_splits", 0
+                                    ),
                                 },
                                 "lengths": {
                                     "chars_out": len(normalized_cached),
-                                    "ratio_out_in": round(len(normalized_cached.strip()) / max(len(chunk.strip()), 1), 3)
+                                    "ratio_out_in": round(
+                                        len(normalized_cached.strip())
+                                        / max(len(chunk.strip()), 1),
+                                        3,
+                                    )
                                     if chunk.strip()
                                     else 0.0,
                                 },
@@ -847,9 +995,21 @@ def refine_section(
                             }
                         )
                     continue
-        if progress and block_idx in progress.refined_blocks and block_idx in progress.chunk_outputs:
-            logger.info("Reusando refinamento salvo para bloco ref-%d/%d-%d/%d", index, total, c_idx, len(chunks))
-            normalized_cached, norm_stats = _apply_normalizers(progress.chunk_outputs[block_idx])
+        if (
+            progress
+            and block_idx in progress.refined_blocks
+            and block_idx in progress.chunk_outputs
+        ):
+            logger.info(
+                "Reusando refinamento salvo para bloco ref-%d/%d-%d/%d",
+                index,
+                total,
+                c_idx,
+                len(chunks),
+            )
+            normalized_cached, norm_stats = _apply_normalizers(
+                progress.chunk_outputs[block_idx]
+            )
             refined_parts.append(normalized_cached)
             if stats:
                 stats.success_blocks += 1
@@ -874,10 +1034,18 @@ def refine_section(
             if record_chunk:
                 debug_stage_dir = debug_run.stage_dir("60_refine") / "debug_refine"
                 outputs_payload = {
-                    "debug_original": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_original_pt.txt"),
-                    "debug_context": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_context.txt"),
-                    "debug_llm_raw": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_llm_raw.txt"),
-                    "debug_final": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_final_pt.txt"),
+                    "debug_original": debug_run.rel_path(
+                        debug_stage_dir / f"chunk{block_idx:03d}_original_pt.txt"
+                    ),
+                    "debug_context": debug_run.rel_path(
+                        debug_stage_dir / f"chunk{block_idx:03d}_context.txt"
+                    ),
+                    "debug_llm_raw": debug_run.rel_path(
+                        debug_stage_dir / f"chunk{block_idx:03d}_llm_raw.txt"
+                    ),
+                    "debug_final": debug_run.rel_path(
+                        debug_stage_dir / f"chunk{block_idx:03d}_final_pt.txt"
+                    ),
                     "output_hash": debug_run.sha256_text(normalized_cached),
                 }
                 manifest_chunks.append(
@@ -897,12 +1065,18 @@ def refine_section(
                         "contamination_detected": False,
                         "sanitization_ratio": None,
                         "normalizers": {
-                            "triple_quotes_removed": norm_stats.get("triple_quotes_removed", 0),
+                            "triple_quotes_removed": norm_stats.get(
+                                "triple_quotes_removed", 0
+                            ),
                             "dialogue_splits": norm_stats.get("dialogue_splits", 0),
                         },
                         "lengths": {
                             "chars_out": len(normalized_cached),
-                            "ratio_out_in": round(len(normalized_cached.strip()) / max(len(chunk.strip()), 1), 3)
+                            "ratio_out_in": round(
+                                len(normalized_cached.strip())
+                                / max(len(chunk.strip()), 1),
+                                3,
+                            )
                             if chunk.strip()
                             else 0.0,
                         },
@@ -922,7 +1096,9 @@ def refine_section(
                 for term in selected_terms
                 if str(term.get("key", "")).strip()
             }
-            glossary_block = format_glossary_for_prompt(selected_index, glossary_prompt_limit)
+            glossary_block = format_glossary_for_prompt(
+                selected_index, glossary_prompt_limit
+            )
         else:
             glossary_block = None
         prompt = build_refine_prompt(
@@ -945,12 +1121,18 @@ def refine_section(
                 llm_attempts += 1
                 refined_candidate = response_text
                 if glossary_state:
-                    raw_without_suggestions, suggestion_block = split_refined_and_suggestions(llm_raw)
+                    raw_without_suggestions, suggestion_block = (
+                        split_refined_and_suggestions(llm_raw)
+                    )
                     if suggestion_block is not None:
-                        refined_candidate = sanitize_refine_output(raw_without_suggestions)
+                        refined_candidate = sanitize_refine_output(
+                            raw_without_suggestions
+                        )
                     suggestions = parse_glossary_suggestions(suggestion_block or "")
                     if suggestions:
-                        updated = apply_suggestions_to_state(glossary_state, suggestions, logger)
+                        updated = apply_suggestions_to_state(
+                            glossary_state, suggestions, logger
+                        )
                         if updated:
                             save_dynamic_glossary(glossary_state, logger)
 
@@ -961,19 +1143,37 @@ def refine_section(
                 used_fallback = False
                 if guard_mode == "off":
                     refined_text = refined_candidate
-                    if not refined_text.strip() or has_meta_noise(refined_text) or has_meta_noise(llm_raw or ""):
+                    if (
+                        not refined_text.strip()
+                        or has_meta_noise(refined_text)
+                        or has_meta_noise(llm_raw or "")
+                    ):
                         used_fallback = True
                         fallback_reasons.append("empty_or_meta_guardrail")
                     else:
-                        collapse_flag, collapse_reasons, collapse_details = detect_model_collapse(
-                            refined_text, original_len=len(chunk), mode="refine", return_reasons=True
+                        collapse_flag, collapse_reasons, collapse_details = (
+                            detect_model_collapse(
+                                refined_text,
+                                original_len=len(chunk),
+                                mode="refine",
+                                return_reasons=True,
+                            )
                         )
                         if collapse_flag:
                             used_fallback = True
                             fallback_reasons.append("collapse_detector")
                 elif guard_mode == "relaxed":
-                    filtered_text = anti_hallucination_filter(orig=chunk, llm_raw=llm_raw, cleaned=refined_candidate, mode="refine")
-                    if filtered_text == chunk and refined_candidate.strip() and refined_candidate.strip() != chunk.strip():
+                    filtered_text = anti_hallucination_filter(
+                        orig=chunk,
+                        llm_raw=llm_raw,
+                        cleaned=refined_candidate,
+                        mode="refine",
+                    )
+                    if (
+                        filtered_text == chunk
+                        and refined_candidate.strip()
+                        and refined_candidate.strip() != chunk.strip()
+                    ):
                         refined_text = refined_candidate
                     else:
                         refined_text = filtered_text
@@ -985,8 +1185,13 @@ def refine_section(
                         severe_issue = True
                         fallback_reasons.append("meta_noise")
                     else:
-                        collapse_flag, collapse_reasons, collapse_details = detect_model_collapse(
-                            refined_text, original_len=len(chunk), mode="refine", return_reasons=True
+                        collapse_flag, collapse_reasons, collapse_details = (
+                            detect_model_collapse(
+                                refined_text,
+                                original_len=len(chunk),
+                                mode="refine",
+                                return_reasons=True,
+                            )
                         )
                         if collapse_flag:
                             severe_issue = True
@@ -994,16 +1199,29 @@ def refine_section(
                     if severe_issue:
                         used_fallback = True
                 else:  # strict
-                    refined_text = anti_hallucination_filter(orig=chunk, llm_raw=llm_raw, cleaned=refined_candidate, mode="refine")
-                    if refined_text == chunk and refined_candidate.strip() != chunk.strip():
+                    refined_text = anti_hallucination_filter(
+                        orig=chunk,
+                        llm_raw=llm_raw,
+                        cleaned=refined_candidate,
+                        mode="refine",
+                    )
+                    if (
+                        refined_text == chunk
+                        and refined_candidate.strip() != chunk.strip()
+                    ):
                         used_fallback = True
                         fallback_reasons.append("anti_hallucination_filter")
                     if not refined_text.strip():
                         used_fallback = True
                         fallback_reasons.append("empty_after_guardrail")
                     else:
-                        collapse_flag, collapse_reasons, collapse_details = detect_model_collapse(
-                            refined_text, original_len=len(chunk), mode="refine", return_reasons=True
+                        collapse_flag, collapse_reasons, collapse_details = (
+                            detect_model_collapse(
+                                refined_text,
+                                original_len=len(chunk),
+                                mode="refine",
+                                return_reasons=True,
+                            )
                         )
                         if collapse_flag:
                             used_fallback = True
@@ -1021,8 +1239,12 @@ def refine_section(
                         if debug_refine:
                             fail_dir = cfg.output_dir / "debug_refine_failed"
                             fail_dir.mkdir(parents=True, exist_ok=True)
-                            (fail_dir / f"ref_{index}_{c_idx}_raw.txt").write_text(refined_text, encoding="utf-8")
-                            (fail_dir / f"ref_{index}_{c_idx}_rejected.txt").write_text(sanitized_refined, encoding="utf-8")
+                            (fail_dir / f"ref_{index}_{c_idx}_raw.txt").write_text(
+                                refined_text, encoding="utf-8"
+                            )
+                            (fail_dir / f"ref_{index}_{c_idx}_rejected.txt").write_text(
+                                sanitized_refined, encoding="utf-8"
+                            )
                         logger.warning(
                             "Refine chunk %d/%d-%d/%d rejeitado por formatacao (ok_fmt=%s info=%s); usando fallback.",
                             index,
@@ -1036,7 +1258,9 @@ def refine_section(
                         refined_text = sanitized_refined
 
                 retry, retry_reason = needs_retry(chunk, refined_text)
-                residual_english, residual_english_reason = detect_residual_english(refined_text)
+                residual_english, residual_english_reason = detect_residual_english(
+                    refined_text
+                )
                 if not used_fallback and residual_english:
                     retry = True
                     retry_reason = residual_english_reason
@@ -1065,15 +1289,30 @@ def refine_section(
                         cfg.max_retries,
                     )
                     if "omissao_dialogo" in retry_reason:
-                        prompt = prompt + "\n\nATENÇÃO: Você omitiu falas. Refaça traduzindo TODAS as frases e mantendo cada fala entre aspas exatamente uma vez. Não resuma. Não remova risos/interjeições."
+                        prompt = (
+                            prompt
+                            + "\n\nATENÇÃO: Você omitiu falas. Refaça traduzindo TODAS as frases e mantendo cada fala entre aspas exatamente uma vez. Não resuma. Não remova risos/interjeições."
+                        )
                     elif "residual_english" in retry_reason:
-                        prompt = prompt + "\n\nATENÇÃO: Ainda há frases em inglês. Refaça mantendo a mesma estrutura de parágrafos e traduzindo essas frases para português brasileiro natural. Preserve apenas nomes próprios, honoríficos e termos do glossário."
+                        prompt = (
+                            prompt
+                            + "\n\nATENÇÃO: Ainda há frases em inglês. Refaça mantendo a mesma estrutura de parágrafos e traduzindo essas frases para português brasileiro natural. Preserve apenas nomes próprios, honoríficos e termos do glossário."
+                        )
                     elif "truncado" in retry_reason:
-                        prompt = prompt + "\n\nATENÇÃO: Sua saída foi truncada. Refaça incluindo TODO o conteúdo."
+                        prompt = (
+                            prompt
+                            + "\n\nATENÇÃO: Sua saída foi truncada. Refaça incluindo TODO o conteúdo."
+                        )
                     elif "malformed_quote_boundary" in retry_reason:
-                        prompt = prompt + "\n\nATENÇÃO: Há uma fala iniciada por fechamento e abertura de aspas colados. Refaça preservando cada fala com aspas corretas, sem `”“` e sem alterar parágrafos."
+                        prompt = (
+                            prompt
+                            + "\n\nATENÇÃO: Há uma fala iniciada por fechamento e abertura de aspas colados. Refaça preservando cada fala com aspas corretas, sem `”“` e sem alterar parágrafos."
+                        )
                     else:
-                        prompt = prompt + "\n\nATENÇÃO: sua saída anterior veio truncada ou repetitiva. Refaça mantendo TODO o conteúdo. Não resuma."
+                        prompt = (
+                            prompt
+                            + "\n\nATENÇÃO: sua saída anterior veio truncada ou repetitiva. Refaça mantendo TODO o conteúdo. Não resuma."
+                        )
                     continue
                 # fim do loop de retry
                 break
@@ -1107,7 +1346,9 @@ def refine_section(
                         title or f"#{index}",
                     )
             refined_text, norm_stats = _apply_normalizers(refined_text)
-            final_residual_english, final_residual_english_reason = detect_residual_english(refined_text)
+            final_residual_english, final_residual_english_reason = (
+                detect_residual_english(refined_text)
+            )
             if final_residual_english:
                 logger.warning(
                     "Refine chunk %d/%d-%d/%d ainda contem possivel ingles residual: %s",
@@ -1120,7 +1361,9 @@ def refine_section(
             if used_fallback or collapse_flag:
                 reasons_payload = fallback_reasons
                 if collapse_reasons:
-                    reasons_payload = reasons_payload + [f"collapse:{r}" for r in collapse_reasons]
+                    reasons_payload = reasons_payload + [
+                        f"collapse:{r}" for r in collapse_reasons
+                    ]
                 if final_residual_english:
                     reasons_payload = reasons_payload + [final_residual_english_reason]
                 _write_guardrail_debug_file(
@@ -1159,7 +1402,9 @@ def refine_section(
                 used_fallback=used_fallback,
                 collapse=collapse_flag,
                 normalizer_stats=norm_stats,
-                guardrail_reasons=fallback_reasons if (used_fallback or collapse_flag) else None,
+                guardrail_reasons=fallback_reasons
+                if (used_fallback or collapse_flag)
+                else None,
             )
             save_cache(
                 "refine",
@@ -1194,7 +1439,9 @@ def refine_section(
                     }
                 )
             if record_chunk:
-                suspect_output = bool(used_fallback or collapse_flag or final_residual_english)
+                suspect_output = bool(
+                    used_fallback or collapse_flag or final_residual_english
+                )
                 suspect_reason = ""
                 if used_fallback and fallback_reasons:
                     suspect_reason = ";".join(fallback_reasons)
@@ -1205,10 +1452,18 @@ def refine_section(
                 debug_stage_dir = debug_run.stage_dir("60_refine") / "debug_refine"
                 _maybe_write_debug_files(chunk, llm_raw, refined_text)
                 outputs_payload = {
-                    "debug_original": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_original_pt.txt"),
-                    "debug_context": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_context.txt"),
-                    "debug_llm_raw": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_llm_raw.txt"),
-                    "debug_final": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_final_pt.txt"),
+                    "debug_original": debug_run.rel_path(
+                        debug_stage_dir / f"chunk{block_idx:03d}_original_pt.txt"
+                    ),
+                    "debug_context": debug_run.rel_path(
+                        debug_stage_dir / f"chunk{block_idx:03d}_context.txt"
+                    ),
+                    "debug_llm_raw": debug_run.rel_path(
+                        debug_stage_dir / f"chunk{block_idx:03d}_llm_raw.txt"
+                    ),
+                    "debug_final": debug_run.rel_path(
+                        debug_stage_dir / f"chunk{block_idx:03d}_final_pt.txt"
+                    ),
                     "output_hash": debug_run.sha256_text(refined_text),
                 }
                 manifest_chunks.append(
@@ -1230,12 +1485,17 @@ def refine_section(
                         "contamination_detected": False,
                         "sanitization_ratio": None,
                         "normalizers": {
-                            "triple_quotes_removed": norm_stats.get("triple_quotes_removed", 0),
+                            "triple_quotes_removed": norm_stats.get(
+                                "triple_quotes_removed", 0
+                            ),
                             "dialogue_splits": norm_stats.get("dialogue_splits", 0),
                         },
                         "lengths": {
                             "chars_out": len(refined_text),
-                            "ratio_out_in": round(len(refined_text.strip()) / max(len(chunk.strip()), 1), 3)
+                            "ratio_out_in": round(
+                                len(refined_text.strip()) / max(len(chunk.strip()), 1),
+                                3,
+                            )
                             if chunk.strip()
                             else 0.0,
                         },
@@ -1270,7 +1530,12 @@ def refine_section(
                 guardrails_mode=guard_mode,
                 collapse_flag=False,
             )
-            record_block(fallback_text, used_fallback=True, normalizer_stats=norm_stats, guardrail_reasons=["exception"])
+            record_block(
+                fallback_text,
+                used_fallback=True,
+                normalizer_stats=norm_stats,
+                guardrail_reasons=["exception"],
+            )
             if debug_writer:
                 debug_writer(
                     {
@@ -1288,10 +1553,18 @@ def refine_section(
             if record_chunk:
                 debug_stage_dir = debug_run.stage_dir("60_refine") / "debug_refine"
                 outputs_payload = {
-                    "debug_original": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_original_pt.txt"),
-                    "debug_context": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_context.txt"),
-                    "debug_llm_raw": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_llm_raw.txt"),
-                    "debug_final": debug_run.rel_path(debug_stage_dir / f"chunk{block_idx:03d}_final_pt.txt"),
+                    "debug_original": debug_run.rel_path(
+                        debug_stage_dir / f"chunk{block_idx:03d}_original_pt.txt"
+                    ),
+                    "debug_context": debug_run.rel_path(
+                        debug_stage_dir / f"chunk{block_idx:03d}_context.txt"
+                    ),
+                    "debug_llm_raw": debug_run.rel_path(
+                        debug_stage_dir / f"chunk{block_idx:03d}_llm_raw.txt"
+                    ),
+                    "debug_final": debug_run.rel_path(
+                        debug_stage_dir / f"chunk{block_idx:03d}_final_pt.txt"
+                    ),
                     "output_hash": debug_run.sha256_text(fallback_text),
                 }
                 manifest_chunks.append(
@@ -1311,12 +1584,17 @@ def refine_section(
                         "contamination_detected": False,
                         "sanitization_ratio": None,
                         "normalizers": {
-                            "triple_quotes_removed": norm_stats.get("triple_quotes_removed", 0),
+                            "triple_quotes_removed": norm_stats.get(
+                                "triple_quotes_removed", 0
+                            ),
                             "dialogue_splits": norm_stats.get("dialogue_splits", 0),
                         },
                         "lengths": {
                             "chars_out": len(fallback_text),
-                            "ratio_out_in": round(len(fallback_text.strip()) / max(len(chunk.strip()), 1), 3)
+                            "ratio_out_in": round(
+                                len(fallback_text.strip()) / max(len(chunk.strip()), 1),
+                                3,
+                            )
                             if chunk.strip()
                             else 0.0,
                         },
@@ -1351,6 +1629,10 @@ def refine_markdown_file(
     cleanup_mode: str = "off",
     debug_run: DebugRunWriter | None = None,
 ) -> None:
+    """
+    Ponto de entrada principal para o refinamento (polimento e revisão) de um arquivo Markdown traduzido.
+    Orquestra a divisão do arquivo, processamento paralelo (ou sequencial) e junção final.
+    """
     set_cache_base_dir(cfg.output_dir)
     raw_md = read_text(input_path)
     md_text = raw_md
@@ -1376,10 +1658,14 @@ def refine_markdown_file(
     if trigger_cleanup:
         md_text, cleanup_stats = cleanup_before_refine(md_text)
         cleanup_applied = True
-        pre_refine_path = output_path.with_name(f"{output_path.stem}_pre_refine_cleanup.md")
+        pre_refine_path = output_path.with_name(
+            f"{output_path.stem}_pre_refine_cleanup.md"
+        )
         pre_refine_path.write_text(md_text, encoding="utf-8")
         if debug_run:
-            debug_run.pre_refine_rel = f"50_cleanup_pre_refine/{debug_run.slug}_pre_refine_cleanup.md"
+            debug_run.pre_refine_rel = (
+                f"50_cleanup_pre_refine/{debug_run.slug}_pre_refine_cleanup.md"
+            )
             debug_run.write_text(debug_run.pre_refine_rel, md_text)
     cleanup_preview_hash_after = chunk_hash(md_text)
     if debug_run:
@@ -1395,7 +1681,9 @@ def refine_markdown_file(
     doc_hash = chunk_hash(md_text)
     sections = split_markdown_sections(md_text)
     logger.info("Arquivo %s: %d seções detectadas", input_path.name, len(sections))
-    logger.info("Refine guardrails mode: %s", getattr(cfg, "refine_guardrails", "strict"))
+    logger.info(
+        "Refine guardrails mode: %s", getattr(cfg, "refine_guardrails", "strict")
+    )
     stats = RefineStats()
     metrics: dict[str, int | list | dict | bool | str] = {
         "cache_hits": 0,
@@ -1412,7 +1700,6 @@ def refine_markdown_file(
     metrics["cleanup_preview_hash_before"] = cleanup_preview_hash_before
     metrics["cleanup_preview_hash_after"] = cleanup_preview_hash_after
     seen_chunks: list[tuple[str, str]] = []
-    cache_signature = _cache_signature_from(cfg, backend)
     refine_manifest_chunks: list[dict] = []
 
     # Pré-computa total de blocos para progress
@@ -1420,10 +1707,14 @@ def refine_markdown_file(
     max_refine_chunk_len = 0
     for _, body in sections:
         paragraphs = paragraphs_from_text(body)
-        chunks = chunk_for_refine(paragraphs, max_chars=cfg.refine_chunk_chars, logger=logger)
+        chunks = chunk_for_refine(
+            paragraphs, max_chars=cfg.refine_chunk_chars, logger=logger
+        )
         total_blocks += len(chunks)
         if chunks:
-            max_refine_chunk_len = max(max_refine_chunk_len, max(len(c) for c in chunks))
+            max_refine_chunk_len = max(
+                max_refine_chunk_len, max(len(c) for c in chunks)
+            )
     metrics["effective_refine_chunk_chars"] = cfg.refine_chunk_chars
     metrics["max_chunk_chars_observed"] = max_refine_chunk_len
 
@@ -1442,7 +1733,9 @@ def refine_markdown_file(
             "total_chunks": total_blocks,
             "refine_guardrails": getattr(cfg, "refine_guardrails", "strict"),
         }
-        state_path.write_text(json.dumps(state_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        state_path.write_text(
+            json.dumps(state_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
     except Exception:
         pass
 
@@ -1455,10 +1748,13 @@ def refine_markdown_file(
     _write_progress(progress, logger)
 
     if debug_chunks:
-        debug_file_path = output_path.with_name(f"{output_path.stem}_chunks_debug.jsonl")
+        debug_file_path = output_path.with_name(
+            f"{output_path.stem}_chunks_debug.jsonl"
+        )
         debug_file = debug_file_path.open("w", encoding="utf-8")
 
     def _write_chunk_debug(entry: dict) -> None:
+        """Processamento interno auxiliar."""
         if debug_file:
             debug_file.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
@@ -1497,13 +1793,17 @@ def refine_markdown_file(
         logger.debug("Pós-processo de diálogo (refine-final): %s", dialogue_stats)
     opens_q, closes_q = count_curly_quotes(final_md)
     if opens_q != closes_q:
-        final_md, _ = fix_unbalanced_quotes(final_md, logger=logger, label="refine-final")
+        final_md, _ = fix_unbalanced_quotes(
+            final_md, logger=logger, label="refine-final"
+        )
 
     write_text(output_path, final_md)
     if glossary_state:
         save_dynamic_glossary(glossary_state, logger)
     try:
-        version = (Path(__file__).parent / "VERSION").read_text(encoding="utf-8").strip()
+        version = (
+            (Path(__file__).parent / "VERSION").read_text(encoding="utf-8").strip()
+        )
     except Exception:
         version = "unknown"
     report = {
@@ -1525,7 +1825,9 @@ def refine_markdown_file(
     try:
         slug_report = Path(input_path).stem
         report_path = output_path.parent / f"{slug_report}_refine_report.json"
-        report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        report_path.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         refine_metrics = {
             "total_blocks": stats.total_blocks,
             "cache_hits": metrics.get("cache_hits", 0),
@@ -1546,7 +1848,9 @@ def refine_markdown_file(
         }
         slug = Path(input_path).stem
         metrics_path = output_path.parent / f"{slug}_refine_metrics.json"
-        metrics_path.write_text(json.dumps(refine_metrics, ensure_ascii=False, indent=2), encoding="utf-8")
+        metrics_path.write_text(
+            json.dumps(refine_metrics, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
     except Exception:
         pass
     if debug_file:
@@ -1620,7 +1924,9 @@ def _call_with_retry(
             return raw_text, text
         except Exception as exc:
             last_error = exc
-            logger.warning("%s falhou (tentativa %d/%d): %s", label, attempt, attempts, exc)
+            logger.warning(
+                "%s falhou (tentativa %d/%d): %s", label, attempt, attempts, exc
+            )
             if attempt < attempts:
                 time.sleep(delay)
                 delay *= cfg.backoff_factor

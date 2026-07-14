@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import subprocess
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from .config import AppConfig
-
 
 DEBUG_SUBDIRS = (
     "00_inputs",
@@ -25,6 +24,7 @@ DEBUG_SUBDIRS = (
 
 
 def _to_jsonable(value: Any) -> Any:
+    """Processamento interno auxiliar."""
     if isinstance(value, Path):
         return value.as_posix()
     if isinstance(value, dict):
@@ -35,6 +35,7 @@ def _to_jsonable(value: Any) -> Any:
 
 
 def _git_sha() -> str | None:
+    """Processamento interno auxiliar."""
     try:
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
@@ -50,6 +51,8 @@ def _git_sha() -> str | None:
 
 @dataclass
 class DebugRunWriter:
+    """Processamento interno auxiliar."""
+
     output_dir: Path
     slug: str
     input_kind: str
@@ -78,6 +81,7 @@ class DebugRunWriter:
         store_llm_raw: bool = True,
         timestamp: datetime | None = None,
     ) -> "DebugRunWriter":
+        """Processamento interno auxiliar."""
         if timestamp is None:
             timestamp = datetime.now()
         stamp = timestamp.strftime("%Y%m%d_%H%M%S")
@@ -99,40 +103,56 @@ class DebugRunWriter:
         )
 
     def stage_dir(self, stage: str) -> Path:
+        """Processamento interno auxiliar."""
         return self.run_dir / stage
 
     def rel_path(self, path: Path) -> str:
+        """Processamento interno auxiliar."""
         return path.relative_to(self.run_dir).as_posix()
 
     def sha256_text(self, text: str) -> str:
+        """Processamento interno auxiliar."""
         return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
     def write_json(self, rel_path: str | Path, payload: dict) -> None:
+        """Processamento interno auxiliar."""
         path = self.run_dir / rel_path
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
     def append_jsonl(self, rel_path: str | Path, payload: dict) -> None:
+        """Processamento interno auxiliar."""
         path = self.run_dir / rel_path
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
-    def write_text(self, rel_path: str | Path, text: str, *, allow_truncate: bool = True) -> str:
+    def write_text(
+        self, rel_path: str | Path, text: str, *, allow_truncate: bool = True
+    ) -> str:
+        """Processamento interno auxiliar."""
         path = self.run_dir / rel_path
         path.parent.mkdir(parents=True, exist_ok=True)
         full_hash = self.sha256_text(text)
-        if allow_truncate and self.max_chars_per_file is not None and len(text) > self.max_chars_per_file:
+        if (
+            allow_truncate
+            and self.max_chars_per_file is not None
+            and len(text) > self.max_chars_per_file
+        ):
             text = text[: self.max_chars_per_file]
         path.write_text(text, encoding="utf-8")
         return full_hash
 
     def should_write_chunk(self, chunk_index: int) -> bool:
+        """Processamento interno auxiliar."""
         if self.max_chunks is None:
             return True
         return chunk_index <= self.max_chunks
 
     def write_args(self, args: dict, cfg: AppConfig) -> None:
+        """Processamento interno auxiliar."""
         payload = {
             "args": _to_jsonable(args),
             "config": _to_jsonable(cfg.__dict__),
@@ -140,6 +160,7 @@ class DebugRunWriter:
         self.write_json("00_inputs/args.json", payload)
 
     def write_backend(self, payload: dict) -> None:
+        """Processamento interno auxiliar."""
         self.write_json("00_inputs/backend.json", payload)
 
     def write_versions(
@@ -148,6 +169,7 @@ class DebugRunWriter:
         refine_prompt_hash: str | None,
         repair_prompt_hash: str | None = None,
     ) -> None:
+        """Processamento interno auxiliar."""
         version_path = Path(__file__).parent / "VERSION"
         try:
             pipeline_version = version_path.read_text(encoding="utf-8").strip()
@@ -165,27 +187,34 @@ class DebugRunWriter:
         self.write_json("00_inputs/versions.json", payload)
 
     def write_timing(self, timing_data: dict) -> None:
+        """Processamento interno auxiliar."""
         self.write_json("99_reports/timings.json", timing_data)
 
     def write_run_summary(self, payload: dict) -> None:
+        """Processamento interno auxiliar."""
         errors_path = self.run_dir / "99_reports" / "errors.jsonl"
         errors_path.parent.mkdir(parents=True, exist_ok=True)
         errors_path.touch(exist_ok=True)
         self.write_json("99_reports/run_summary.json", payload)
 
     def write_error(self, payload: dict) -> None:
+        """Processamento interno auxiliar."""
         self.append_jsonl("99_reports/errors.jsonl", payload)
 
     def write_preprocess_report(self, payload: dict) -> None:
+        """Processamento interno auxiliar."""
         self.write_json("10_preprocess/preprocess_report.json", payload)
 
     def write_desquebrar_report(self, payload: dict) -> None:
+        """Processamento interno auxiliar."""
         self.write_json("20_desquebrar/desquebrar_report.json", payload)
 
     def write_cleanup_report(self, payload: dict) -> None:
+        """Processamento interno auxiliar."""
         self.write_json("50_cleanup_pre_refine/cleanup_report.json", payload)
 
     def write_manifest(self, stage: str, payload: dict) -> None:
+        """Processamento interno auxiliar."""
         if stage == "translate":
             self.write_json("40_translate/translate_manifest.json", payload)
         elif stage == "repair":
@@ -202,5 +231,8 @@ class DebugRunWriter:
         refine_prompt_hash: str | None,
         repair_prompt_hash: str | None = None,
     ) -> None:
+        """Processamento interno auxiliar."""
         self.write_args(args, cfg)
-        self.write_versions(translate_prompt_hash, refine_prompt_hash, repair_prompt_hash)
+        self.write_versions(
+            translate_prompt_hash, refine_prompt_hash, repair_prompt_hash
+        )

@@ -4,11 +4,17 @@ from pathlib import Path
 
 from tradutor.cache_utils import set_cache_base_dir
 from tradutor.config import AppConfig
-from tradutor.repair import detect_translation_repair_issues, repair_translation_chunk, validate_repair_candidate
+from tradutor.repair import (
+    detect_translation_repair_issues,
+    repair_translation_chunk,
+    validate_repair_candidate,
+)
 from tradutor.translate import translate_document
 
 
 class _RepairBackend:
+    """Processamento interno auxiliar."""
+
     backend = "stub"
     model = "stub"
     num_predict = 10
@@ -16,9 +22,11 @@ class _RepairBackend:
     repeat_penalty = 1.0
 
     def __init__(self) -> None:
+        """Processamento interno auxiliar."""
         self.calls = 0
 
     def generate(self, prompt: str):
+        """Processamento interno auxiliar."""
         self.calls += 1
         text = (
             "### TEXTO_REPARADO_INICIO\n"
@@ -29,6 +37,8 @@ class _RepairBackend:
 
 
 class _TranslateThenRepairBackend:
+    """Processamento interno auxiliar."""
+
     backend = "stub"
     model = "stub"
     num_predict = 10
@@ -36,9 +46,11 @@ class _TranslateThenRepairBackend:
     repeat_penalty = 1.0
 
     def __init__(self) -> None:
+        """Processamento interno auxiliar."""
         self.calls = 0
 
     def generate(self, prompt: str):
+        """Processamento interno auxiliar."""
         self.calls += 1
         if self.calls == 1:
             text = (
@@ -56,6 +68,8 @@ class _TranslateThenRepairBackend:
 
 
 class _AmputatingRepairBackend:
+    """Processamento interno auxiliar."""
+
     backend = "stub"
     model = "stub"
     num_predict = 10
@@ -63,9 +77,11 @@ class _AmputatingRepairBackend:
     repeat_penalty = 1.0
 
     def __init__(self) -> None:
+        """Processamento interno auxiliar."""
         self.calls = 0
 
     def generate(self, prompt: str):
+        """Processamento interno auxiliar."""
         self.calls += 1
         text = (
             "### TEXTO_REPARADO_INICIO\n"
@@ -76,6 +92,7 @@ class _AmputatingRepairBackend:
 
 
 def test_detect_translation_repair_issues_flags_residual_english() -> None:
+    """Processamento interno auxiliar."""
     issues = detect_translation_repair_issues(
         source_text='"I have no desire to die," replied Seras calmly.',
         translated_text='"I have no desire to die," replied Seras calmly, choosing not to answer directly.',
@@ -85,6 +102,7 @@ def test_detect_translation_repair_issues_flags_residual_english() -> None:
 
 
 def test_repair_translation_chunk_fixes_residual_english(tmp_path: Path) -> None:
+    """Processamento interno auxiliar."""
     set_cache_base_dir(tmp_path)
     backend = _RepairBackend()
     result = repair_translation_chunk(
@@ -103,6 +121,7 @@ def test_repair_translation_chunk_fixes_residual_english(tmp_path: Path) -> None
 
 
 def test_translate_document_repairs_chunk_before_final_output(tmp_path: Path) -> None:
+    """Processamento interno auxiliar."""
     set_cache_base_dir(tmp_path)
     cfg = AppConfig(
         output_dir=tmp_path,
@@ -124,12 +143,17 @@ def test_translate_document_repairs_chunk_before_final_output(tmp_path: Path) ->
     assert "Não tenho vontade de morrer" in result
     assert "I have no desire" not in result
     assert backend.calls >= 2
-    repair_metrics = json.loads((tmp_path / "sample_repair_metrics.json").read_text(encoding="utf-8"))
+    repair_metrics = json.loads(
+        (tmp_path / "sample_repair_metrics.json").read_text(encoding="utf-8")
+    )
     assert repair_metrics["elapsed_seconds"] >= 0
     assert repair_metrics["chunks"][0]["elapsed_seconds"] >= 0
 
 
-def test_repair_rejects_candidate_that_removes_existing_translation(tmp_path: Path) -> None:
+def test_repair_rejects_candidate_that_removes_existing_translation(
+    tmp_path: Path,
+) -> None:
+    """Processamento interno auxiliar."""
     set_cache_base_dir(tmp_path)
     source = (
         "Opening line with Nyaki and Slei.\n\n"

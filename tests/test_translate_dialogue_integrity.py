@@ -1,9 +1,10 @@
-from tradutor.qa import needs_retry
 from tradutor.postprocess_translation import postprocess_translation
+from tradutor.qa import needs_retry
 from tradutor.translate import _normalize_chunk_dialogue_quotes
 
 
 def test_needs_retry_unbalanced_curly_quotes():
+    """Processamento interno auxiliar."""
     input_text = "“How did you get there?”"
     output_text = "“Como você chegou lá?"
 
@@ -14,6 +15,7 @@ def test_needs_retry_unbalanced_curly_quotes():
 
 
 def test_chunk_quote_normalizer_removes_one_spurious_terminal_straight_quote() -> None:
+    """Processamento interno auxiliar."""
     source = "“The dialogue ends here.” The narration continues."
     translated = '"A fala termina aqui." A narração continua."'
 
@@ -23,15 +25,19 @@ def test_chunk_quote_normalizer_removes_one_spurious_terminal_straight_quote() -
 
 
 def test_chunk_quote_normalizer_removes_premature_curly_close_before_laughter() -> None:
+    """Processamento interno auxiliar."""
     source = "Vicius riu. “Speak properly, won't you? Pfft, hee hee! Pathetic!”"
     translated = "Vicius riu. “Fale direito, pode ser?” Pfft, hee hee! Patética!”"
 
     normalized = _normalize_chunk_dialogue_quotes(source, translated)
 
-    assert normalized == "Vicius riu. “Fale direito, pode ser? Pfft, hee hee! Patética!”"
+    assert (
+        normalized == "Vicius riu. “Fale direito, pode ser? Pfft, hee hee! Patética!”"
+    )
 
 
 def test_needs_retry_allows_quote_boundary_in_source_chunk() -> None:
+    """Processamento interno auxiliar."""
     input_text = "From my perspective, this can be resolved.”"
     output_text = "Do meu ponto de vista, isso pode ser resolvido.”"
 
@@ -42,6 +48,7 @@ def test_needs_retry_allows_quote_boundary_in_source_chunk() -> None:
 
 
 def test_needs_retry_allows_odd_quote_boundary_when_style_changes() -> None:
+    """Processamento interno auxiliar."""
     input_text = "“First.”\n\n“Second.”\n\nThird?”"
     output_text = '"Primeiro."\n\n"Segundo."\n\n"Terceiro'
 
@@ -52,6 +59,7 @@ def test_needs_retry_allows_odd_quote_boundary_when_style_changes() -> None:
 
 
 def test_needs_retry_rejects_extra_close_against_source_boundary() -> None:
+    """Processamento interno auxiliar."""
     input_text = "From my perspective, this can be resolved.”"
     output_text = "Do meu ponto de vista, isso pode ser resolvido.””"
 
@@ -62,6 +70,7 @@ def test_needs_retry_rejects_extra_close_against_source_boundary() -> None:
 
 
 def test_needs_retry_rejects_extra_balanced_quote_pair() -> None:
+    """Processamento interno auxiliar."""
     input_text = "“Primeira fala.”"
     output_text = "“Primeira fala.”\n\n“Fala inventada.”"
 
@@ -71,7 +80,10 @@ def test_needs_retry_rejects_extra_balanced_quote_pair() -> None:
     assert reason == "extra_curly_quotes"
 
 
-def test_needs_retry_allows_one_quote_pair_that_repairs_internal_source_defect() -> None:
+def test_needs_retry_allows_one_quote_pair_that_repairs_internal_source_defect() -> (
+    None
+):
+    """Processamento interno auxiliar."""
     input_text = (
         "“First speech.”\n\n"
         "From my perspective, this can be resolved.”\n\n"
@@ -90,6 +102,7 @@ def test_needs_retry_allows_one_quote_pair_that_repairs_internal_source_defect()
 
 
 def test_needs_retry_allows_single_missing_open_quote_repair() -> None:
+    """Processamento interno auxiliar."""
     input_text = "I believe the class shares that intention.”"
     output_text = "“Acredito que a turma compartilhe essa intenção.”"
 
@@ -100,6 +113,7 @@ def test_needs_retry_allows_single_missing_open_quote_repair() -> None:
 
 
 def test_needs_retry_extra_short_repetition():
+    """Processamento interno auxiliar."""
     input_text = "Crack!\nSilence."
     output_text = "Crack!\nCrack!\nCrack!\nSilence."
 
@@ -110,6 +124,7 @@ def test_needs_retry_extra_short_repetition():
 
 
 def test_needs_retry_allows_short_line_repetition_present_in_source() -> None:
+    """Processamento interno auxiliar."""
     input_text = "\n\n".join(["“On your knees.”"] * 5)
     output_text = "\n\n".join(["“Ajoelhe-se.”"] * 5)
 
@@ -120,6 +135,7 @@ def test_needs_retry_allows_short_line_repetition_present_in_source() -> None:
 
 
 def test_dash_line_strips_trailing_quote():
+    """Processamento interno auxiliar."""
     samples = [
         ("— Entendido”, Seras me respondeu.", "— Entendido, Seras me respondeu."),
         ("— Oh?!” Vicius perguntou.", "— Oh?! Vicius perguntou."),
@@ -129,9 +145,14 @@ def test_dash_line_strips_trailing_quote():
     ]
 
     for raw, expected in samples:
-        cleaned = postprocess_translation(raw, en_text="")  # en_text vazio para passar pelo pipeline
+        cleaned = postprocess_translation(
+            raw, en_text=""
+        )  # en_text vazio para passar pelo pipeline
         assert cleaned == expected
 
 
 def test_postprocess_translation_collapses_duplicate_curly_quote() -> None:
-    assert postprocess_translation("A fala terminou.””", en_text="") == "A fala terminou.”"
+    """Processamento interno auxiliar."""
+    assert (
+        postprocess_translation("A fala terminou.””", en_text="") == "A fala terminou.”"
+    )

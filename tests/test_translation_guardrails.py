@@ -8,21 +8,32 @@ from tradutor.utils import setup_logging
 
 
 class _StubBackend:
+    """Processamento interno auxiliar."""
+
     def __init__(self, output: str):
+        """Processamento interno auxiliar."""
         self.output = output
         self.calls = 0
 
     def generate(self, prompt: str):
+        """Processamento interno auxiliar."""
         self.calls += 1
         return types.SimpleNamespace(text=self.output)
 
 
 def test_translation_rejects_ratio_when_fail_on_error() -> None:
-    cfg = AppConfig(split_by_sections=False, translate_max_ratio=1.5, fail_on_chunk_error=True)
+    """Processamento interno auxiliar."""
+    cfg = AppConfig(
+        split_by_sections=False, translate_max_ratio=1.5, fail_on_chunk_error=True
+    )
     logger = setup_logging()
     text = "Hello world."
     # Grande demais em relacao ao input para forcar ratio alto
-    huge_output = "### TEXTO_TRADUZIDO_INICIO\n" + ("Hello world. " * 20) + "\n### TEXTO_TRADUZIDO_FIM"
+    huge_output = (
+        "### TEXTO_TRADUZIDO_INICIO\n"
+        + ("Hello world. " * 20)
+        + "\n### TEXTO_TRADUZIDO_FIM"
+    )
     backend = _StubBackend(huge_output)
 
     with pytest.raises(RuntimeError):
@@ -37,10 +48,17 @@ def test_translation_rejects_ratio_when_fail_on_error() -> None:
 
 
 def test_translation_inserts_placeholder_when_rejected() -> None:
-    cfg = AppConfig(split_by_sections=False, translate_max_ratio=1.5, fail_on_chunk_error=False)
+    """Processamento interno auxiliar."""
+    cfg = AppConfig(
+        split_by_sections=False, translate_max_ratio=1.5, fail_on_chunk_error=False
+    )
     logger = setup_logging()
     text = "Hello again."
-    huge_output = "### TEXTO_TRADUZIDO_INICIO\n" + ("Hello again. " * 20) + "\n### TEXTO_TRADUZIDO_FIM"
+    huge_output = (
+        "### TEXTO_TRADUZIDO_INICIO\n"
+        + ("Hello again. " * 20)
+        + "\n### TEXTO_TRADUZIDO_FIM"
+    )
     backend = _StubBackend(huge_output)
 
     result = translate_document(

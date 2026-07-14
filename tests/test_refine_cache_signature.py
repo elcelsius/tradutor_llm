@@ -8,7 +8,10 @@ from tradutor.refine import refine_markdown_file
 
 
 class _StubBackend:
+    """Processamento interno auxiliar."""
+
     def __init__(self) -> None:
+        """Processamento interno auxiliar."""
         self.backend = "stub"
         self.model = "stub"
         self.num_predict = 10
@@ -17,12 +20,14 @@ class _StubBackend:
         self.calls = 0
 
     def generate(self, prompt: str):
+        """Processamento interno auxiliar."""
         self.calls += 1
         text = "Texto refinado pelo backend."
         return type("Resp", (), {"text": text})
 
 
 def test_refine_cache_ignores_prompt_signature_mismatch(tmp_path: Path) -> None:
+    """Processamento interno auxiliar."""
     cfg = AppConfig(output_dir=tmp_path)
     backend = _StubBackend()
     logger = logging.getLogger("refine-cache")
@@ -52,7 +57,9 @@ def test_refine_cache_ignores_prompt_signature_mismatch(tmp_path: Path) -> None:
             "pipeline_version": "0",
         },
     }
-    cache_path.write_text(json.dumps(cache_payload, ensure_ascii=False), encoding="utf-8")
+    cache_path.write_text(
+        json.dumps(cache_payload, ensure_ascii=False), encoding="utf-8"
+    )
 
     refine_markdown_file(
         input_path=input_path,

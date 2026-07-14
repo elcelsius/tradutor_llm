@@ -1,17 +1,27 @@
-from tradutor.cleanup import dedupe_adjacent_lines, fix_glued_dialogues, cleanup_before_refine, detect_glued_dialogues
+from tradutor.cleanup import (
+    cleanup_before_refine,
+    dedupe_adjacent_lines,
+    detect_glued_dialogues,
+    fix_glued_dialogues,
+)
 
 
 def test_dedupe_adjacent_lines_removes_repeats() -> None:
+    """Processamento interno auxiliar."""
     src = "Linha A\nLinha A\n\nLinha B  \nLinha   B\nLinha B\n\n# Heading\n# Heading\n"
     result, stats = dedupe_adjacent_lines(src)
     assert result.count("Linha A") == 1
-    assert result.splitlines().count("Linha B  ") + result.splitlines().count("Linha   B") == 1
+    assert (
+        result.splitlines().count("Linha B  ") + result.splitlines().count("Linha   B")
+        == 1
+    )
     assert result.splitlines().count("# Heading") == 1
     assert stats["lines_removed"] >= 1
     assert stats["blocks_removed"] >= 0
 
 
 def test_fix_glued_dialogues_inserts_newline() -> None:
+    """Processamento interno auxiliar."""
     src = '"Oi." "Tudo bem?"'
     out, stats = fix_glued_dialogues(src)
     assert '"Oi."' in out
@@ -21,6 +31,7 @@ def test_fix_glued_dialogues_inserts_newline() -> None:
 
 
 def test_fix_glued_dialogues_does_not_split_regular_sentences() -> None:
+    """Processamento interno auxiliar."""
     src = (
         "Heróis e vilões. A gente nem tá na mesma história. "
         "Eles gostam de fingir que tudo faz parte de uma grande narrativa."
@@ -32,6 +43,7 @@ def test_fix_glued_dialogues_does_not_split_regular_sentences() -> None:
 
 
 def test_cleanup_idempotent() -> None:
+    """Processamento interno auxiliar."""
     src = '"Oi." "Tudo bem?"\n\nLinha X\nLinha X\n\nParagrafo\nParagrafo\n'
     first, _ = cleanup_before_refine(src)
     second, stats2 = cleanup_before_refine(first)

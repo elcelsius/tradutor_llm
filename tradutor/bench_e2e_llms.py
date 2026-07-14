@@ -37,10 +37,12 @@ from tradutor.utils import setup_logging
 
 
 def slugify_model(name: str) -> str:
+    """Processamento interno auxiliar."""
     return re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_")
 
 
 def _normalize_base_url(endpoint: str) -> str:
+    """Processamento interno auxiliar."""
     if endpoint.endswith("/api/generate"):
         return endpoint[: -len("/api/generate")]
     return endpoint.rstrip("/")
@@ -62,7 +64,9 @@ def build_backend(
         logger=logger,
         base_url=_normalize_base_url(endpoint),
         request_timeout=cfg.request_timeout,
-        repeat_penalty=cfg.refine_repeat_penalty if is_refine else cfg.translate_repeat_penalty,
+        repeat_penalty=cfg.refine_repeat_penalty
+        if is_refine
+        else cfg.translate_repeat_penalty,
         num_predict=cfg.refine_num_predict if is_refine else cfg.translate_num_predict,
         num_ctx=cfg.refine_num_ctx if is_refine else cfg.translate_num_ctx,
         keep_alive=getattr(cfg, "ollama_keep_alive", "30m"),
@@ -72,6 +76,7 @@ def build_backend(
 
 
 def _list_models_via_cli() -> list[str]:
+    """Processamento interno auxiliar."""
     for cmd in (["ollama", "list", "--format", "json"], ["ollama", "list"]):
         try:
             result = subprocess.run(
@@ -88,7 +93,11 @@ def _list_models_via_cli() -> list[str]:
             continue
         try:
             data = json.loads(output)
-            names = [item["name"] for item in data if isinstance(item, dict) and "name" in item]
+            names = [
+                item["name"]
+                for item in data
+                if isinstance(item, dict) and "name" in item
+            ]
             if names:
                 return names
         except Exception:
@@ -107,6 +116,7 @@ def _list_models_via_cli() -> list[str]:
 
 
 def _list_models_via_api(endpoint: str) -> set[str]:
+    """Processamento interno auxiliar."""
     tags_url = endpoint.rstrip("/")
     if tags_url.endswith("/generate"):
         tags_url = tags_url.rsplit("/", 1)[0] + "/tags"
@@ -122,25 +132,34 @@ def _list_models_via_api(endpoint: str) -> set[str]:
 
 
 def list_installed_models(endpoint: str) -> list[str]:
+    """Processamento interno auxiliar."""
     models = _list_models_via_cli()
     if models:
         return models
     return sorted(_list_models_via_api(endpoint))
 
 
-def resolve_models(requested: list[str] | None, installed: list[str], label: str) -> list[str]:
+def resolve_models(
+    requested: list[str] | None, installed: list[str], label: str
+) -> list[str]:
     if requested:
         if installed:
             missing = [m for m in requested if m not in installed]
             available = [m for m in requested if m in installed]
             if missing:
-                print(f"Atencao: ignorando modelos {label} nao instalados: {', '.join(missing)}")
+                print(
+                    f"Atencao: ignorando modelos {label} nao instalados: {', '.join(missing)}"
+                )
             if available:
                 return available
-            raise SystemExit(f"Nenhum modelo {label} informado esta instalado segundo o Ollama.")
+            raise SystemExit(
+                f"Nenhum modelo {label} informado esta instalado segundo o Ollama."
+            )
         return requested
     if not installed:
-        raise SystemExit("Nenhum modelo Ollama foi encontrado. Use --translate-models/--refine-models.")
+        raise SystemExit(
+            "Nenhum modelo Ollama foi encontrado. Use --translate-models/--refine-models."
+        )
     return installed
 
 
@@ -170,12 +189,16 @@ def read_and_prepare_input(
 
 
 def write_quality_report(out_dir: Path, combo_slug: str, report: dict) -> str:
+    """Processamento interno auxiliar."""
     out_path = out_dir / f"{combo_slug}_qa.json"
-    out_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    out_path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     return out_path.name
 
 
 def write_error_output(out_dir: Path, combo_slug: str, error: str) -> str:
+    """Processamento interno auxiliar."""
     out_path = out_dir / f"{combo_slug}_erro.md"
     out_path.write_text(f"# Benchmark e2e falhou\n\n{error}\n", encoding="utf-8")
     return out_path.name
@@ -233,33 +256,72 @@ def write_summary(
         lines.append(
             f"| {row['translate_model']} | {row['refine_model']} | {row.get('final_file', '')} | {row.get('quality', '')} | {row.get('qa_file', '')} | {float(row.get('translate_elapsed', 0.0)):.2f} | {float(row.get('refine_elapsed', 0.0)):.2f} | {float(row.get('total_elapsed', 0.0)):.2f} | {row['status']} | {row.get('error', '')} |"
         )
-    (out_dir / f"resumo_e2e_{slug}.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (out_dir / f"resumo_e2e_{slug}.md").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8"
+    )
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Benchmark e2e de combinacoes tradutor/refinador.")
-    parser.add_argument("--input", required=True, help="Arquivo de entrada em ingles (.txt, .md ou .pdf)")
-    parser.add_argument("--translate-models", nargs="*", help="Modelos Ollama para a etapa de traducao")
-    parser.add_argument("--refine-models", nargs="*", help="Modelos Ollama para a etapa de refine")
+    """Processamento interno auxiliar."""
+    parser = argparse.ArgumentParser(
+        description="Benchmark e2e de combinacoes tradutor/refinador."
+    )
+    parser.add_argument(
+        "--input",
+        required=True,
+        help="Arquivo de entrada em ingles (.txt, .md ou .pdf)",
+    )
+    parser.add_argument(
+        "--translate-models", nargs="*", help="Modelos Ollama para a etapa de traducao"
+    )
+    parser.add_argument(
+        "--refine-models", nargs="*", help="Modelos Ollama para a etapa de refine"
+    )
     parser.add_argument(
         "--same-model-only",
         action="store_true",
         help="Testa apenas pares com o mesmo nome de modelo.",
     )
-    parser.add_argument("--limit-combos", type=int, default=0, help="Limita a quantidade de combinacoes executadas")
-    parser.add_argument("--max-chars", type=int, default=2500, help="Maximo de caracteres do texto de entrada; use 0 para livro completo")
+    parser.add_argument(
+        "--limit-combos",
+        type=int,
+        default=0,
+        help="Limita a quantidade de combinacoes executadas",
+    )
+    parser.add_argument(
+        "--max-chars",
+        type=int,
+        default=2500,
+        help="Maximo de caracteres do texto de entrada; use 0 para livro completo",
+    )
     parser.add_argument("--out-dir", default="benchmark/e2e", help="Diretorio de saida")
     parser.add_argument("--desquebrar-mode", choices=["off", "safe"], default="safe")
-    parser.add_argument("--translate-temperature", type=float, help="Override de translate_temperature")
-    parser.add_argument("--refine-temperature", type=float, help="Override de refine_temperature")
-    parser.add_argument("--num-ctx", type=int, help="Override de translate/refine num_ctx")
-    parser.add_argument("--translate-num-predict", type=int, help="Override de translate_num_predict")
-    parser.add_argument("--refine-num-predict", type=int, help="Override de refine_num_predict")
-    parser.add_argument("--chunk-chars", type=int, help="Override de translate_chunk_chars")
+    parser.add_argument(
+        "--translate-temperature", type=float, help="Override de translate_temperature"
+    )
+    parser.add_argument(
+        "--refine-temperature", type=float, help="Override de refine_temperature"
+    )
+    parser.add_argument(
+        "--num-ctx", type=int, help="Override de translate/refine num_ctx"
+    )
+    parser.add_argument(
+        "--translate-num-predict", type=int, help="Override de translate_num_predict"
+    )
+    parser.add_argument(
+        "--refine-num-predict", type=int, help="Override de refine_num_predict"
+    )
+    parser.add_argument(
+        "--chunk-chars", type=int, help="Override de translate_chunk_chars"
+    )
     parser.add_argument("--timeout", type=int, help="Override de request_timeout")
-    parser.add_argument("--use-glossary", action="store_true", help="Ativa glossario manual")
+    parser.add_argument(
+        "--use-glossary", action="store_true", help="Ativa glossario manual"
+    )
     parser.add_argument("--manual-glossary", help="Arquivo JSON de glossario manual")
-    parser.add_argument("--auto-glossary-dir", help="Diretorio opcional com JSONs adicionais")
+    parser.add_argument(
+        "--auto-glossary-dir", help="Diretorio opcional com JSONs adicionais"
+    )
     parser.add_argument(
         "--ollama-api-mode",
         choices=["generate", "chat"],
@@ -279,6 +341,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """Processamento interno auxiliar."""
     logger = setup_logging(logging.INFO)
     cfg = load_config()
     args = parse_args()
@@ -296,25 +359,49 @@ def main() -> None:
 
     cfg = replace(
         cfg,
-        translate_temperature=args.translate_temperature if args.translate_temperature is not None else cfg.translate_temperature,
-        refine_temperature=args.refine_temperature if args.refine_temperature is not None else cfg.refine_temperature,
-        translate_num_ctx=args.num_ctx if args.num_ctx is not None else cfg.translate_num_ctx,
+        translate_temperature=args.translate_temperature
+        if args.translate_temperature is not None
+        else cfg.translate_temperature,
+        refine_temperature=args.refine_temperature
+        if args.refine_temperature is not None
+        else cfg.refine_temperature,
+        translate_num_ctx=args.num_ctx
+        if args.num_ctx is not None
+        else cfg.translate_num_ctx,
         refine_num_ctx=args.num_ctx if args.num_ctx is not None else cfg.refine_num_ctx,
-        translate_num_predict=args.translate_num_predict if args.translate_num_predict is not None else cfg.translate_num_predict,
-        refine_num_predict=args.refine_num_predict if args.refine_num_predict is not None else cfg.refine_num_predict,
-        translate_chunk_chars=args.chunk_chars if args.chunk_chars is not None else cfg.translate_chunk_chars,
-        request_timeout=args.timeout if args.timeout is not None else cfg.request_timeout,
-        ollama_api_mode=args.ollama_api_mode if args.ollama_api_mode is not None else cfg.ollama_api_mode,
+        translate_num_predict=args.translate_num_predict
+        if args.translate_num_predict is not None
+        else cfg.translate_num_predict,
+        refine_num_predict=args.refine_num_predict
+        if args.refine_num_predict is not None
+        else cfg.refine_num_predict,
+        translate_chunk_chars=args.chunk_chars
+        if args.chunk_chars is not None
+        else cfg.translate_chunk_chars,
+        request_timeout=args.timeout
+        if args.timeout is not None
+        else cfg.request_timeout,
+        ollama_api_mode=args.ollama_api_mode
+        if args.ollama_api_mode is not None
+        else cfg.ollama_api_mode,
         ollama_think=think_override,
     )
 
     installed = list_installed_models(args.endpoint)
     translate_models = resolve_models(args.translate_models, installed, "tradutor")
-    refine_models = resolve_models(args.refine_models or args.translate_models, installed, "refinador")
+    refine_models = resolve_models(
+        args.refine_models or args.translate_models, installed, "refinador"
+    )
     if args.same_model_only:
-        combos = [(model, model) for model in translate_models if model in refine_models]
+        combos = [
+            (model, model) for model in translate_models if model in refine_models
+        ]
     else:
-        combos = [(translate_model, refine_model) for translate_model in translate_models for refine_model in refine_models]
+        combos = [
+            (translate_model, refine_model)
+            for translate_model in translate_models
+            for refine_model in refine_models
+        ]
     if args.limit_combos > 0:
         combos = combos[: args.limit_combos]
     if not combos:
@@ -342,12 +429,16 @@ def main() -> None:
     if args.use_glossary:
         glossary_path = resolve_manual_glossary_path(args.manual_glossary)
         manual_dir = Path(args.auto_glossary_dir) if args.auto_glossary_dir else None
-        preview_state = build_glossary_state(glossary_path, None, logger, manual_dir=manual_dir)
+        preview_state = build_glossary_state(
+            glossary_path, None, logger, manual_dir=manual_dir
+        )
         if preview_state:
             glossary_terms_count = len(preview_state.manual_terms)
 
     translation_runs: dict[str, dict[str, str | float]] = {}
-    for translate_model in dict.fromkeys(translate_model for translate_model, _ in combos):
+    for translate_model in dict.fromkeys(
+        translate_model for translate_model, _ in combos
+    ):
         translate_slug = f"{slug}_{slugify_model(translate_model)}"
         translate_state = state_root / f"{translate_slug}_translate"
         translate_state.mkdir(parents=True, exist_ok=True)
@@ -364,7 +455,9 @@ def main() -> None:
                     manual_dir=manual_dir,
                 )
                 if glossary_state_translate:
-                    glossary_text = format_manual_pairs_for_translation(glossary_state_translate.manual_terms, limit=30)
+                    glossary_text = format_manual_pairs_for_translation(
+                        glossary_state_translate.manual_terms, limit=30
+                    )
 
             translate_backend = build_backend(
                 model=translate_model,
@@ -385,7 +478,9 @@ def main() -> None:
                 allow_adaptation=translate_cfg.translate_allow_adaptation,
                 fail_on_chunk_error=False,
                 glossary_text=glossary_text,
-                glossary_manual_terms=glossary_state_translate.manual_terms if glossary_state_translate else None,
+                glossary_manual_terms=glossary_state_translate.manual_terms
+                if glossary_state_translate
+                else None,
             )
             translate_elapsed = time.monotonic() - start
             translated_path = out_dir / f"{translate_slug}_pt.md"
@@ -398,7 +493,9 @@ def main() -> None:
             }
         except Exception as exc:
             error = str(exc).replace("|", "\\|").replace("\n", " ")
-            logger.error("Benchmark e2e falhou na traducao com %s: %s", translate_model, exc)
+            logger.error(
+                "Benchmark e2e falhou na traducao com %s: %s", translate_model, exc
+            )
             error_file = write_error_output(out_dir, translate_slug, str(exc))
             translation_runs[translate_model] = {
                 "translated_path": error_file,
@@ -409,7 +506,9 @@ def main() -> None:
 
     rows: list[dict[str, str | float]] = []
     for translate_model, refine_model in combos:
-        combo_slug = f"{slug}_{slugify_model(translate_model)}__{slugify_model(refine_model)}"
+        combo_slug = (
+            f"{slug}_{slugify_model(translate_model)}__{slugify_model(refine_model)}"
+        )
         combo_state = state_root / combo_slug
         combo_state.mkdir(parents=True, exist_ok=True)
         combo_cfg = replace(cfg, output_dir=combo_state)
@@ -420,15 +519,27 @@ def main() -> None:
                 {
                     "translate_model": translate_model,
                     "refine_model": refine_model,
-                    "final_file": translation_run.get("translated_path", "") if translation_run else "",
+                    "final_file": translation_run.get("translated_path", "")
+                    if translation_run
+                    else "",
                     "qa_file": "",
                     "score": 0.0,
                     "quality": "",
-                    "translate_elapsed": float(translation_run.get("translate_elapsed", 0.0)) if translation_run else 0.0,
+                    "translate_elapsed": float(
+                        translation_run.get("translate_elapsed", 0.0)
+                    )
+                    if translation_run
+                    else 0.0,
                     "refine_elapsed": 0.0,
-                    "total_elapsed": float(translation_run.get("translate_elapsed", 0.0)) if translation_run else 0.0,
+                    "total_elapsed": float(
+                        translation_run.get("translate_elapsed", 0.0)
+                    )
+                    if translation_run
+                    else 0.0,
                     "status": "falhou",
-                    "error": str(translation_run.get("error", "falha na traducao")) if translation_run else "falha na traducao",
+                    "error": str(translation_run.get("error", "falha na traducao"))
+                    if translation_run
+                    else "falha na traducao",
                 }
             )
             continue
@@ -493,7 +604,12 @@ def main() -> None:
             refine_elapsed = time.monotonic() - started_refine
             total_elapsed = translate_elapsed + refine_elapsed
             error = str(exc).replace("|", "\\|").replace("\n", " ")
-            logger.error("Benchmark e2e falhou para %s -> %s: %s", translate_model, refine_model, exc)
+            logger.error(
+                "Benchmark e2e falhou para %s -> %s: %s",
+                translate_model,
+                refine_model,
+                exc,
+            )
             error_file = write_error_output(out_dir, combo_slug, str(exc))
             rows.append(
                 {

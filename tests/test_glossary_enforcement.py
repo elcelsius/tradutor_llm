@@ -2,6 +2,7 @@ from tradutor.translate import enforce_canonical_terms
 
 
 def test_enforce_canonical_glossary_term():
+    """Processamento interno auxiliar."""
     terms = [
         {
             "key": "Lord of the Flies",
@@ -20,6 +21,7 @@ def test_enforce_canonical_glossary_term():
 
 
 def test_enforce_bad_alias_without_expanding_valid_aliases():
+    """Processamento interno auxiliar."""
     terms = [
         {
             "key": "Banewolf",
@@ -39,6 +41,7 @@ def test_enforce_bad_alias_without_expanding_valid_aliases():
 
 
 def test_enforce_does_not_expand_name_alias_when_canonical_is_same_as_source():
+    """Processamento interno auxiliar."""
     terms = [
         {
             "key": "Sogou Ayaka",
@@ -56,6 +59,7 @@ def test_enforce_does_not_expand_name_alias_when_canonical_is_same_as_source():
 
 
 def test_enforce_explicit_target_replacement_for_selected_term():
+    """Processamento interno auxiliar."""
     terms = [
         {
             "key": "Paralyze",

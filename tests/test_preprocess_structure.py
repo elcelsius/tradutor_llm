@@ -9,7 +9,10 @@ from tradutor.preprocess import (
 )
 
 
-def test_preprocess_isolates_multiword_chapter_subtitle_from_dropcap_narration() -> None:
+def test_preprocess_isolates_multiword_chapter_subtitle_from_dropcap_narration() -> (
+    None
+):
+    """Processamento interno auxiliar."""
     raw = "Chapter 1:\nAfter the Deathmatch AFTER SOGOU watched Kirihara freeze."
 
     cleaned, stats = preprocess_text(raw, return_stats=True)
@@ -22,6 +25,7 @@ def test_preprocess_isolates_multiword_chapter_subtitle_from_dropcap_narration()
 
 
 def test_preprocess_normalizes_leading_small_caps_from_pdf() -> None:
+    """Processamento interno auxiliar."""
     raw = "Chapter 1:\n\nAfter the Deathmatch\n\nAFTER SOGOU watched Kirihara freeze."
 
     cleaned, stats = preprocess_text(raw, return_stats=True)
@@ -31,6 +35,7 @@ def test_preprocess_normalizes_leading_small_caps_from_pdf() -> None:
 
 
 def test_preprocess_collapses_blank_line_inside_open_quote() -> None:
+    """Processamento interno auxiliar."""
     raw = "“The speaker continues here.\n\nThis is still the same quote.”"
 
     cleaned, stats = preprocess_text(raw, return_stats=True)
@@ -40,6 +45,7 @@ def test_preprocess_collapses_blank_line_inside_open_quote() -> None:
 
 
 def test_preprocess_joins_inline_quoted_continuation_after_pdf_gap() -> None:
+    """Processamento interno auxiliar."""
     raw = "It is possible that he believes that from\n\n“the bottom of his heart.”"
 
     cleaned, stats = preprocess_text(raw, return_stats=True)
@@ -49,6 +55,7 @@ def test_preprocess_joins_inline_quoted_continuation_after_pdf_gap() -> None:
 
 
 def test_translation_chunks_do_not_split_open_curly_dialogue() -> None:
+    """Processamento interno auxiliar."""
     paragraphs = [
         "Introdução curta.",
         "“" + "Uma frase de diálogo. " * 12 + "Fim da fala.”",
@@ -57,7 +64,9 @@ def test_translation_chunks_do_not_split_open_curly_dialogue() -> None:
     logger = logging.getLogger("chunk-quote-test")
 
     chunks = chunk_for_translation(paragraphs, max_chars=120, logger=logger)
-    chunks_with_offsets = chunk_for_translation_with_offsets(paragraphs, max_chars=120, logger=logger)
+    chunks_with_offsets = chunk_for_translation_with_offsets(
+        paragraphs, max_chars=120, logger=logger
+    )
 
     assert len(chunks) == len(chunks_with_offsets)
     assert any(len(chunk) > 120 for chunk in chunks)
@@ -66,6 +75,7 @@ def test_translation_chunks_do_not_split_open_curly_dialogue() -> None:
 
 
 def test_translation_chunk_closes_dialogue_opened_before_chunk_boundary() -> None:
+    """Processamento interno auxiliar."""
     text = (
         "“Fala iniciada antes da fronteira. "
         "Ainda aberta e agora encerrada.” Narração intermediária. “"
@@ -74,7 +84,9 @@ def test_translation_chunk_closes_dialogue_opened_before_chunk_boundary() -> Non
     )
     start = text.index("Ainda aberta")
 
-    end = _translation_chunk_end(text, start, max_chars=90, logger=logging.getLogger("chunk-cross-boundary"))
+    end = _translation_chunk_end(
+        text, start, max_chars=90, logger=logging.getLogger("chunk-cross-boundary")
+    )
 
     assert _quote_delta(text[:start]) == 1
     assert _quote_delta(text[:end]) == 0

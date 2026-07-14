@@ -10,7 +10,9 @@ _BIRTH_CONTEXT = re.compile(
 )
 _DASH_TRAIL_QUOTE_RE = re.compile(r"^(—\s.*?)[\"”](?=[,;.\s]|$)")
 _DASH_LEAD_QUOTE_RE = re.compile(r"^(—\s*)[\"“]\s*(.+)$")
-_DASH_SPEECH_TAG_RE = re.compile(r"^(—\s[^\"”]{0,120}?)[\"”]([\s,;.!?]+[A-Z\u00c0-\u017f].*)$")
+_DASH_SPEECH_TAG_RE = re.compile(
+    r"^(—\s[^\"”]{0,120}?)[\"”]([\s,;.!?]+[A-Z\u00c0-\u017f].*)$"
+)
 
 
 def postprocess_translation(pt_text: str, en_text: str | None = None) -> str:
@@ -40,7 +42,12 @@ def postprocess_translation(pt_text: str, en_text: str | None = None) -> str:
     pt_text = re.sub(r"\barright\b", "Beleza", pt_text, flags=re.IGNORECASE)
     pt_text = re.sub(r"\bboost\b", "impulso", pt_text, flags=re.IGNORECASE)
     pt_text = re.sub(r"\bthey\s+todos\b", "todos", pt_text, flags=re.IGNORECASE)
-    pt_text = re.sub(r"\bY-you\s+divindades\s+podem\b", "V-vocês, divindades, podem", pt_text, flags=re.IGNORECASE)
+    pt_text = re.sub(
+        r"\bY-you\s+divindades\s+podem\b",
+        "V-vocês, divindades, podem",
+        pt_text,
+        flags=re.IGNORECASE,
+    )
     pt_text = re.sub(r"\bY-you\b", "V-você", pt_text, flags=re.IGNORECASE)
     pt_text = re.sub(
         r"\b(super\s+)?desconfiad([ao])\s+AF\b",
@@ -51,8 +58,14 @@ def postprocess_translation(pt_text: str, en_text: str | None = None) -> str:
     pt_text = re.sub(r"\bthough\b", "porém", pt_text, flags=re.IGNORECASE)
 
     # Parry/parried/parrying -> aparar (somente quando presente no EN e fora de contexto de parto)
-    if en_text is not None and re.search(r"\bparr(?:y|ied|ying)\b", en_text, flags=re.IGNORECASE) and not _BIRTH_CONTEXT.search(pt_text):
+    if (
+        en_text is not None
+        and re.search(r"\bparr(?:y|ied|ying)\b", en_text, flags=re.IGNORECASE)
+        and not _BIRTH_CONTEXT.search(pt_text)
+    ):
+
         def _replace(match: re.Match[str]) -> str:
+            """Processamento interno auxiliar."""
             suffix = match.group(1).lower()
             if suffix in {"r", "ir"}:
                 return "aparar"
@@ -68,7 +81,9 @@ def postprocess_translation(pt_text: str, en_text: str | None = None) -> str:
                 return "aparava" if suffix == "ia" else "aparavam"
             return "aparou"
 
-        pattern = re.compile(r"\bparr(iu|ir|indo|ido|ida|idos|idas|ia|iam|ou|r)\b", flags=re.IGNORECASE)
+        pattern = re.compile(
+            r"\bparr(iu|ir|indo|ido|ida|idos|idas|ia|iam|ou|r)\b", flags=re.IGNORECASE
+        )
         pt_text = pattern.sub(_replace, pt_text)
 
     # Limpeza de travessão + aspas mistas

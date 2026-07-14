@@ -1,5 +1,5 @@
-import logging
 import json
+import logging
 from pathlib import Path
 
 from tradutor.glossary_utils import (
@@ -10,6 +10,7 @@ from tradutor.glossary_utils import (
 
 
 def test_glossary_loader_preserves_enforcement_metadata(tmp_path: Path) -> None:
+    """Processamento interno auxiliar."""
     glossary_path = tmp_path / "glossary.json"
     glossary_path.write_text(
         json.dumps(
@@ -55,6 +56,7 @@ def test_glossary_loader_preserves_enforcement_metadata(tmp_path: Path) -> None:
 
 
 def test_translation_glossary_prompt_includes_metadata() -> None:
+    """Processamento interno auxiliar."""
     block = format_manual_pairs_for_translation(
         [
             {
@@ -76,6 +78,7 @@ def test_translation_glossary_prompt_includes_metadata() -> None:
 
 
 def test_translation_glossary_prompt_includes_forbidden_aliases() -> None:
+    """Processamento interno auxiliar."""
     block = format_manual_pairs_for_translation(
         [
             {
@@ -91,6 +94,7 @@ def test_translation_glossary_prompt_includes_forbidden_aliases() -> None:
 
 
 def test_resolve_manual_glossary_path_prefers_explicit_path(tmp_path: Path) -> None:
+    """Processamento interno auxiliar."""
     explicit = tmp_path / "manual.json"
 
     assert resolve_manual_glossary_path(explicit) == explicit

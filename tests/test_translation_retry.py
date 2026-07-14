@@ -6,7 +6,10 @@ from tradutor.translate import translate_document
 
 
 class _RetryBackend:
+    """Processamento interno auxiliar."""
+
     def __init__(self) -> None:
+        """Processamento interno auxiliar."""
         self.backend = "stub"
         self.model = "stub"
         self.num_predict = 10
@@ -15,6 +18,7 @@ class _RetryBackend:
         self.calls = 0
 
     def generate(self, prompt: str):
+        """Processamento interno auxiliar."""
         self.calls += 1
         if self.calls == 1:
             # output truncado forçando retry (ratio baixo)
@@ -25,7 +29,10 @@ class _RetryBackend:
 
 
 class _MissingMarkerBackend:
+    """Processamento interno auxiliar."""
+
     def __init__(self) -> None:
+        """Processamento interno auxiliar."""
         self.backend = "stub"
         self.model = "stub"
         self.num_predict = 10
@@ -33,12 +40,16 @@ class _MissingMarkerBackend:
         self.repeat_penalty = 1.0
 
     def generate(self, prompt: str):
+        """Processamento interno auxiliar."""
         text = "### TEXTO_TRADUZIDO_INICIO\nTitulo traduzido sem marcador final"
         return type("Resp", (), {"text": text})
 
 
 class _NarrativeRetryBackend:
+    """Processamento interno auxiliar."""
+
     def __init__(self) -> None:
+        """Processamento interno auxiliar."""
         self.backend = "stub"
         self.model = "stub"
         self.num_predict = 10
@@ -47,6 +58,7 @@ class _NarrativeRetryBackend:
         self.calls = 0
 
     def generate(self, prompt: str):
+        """Processamento interno auxiliar."""
         self.calls += 1
         if self.calls == 1:
             text = (
@@ -60,6 +72,8 @@ class _NarrativeRetryBackend:
 
 
 class _TypoMarkerBackend:
+    """Processamento interno auxiliar."""
+
     backend = "stub"
     model = "stub"
     num_predict = 10
@@ -67,11 +81,14 @@ class _TypoMarkerBackend:
     repeat_penalty = 1.0
 
     def generate(self, prompt: str):
+        """Processamento interno auxiliar."""
         text = "### TEXTO_TRADUZIDO_INICIO\nTexto traduzido.\n### TEXTO_TRADUZDO_FIM"
         return type("Resp", (), {"text": text})
 
 
 class _QuotedDialogueBackend:
+    """Processamento interno auxiliar."""
+
     backend = "stub"
     model = "stub"
     num_predict = 10
@@ -79,12 +96,16 @@ class _QuotedDialogueBackend:
     repeat_penalty = 1.0
 
     def generate(self, prompt: str):
+        """Processamento interno auxiliar."""
         text = '### TEXTO_TRADUZIDO_INICIO\n"Oi."\n\nNarracao.\n\n"Sim."\n### TEXTO_TRADUZIDO_FIM'
         return type("Resp", (), {"text": text})
 
 
 class _ResidualEnglishBackend:
+    """Processamento interno auxiliar."""
+
     def __init__(self) -> None:
+        """Processamento interno auxiliar."""
         self.backend = "stub"
         self.model = "stub"
         self.num_predict = 10
@@ -93,27 +114,32 @@ class _ResidualEnglishBackend:
         self.calls = 0
 
     def generate(self, prompt: str):
+        """Processamento interno auxiliar."""
         self.calls += 1
         if self.calls == 1:
             text = (
                 "### TEXTO_TRADUZIDO_INICIO\n"
-                "\"I have no desire to die,\" replied Seras calmly, choosing not to answer directly.\n"
+                '"I have no desire to die," replied Seras calmly, choosing not to answer directly.\n'
                 "### TEXTO_TRADUZIDO_FIM"
             )
         else:
             text = (
                 "### TEXTO_TRADUZIDO_INICIO\n"
-                "\"Não tenho vontade de morrer\", respondeu Seras com calma, sem responder diretamente.\n"
+                '"Não tenho vontade de morrer", respondeu Seras com calma, sem responder diretamente.\n'
                 "### TEXTO_TRADUZIDO_FIM"
             )
         return type("Resp", (), {"text": text})
 
 
 def test_translate_retries_on_truncated_output(tmp_path: Path) -> None:
+    """Processamento interno auxiliar."""
     cfg = AppConfig(output_dir=tmp_path, max_retries=2, split_by_sections=False)
     backend = _RetryBackend()
     logger = logging.getLogger("retry-test")
-    input_text = ("This is a longer input text that should be fully present after translation. " * 8).strip()
+    input_text = (
+        "This is a longer input text that should be fully present after translation. "
+        * 8
+    ).strip()
 
     result = translate_document(
         pdf_text=input_text,
@@ -135,6 +161,7 @@ def test_translate_retries_on_truncated_output(tmp_path: Path) -> None:
 
 
 def test_translate_retries_on_low_ratio_narrative(tmp_path: Path) -> None:
+    """Processamento interno auxiliar."""
     cfg = AppConfig(output_dir=tmp_path, max_retries=2, split_by_sections=False)
     backend = _NarrativeRetryBackend()
     logger = logging.getLogger("narrative-retry")
@@ -160,10 +187,13 @@ def test_translate_retries_on_low_ratio_narrative(tmp_path: Path) -> None:
 
 
 def test_translate_parses_output_without_end_marker(tmp_path: Path) -> None:
+    """Processamento interno auxiliar."""
     cfg = AppConfig(output_dir=tmp_path, max_retries=1, split_by_sections=False)
     backend = _MissingMarkerBackend()
     logger = logging.getLogger("missing-marker")
-    input_text = ("Epilogue content that should be passed through without missing markers. " * 5).strip()
+    input_text = (
+        "Epilogue content that should be passed through without missing markers. " * 5
+    ).strip()
 
     result = translate_document(
         pdf_text=input_text,
@@ -185,6 +215,7 @@ def test_translate_parses_output_without_end_marker(tmp_path: Path) -> None:
 
 
 def test_translate_strips_typo_translation_marker(tmp_path: Path) -> None:
+    """Processamento interno auxiliar."""
     cfg = AppConfig(output_dir=tmp_path, max_retries=1, split_by_sections=False)
     logger = logging.getLogger("typo-marker")
 
@@ -208,6 +239,7 @@ def test_translate_strips_typo_translation_marker(tmp_path: Path) -> None:
 
 
 def test_translate_preserves_quoted_dialogue_lines(tmp_path: Path) -> None:
+    """Processamento interno auxiliar."""
     cfg = AppConfig(output_dir=tmp_path, max_retries=1, split_by_sections=False)
     logger = logging.getLogger("quoted-dialogue")
 
@@ -233,6 +265,7 @@ def test_translate_preserves_quoted_dialogue_lines(tmp_path: Path) -> None:
 
 
 def test_translate_retries_on_residual_english_sentence(tmp_path: Path) -> None:
+    """Processamento interno auxiliar."""
     cfg = AppConfig(output_dir=tmp_path, max_retries=2, split_by_sections=False)
     backend = _ResidualEnglishBackend()
     logger = logging.getLogger("residual-english")

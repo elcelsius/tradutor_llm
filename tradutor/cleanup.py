@@ -11,6 +11,7 @@ from difflib import SequenceMatcher
 
 
 def _normalize_spaces(text: str) -> str:
+    """Processamento interno auxiliar."""
     return " ".join(text.split())
 
 
@@ -57,6 +58,7 @@ def dedupe_adjacent_lines(text: str) -> tuple[str, dict]:
     """
 
     def _is_protected_short(line: str) -> bool:
+        """Processamento interno auxiliar."""
         stripped = line.strip()
         if len(stripped) > 25:
             return False
@@ -84,7 +86,9 @@ def dedupe_adjacent_lines(text: str) -> tuple[str, dict]:
                 deduped.append(ln)
                 continue
             # se a nova linha for mais completa, substitui a anterior
-            if deduped and len(_normalize_spaces(deduped[-1])) < len(_normalize_spaces(ln)):
+            if deduped and len(_normalize_spaces(deduped[-1])) < len(
+                _normalize_spaces(ln)
+            ):
                 deduped[-1] = ln
             lines_removed += 1
             prev_norm = norm if norm else None
@@ -102,18 +106,23 @@ def dedupe_adjacent_lines(text: str) -> tuple[str, dict]:
         norm_para = _normalize_for_dupe(para)
         if norm_para and _is_fuzzy_duplicate(prev_para_norm, norm_para, threshold=0.9):
             # Mantem o mais completo (mais longo) entre os dois
-            if final_paragraphs and len(_normalize_spaces(final_paragraphs[-1])) < len(_normalize_spaces(para)):
+            if final_paragraphs and len(_normalize_spaces(final_paragraphs[-1])) < len(
+                _normalize_spaces(para)
+            ):
                 final_paragraphs[-1] = para
             blocks_removed += 1
             continue
         final_paragraphs.append(para)
         prev_para_norm = norm_para if norm_para else None
 
-    return "\n\n".join(final_paragraphs), {"lines_removed": lines_removed, "blocks_removed": blocks_removed}
+    return "\n\n".join(final_paragraphs), {
+        "lines_removed": lines_removed,
+        "blocks_removed": blocks_removed,
+    }
 
 
 _GLUED_PATTERNS = (
-    re.compile(r'([.!?…][\"\u201d])\s+(?=[\"\u201c])'),
+    re.compile(r"([.!?…][\"\u201d])\s+(?=[\"\u201c])"),
     re.compile(r"([.!?…])\s+(?=\u2014\s*)"),
 )
 
@@ -147,6 +156,7 @@ def dedupe_prefix_lines(text: str) -> tuple[str, dict]:
     blocked = 0
 
     def _ends_open(ln: str) -> bool:
+        """Processamento interno auxiliar."""
         return not re.search(r"[.!?.:;]['\")\]]?\s*$", ln)
 
     idx = 0
@@ -161,14 +171,23 @@ def dedupe_prefix_lines(text: str) -> tuple[str, dict]:
             nxt_norm = _normalize_spaces(nxt_strip)
             if nxt_strip.startswith("“") or re.fullmatch(r"\d+", cur_strip):
                 blocked += 1
-            elif cur_norm and nxt_norm and len(nxt_norm) > len(cur_norm) and nxt_norm.startswith(cur_norm) and _ends_open(cur_norm):
+            elif (
+                cur_norm
+                and nxt_norm
+                and len(nxt_norm) > len(cur_norm)
+                and nxt_norm.startswith(cur_norm)
+                and _ends_open(cur_norm)
+            ):
                 removed += 1
                 idx += 1
                 continue
         cleaned.append(current)
         idx += 1
 
-    return "\n".join(cleaned), {"prefix_lines_removed": removed, "prefix_merges_blocked": blocked}
+    return "\n".join(cleaned), {
+        "prefix_lines_removed": removed,
+        "prefix_merges_blocked": blocked,
+    }
 
 
 def _split_fragments(para: str) -> list[str]:
@@ -180,6 +199,7 @@ def _split_fragments(para: str) -> list[str]:
 
 
 def _is_short_fragment(fragment: str) -> bool:
+    """Processamento interno auxiliar."""
     stripped = fragment.strip()
     if not stripped:
         return False
@@ -218,9 +238,11 @@ def dedupe_adjacent_fragments(text: str) -> tuple[str, dict]:
             for k in (3, 2, 1):
                 if idx + k <= total and len(filtered) >= k:
                     prev_block = _normalize_for_dupe(" ".join(filtered[-k:]))
-                    next_block = _normalize_for_dupe(" ".join(frags[idx:idx + k]))
+                    next_block = _normalize_for_dupe(" ".join(frags[idx : idx + k]))
                     if _is_fuzzy_duplicate(prev_block, next_block, threshold=0.9):
-                        if k < 3 and all(_is_short_fragment(f) for f in frags[idx:idx + k]):
+                        if k < 3 and all(
+                            _is_short_fragment(f) for f in frags[idx : idx + k]
+                        ):
                             continue
                         removed += k
                         idx += k
@@ -232,7 +254,9 @@ def dedupe_adjacent_fragments(text: str) -> tuple[str, dict]:
             idx += 1
         cleaned_paras.append(" ".join(filtered).strip())
 
-    return "\n\n".join([p for p in cleaned_paras if p != ""]), {"fragments_removed": removed}
+    return "\n\n".join([p for p in cleaned_paras if p != ""]), {
+        "fragments_removed": removed
+    }
 
 
 def cleanup_before_refine(md: str) -> tuple[str, dict]:

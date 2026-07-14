@@ -7,6 +7,8 @@ from tradutor.refine import refine_markdown_file
 
 
 class _MalformedQuoteBackend:
+    """Processamento interno auxiliar."""
+
     backend = "fake"
     model = "fake-refine"
     temperature = 0.2
@@ -14,13 +16,16 @@ class _MalformedQuoteBackend:
     repeat_penalty = 1.0
 
     def generate(self, prompt: str) -> LLMResponse:
+        """Processamento interno auxiliar."""
         return LLMResponse(
             text="### TEXTO_REFINADO_INICIO\n”“Ah, tudo bem.”\n### TEXTO_REFINADO_FIM",
             latency=0.01,
         )
 
 
-def test_refine_falls_back_when_malformed_quote_boundary_persists(tmp_path: Path) -> None:
+def test_refine_falls_back_when_malformed_quote_boundary_persists(
+    tmp_path: Path,
+) -> None:
     input_path = tmp_path / "sample_pt.md"
     output_path = tmp_path / "sample_pt_refinado.md"
     input_path.write_text("“Ah, tudo bem.”", encoding="utf-8")

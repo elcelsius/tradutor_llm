@@ -33,7 +33,21 @@ ENGLISH_CONTRACTION_RE = re.compile(
 ENGLISH_POSSESSIVE_RE = re.compile(r"\b[A-Z][A-Za-z]+['’]s\b")
 # Formas plurais inglesas que não têm uso natural em PT-BR. Mantemos a lista
 # curta para não sinalizar empréstimos técnicos legítimos ou nomes próprios.
-SINGLE_TOKEN_ENGLISH_LEAKS = frozenset({"af", "arright", "boost", "buff", "buffs", "kys", "selves", "they", "though", "uh", "uhh"})
+SINGLE_TOKEN_ENGLISH_LEAKS = frozenset(
+    {
+        "af",
+        "arright",
+        "boost",
+        "buff",
+        "buffs",
+        "kys",
+        "selves",
+        "they",
+        "though",
+        "uh",
+        "uhh",
+    }
+)
 SHORT_ENGLISH_LEAKS = frozenset({"i see"})
 MIXED_ENGLISH_ARTIFACT_RE = re.compile(
     r"(?<![A-Za-zÀ-ÿ])(?:I(?:-(?=[a-zà-ÿ])|\s+(?=[a-zà-ÿ]))|Y-you\b)",
@@ -75,8 +89,14 @@ def english_leak_segments(text: str) -> list[str]:
         english_hits = sum(1 for word in normalized if word in ENGLISH_LEAK_WORDS)
         english_hits += len(ENGLISH_CONTRACTION_RE.findall(segment)) * 2
         english_hits += len(ENGLISH_POSSESSIVE_RE.findall(segment))
-        portuguese_hits = sum(1 for word in normalized if word in PORTUGUESE_ANCHOR_WORDS)
-        dense_english = len(words) >= 10 and english_hits >= 5 and english_hits / max(len(words), 1) >= 0.25
+        portuguese_hits = sum(
+            1 for word in normalized if word in PORTUGUESE_ANCHOR_WORDS
+        )
+        dense_english = (
+            len(words) >= 10
+            and english_hits >= 5
+            and english_hits / max(len(words), 1) >= 0.25
+        )
         dominant_english = english_hits >= 4 and english_hits >= portuguese_hits + 2
         if dense_english or dominant_english:
             flagged.append(segment)
@@ -84,6 +104,7 @@ def english_leak_segments(text: str) -> list[str]:
 
 
 def detect_residual_english(text: str) -> tuple[bool, str]:
+    """Processamento interno auxiliar."""
     segments = english_leak_segments(text)
     if not segments:
         return False, ""

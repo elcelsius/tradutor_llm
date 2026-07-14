@@ -8,7 +8,7 @@ import logging
 import re
 import time
 from pathlib import Path
-from typing import Any, Iterable, List, Sequence, Tuple
+from typing import Any, List, Sequence, Tuple
 
 
 def setup_logging(level: int = logging.INFO) -> logging.Logger:
@@ -69,7 +69,9 @@ def chunk_by_paragraphs(
 
         if end is not None and end > start:
             chunk_len = end - start
-            logger.debug("%s: chunk cortado em limite seguro (len=%d)", label, chunk_len)
+            logger.debug(
+                "%s: chunk cortado em limite seguro (len=%d)", label, chunk_len
+            )
         else:
             # Busca próximo limite seguro à frente; pode ultrapassar max_chars para não quebrar frases
             next_match = boundary_re.search(text, pos=max_end)
@@ -85,14 +87,23 @@ def chunk_by_paragraphs(
             else:
                 end = total_len
                 chunk_len = end - start
-                logger.warning("%s: sem limite seguro; consumindo resto (%d chars)", label, chunk_len)
+                logger.warning(
+                    "%s: sem limite seguro; consumindo resto (%d chars)",
+                    label,
+                    chunk_len,
+                )
 
         chunks.append(text[start:end])
         start = end
 
     sum_len = sum(len(c) for c in chunks)
     if sum_len != total_len:
-        logger.warning("%s: soma dos chunks (%d) difere do texto original (%d)", label, sum_len, total_len)
+        logger.warning(
+            "%s: soma dos chunks (%d) difere do texto original (%d)",
+            label,
+            sum_len,
+            total_len,
+        )
 
     return chunks
 

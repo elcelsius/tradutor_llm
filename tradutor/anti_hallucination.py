@@ -10,6 +10,7 @@ from typing import List
 
 
 def detect_language_anomaly(text: str, mode: str = "refine") -> bool:
+    """Processamento interno auxiliar."""
     if not text:
         return True
     lower = text.lower()
@@ -25,20 +26,52 @@ def detect_language_anomaly(text: str, mode: str = "refine") -> bool:
     if mode != "translate":
         english_words = re.findall(r"\b[a-zA-Z]{4,}\b", text)
         if english_words:
-            common_en = {"the", "and", "with", "from", "this", "that", "here", "there", "you", "your", "their"}
+            common_en = {
+                "the",
+                "and",
+                "with",
+                "from",
+                "this",
+                "that",
+                "here",
+                "there",
+                "you",
+                "your",
+                "their",
+            }
             en_hits = sum(1 for w in english_words if w.lower() in common_en)
             english_ratio = en_hits / max(len(english_words), 1)
-            pt_markers = [" que ", " de ", " para ", " não", " uma ", " um ", " com ", " ao ", " na ", " no "]
+            pt_markers = [
+                " que ",
+                " de ",
+                " para ",
+                " não",
+                " uma ",
+                " um ",
+                " com ",
+                " ao ",
+                " na ",
+                " no ",
+            ]
             has_pt_markers = any(marker in f" {lower} " for marker in pt_markers)
             if english_ratio > 0.25 and not has_pt_markers:
                 return True
-    markers = ["as an ai", "here is the refined text", "<think>", "</think>", "assistant:", "user:", "como um modelo de linguagem"]
+    markers = [
+        "as an ai",
+        "here is the refined text",
+        "<think>",
+        "</think>",
+        "assistant:",
+        "user:",
+        "como um modelo de linguagem",
+    ]
     if any(pat in lower for pat in markers):
         return True
     return False
 
 
 def detect_repetition_anomaly(text: str) -> bool:
+    """Processamento interno auxiliar."""
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     counts = {}
     for ln in lines:
@@ -51,25 +84,66 @@ def detect_repetition_anomaly(text: str) -> bool:
     # fração expressiva de uma saída suficientemente longa.
     words = re.findall(r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'-]*", text.casefold())
     ignored = {
-        "a", "o", "as", "os", "de", "da", "do", "das", "dos", "e", "é", "em",
-        "na", "no", "nas", "nos", "um", "uma", "que", "se", "por", "para", "com",
-        "ao", "aos", "à", "às", "eu", "ela", "ele", "eles", "elas", "não", "mais",
+        "a",
+        "o",
+        "as",
+        "os",
+        "de",
+        "da",
+        "do",
+        "das",
+        "dos",
+        "e",
+        "é",
+        "em",
+        "na",
+        "no",
+        "nas",
+        "nos",
+        "um",
+        "uma",
+        "que",
+        "se",
+        "por",
+        "para",
+        "com",
+        "ao",
+        "aos",
+        "à",
+        "às",
+        "eu",
+        "ela",
+        "ele",
+        "eles",
+        "elas",
+        "não",
+        "mais",
     }
     relevant = [word for word in words if len(word) >= 5 and word not in ignored]
     if len(relevant) >= 40:
         counts: dict[str, int] = {}
         for word in relevant:
             counts[word] = counts.get(word, 0) + 1
-        if max(counts.values(), default=0) >= 12 and max(counts.values()) / len(relevant) >= 0.12:
+        if (
+            max(counts.values(), default=0) >= 12
+            and max(counts.values()) / len(relevant) >= 0.12
+        ):
             return True
     return False
 
 
 def detect_structure_anomaly(text: str) -> bool:
+    """Processamento interno auxiliar."""
     lower = text.lower()
-    if "### texto_traduzido_inicio".lower() in lower and "### texto_traduzido_fim".lower() not in lower:
+    if (
+        "### texto_traduzido_inicio".lower() in lower
+        and "### texto_traduzido_fim".lower() not in lower
+    ):
         return True
-    if "### texto_refinado_inicio".lower() in lower and "### texto_refinado_fim".lower() not in lower:
+    if (
+        "### texto_refinado_inicio".lower() in lower
+        and "### texto_refinado_fim".lower() not in lower
+    ):
         return True
     bad_markers = ["<think>", "assistant:", "user:", "===glossario_s", "```"]
     if any(bm in lower for bm in bad_markers):
@@ -78,10 +152,15 @@ def detect_structure_anomaly(text: str) -> bool:
 
 
 def _extract_entities(text: str) -> List[str]:
-    return [m.group() for m in re.finditer(r"\b[A-ZÁÉÍÓÚÂÊÔÃÕÄÖÜ][\wÁÉÍÓÚÂÊÔÃÕÄÖÜ-]{2,}\b", text)]
+    """Processamento interno auxiliar."""
+    return [
+        m.group()
+        for m in re.finditer(r"\b[A-ZÁÉÍÓÚÂÊÔÃÕÄÖÜ][\wÁÉÍÓÚÂÊÔÃÕÄÖÜ-]{2,}\b", text)
+    ]
 
 
 def detect_semantic_drift(orig: str, llm: str) -> bool:
+    """Processamento interno auxiliar."""
     orig_entities = _extract_entities(orig)
     llm_entities = _extract_entities(llm)
     if not orig_entities:
@@ -123,12 +202,16 @@ def detect_entity_mutation(orig: str, candidate: str) -> bool:
     return False
 
 
-INLINE_SLASH_TOKEN_RE = re.compile(r"(?<![\w/])[A-Za-zÀ-ÿ]{1,}/[A-Za-zÀ-ÿ]{1,}(?![\w/])")
+INLINE_SLASH_TOKEN_RE = re.compile(
+    r"(?<![\w/])[A-Za-zÀ-ÿ]{1,}/[A-Za-zÀ-ÿ]{1,}(?![\w/])"
+)
 
 
 def detect_inline_slash_mutation(orig: str, candidate: str) -> bool:
     """Detecta tokens inventados como `do/a` que não existiam no original."""
-    original_tokens = {match.group(0).casefold() for match in INLINE_SLASH_TOKEN_RE.finditer(orig)}
+    original_tokens = {
+        match.group(0).casefold() for match in INLINE_SLASH_TOKEN_RE.finditer(orig)
+    }
     return any(
         match.group(0).casefold() not in original_tokens
         for match in INLINE_SLASH_TOKEN_RE.finditer(candidate)
@@ -136,6 +219,7 @@ def detect_inline_slash_mutation(orig: str, candidate: str) -> bool:
 
 
 def sanitize_llm_output(llm_raw: str) -> str:
+    """Processamento interno auxiliar."""
     cleaned = llm_raw
     cleaned = cleaned.replace("Here is the refined text:", "")
     cleaned = cleaned.replace("Texto refinado:", "")

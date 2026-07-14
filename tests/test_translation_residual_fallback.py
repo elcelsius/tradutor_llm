@@ -1,11 +1,13 @@
 import logging
 import re
 
-from tradutor.config import AppConfig
 import tradutor.translate as translate
+from tradutor.config import AppConfig
 
 
 class _StubBackend:
+    """Processamento interno auxiliar."""
+
     backend = "stub"
     model = "stub"
     num_predict = 128
@@ -14,15 +16,20 @@ class _StubBackend:
 
 
 def _extract_block(prompt: str) -> str:
+    """Processamento interno auxiliar."""
     match = re.search(r'TEXTO A SER TRADUZIDO:\n"""(.*?)"""', prompt, flags=re.DOTALL)
     return match.group(1).strip() if match else ""
 
 
-def test_targeted_residual_english_fallback_replaces_only_leaked_dialogue(monkeypatch, tmp_path) -> None:
+def test_targeted_residual_english_fallback_replaces_only_leaked_dialogue(
+    monkeypatch, tmp_path
+) -> None:
+    """Processamento interno auxiliar."""
     backend = _StubBackend()
     labels: list[str] = []
 
     def fake_call_with_retry(backend, prompt, cfg, logger, label):
+        """Processamento interno auxiliar."""
         labels.append(label)
         source = _extract_block(prompt)
         if label.startswith("trad-residual-"):

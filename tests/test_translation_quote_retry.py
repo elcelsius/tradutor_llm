@@ -6,7 +6,10 @@ from tradutor.translate import translate_document
 
 
 class _QuoteRetryBackend:
+    """Processamento interno auxiliar."""
+
     def __init__(self, outputs):
+        """Processamento interno auxiliar."""
         self.backend = "stub"
         self.model = "stub"
         self.num_predict = 128
@@ -16,17 +19,21 @@ class _QuoteRetryBackend:
         self.outputs = outputs
 
     def generate(self, prompt: str):
+        """Processamento interno auxiliar."""
         text = self.outputs[min(self.calls, len(self.outputs) - 1)]
         self.calls += 1
         return type("Resp", (), {"text": text})
 
 
 def test_translation_retry_on_missing_dialogues(tmp_path: Path) -> None:
+    """Processamento interno auxiliar."""
     cfg = AppConfig(output_dir=tmp_path, max_retries=2, split_by_sections=False)
     # Input has several quoted lines; first output omits some quotes; second fixes.
     input_text = '"A"\n"B"\n"C"\n"D"\n'
-    bad_output = "### TEXTO_TRADUZIDO_INICIO\n\"A\"\n\"B\"\n### TEXTO_TRADUZIDO_FIM"
-    good_output = "### TEXTO_TRADUZIDO_INICIO\n\"A\"\n\"B\"\n\"C\"\n\"D\"\n### TEXTO_TRADUZIDO_FIM"
+    bad_output = '### TEXTO_TRADUZIDO_INICIO\n"A"\n"B"\n### TEXTO_TRADUZIDO_FIM'
+    good_output = (
+        '### TEXTO_TRADUZIDO_INICIO\n"A"\n"B"\n"C"\n"D"\n### TEXTO_TRADUZIDO_FIM'
+    )
     backend = _QuoteRetryBackend([bad_output, good_output])
     logger = logging.getLogger("quote-retry")
 
@@ -50,6 +57,7 @@ def test_translation_retry_on_missing_dialogues(tmp_path: Path) -> None:
 
 
 def test_translation_retry_on_aggressive_sanitization(tmp_path: Path) -> None:
+    """Processamento interno auxiliar."""
     cfg = AppConfig(output_dir=tmp_path, max_retries=2, split_by_sections=False)
     input_text = "Hello.\n\nThis is a paragraph.\n\nAnother line."
     bad_output = "### TEXTO_TRADUZIDO_INICIO\n<think>foo</think>\nHello.\n### TEXTO_TRADUZIDO_FIM"

@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-
 PORTUGUESE_ALIAS_WORDS = {
     "anciaos",
     "ancioes",
@@ -41,10 +40,12 @@ PORTUGUESE_ALIAS_WORDS = {
 
 
 def normalize_text(value: str) -> str:
+    """Processamento interno auxiliar."""
     return re.sub(r"\s+", " ", value.strip().casefold())
 
 
 def _strip_accents_for_markers(value: str) -> str:
+    """Processamento interno auxiliar."""
     table = str.maketrans(
         "áàâãäéèêëíìîïóòôõöúùûüçÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇ",
         "aaaaaeeeeiiiiooooouuuucAAAAAEEEEIIIIOOOOOUUUUC",
@@ -53,6 +54,7 @@ def _strip_accents_for_markers(value: str) -> str:
 
 
 def as_list(value: Any) -> list[str]:
+    """Processamento interno auxiliar."""
     if value is None:
         return []
     if isinstance(value, str):
@@ -63,6 +65,7 @@ def as_list(value: Any) -> list[str]:
 
 
 def terms_from_data(data: Any) -> list[dict[str, Any]]:
+    """Processamento interno auxiliar."""
     if isinstance(data, dict) and isinstance(data.get("terms"), list):
         return [term for term in data["terms"] if isinstance(term, dict)]
     if isinstance(data, list):
@@ -71,6 +74,7 @@ def terms_from_data(data: Any) -> list[dict[str, Any]]:
 
 
 def source_aliases_for_entry(term: dict[str, Any]) -> list[str]:
+    """Processamento interno auxiliar."""
     aliases = as_list(term.get("source_aliases"))
     if aliases:
         return aliases
@@ -78,6 +82,7 @@ def source_aliases_for_entry(term: dict[str, Any]) -> list[str]:
 
 
 def is_probably_portuguese_alias(value: str) -> bool:
+    """Processamento interno auxiliar."""
     clean = value.strip()
     if not clean:
         return False
@@ -89,6 +94,7 @@ def is_probably_portuguese_alias(value: str) -> bool:
 
 
 def audit_glossary_data(data: Any) -> dict[str, Any]:
+    """Processamento interno auxiliar."""
     terms = terms_from_data(data)
     duplicate_keys = _group_duplicate_terms(terms, "key")
     duplicate_pt = _group_duplicate_terms(terms, "pt")
@@ -120,6 +126,7 @@ def audit_glossary_data(data: Any) -> dict[str, Any]:
 
 
 def format_audit_report(report: dict[str, Any], *, limit: int = 20) -> str:
+    """Processamento interno auxiliar."""
     summary = report.get("summary", {})
     lines = [
         "Glossary audit",
@@ -132,29 +139,53 @@ def format_audit_report(report: dict[str, Any], *, limit: int = 20) -> str:
         f"- duplicate aliases within term: {summary.get('duplicate_aliases_within_term', 0)}",
         f"- redundant source aliases: {summary.get('redundant_source_aliases', 0)}",
     ]
-    _append_issue_preview(lines, "Ambiguous aliases", report.get("ambiguous_source_aliases", []), limit)
-    _append_issue_preview(lines, "Portuguese source aliases", report.get("portuguese_source_aliases", []), limit)
-    _append_issue_preview(lines, "Duplicate keys", report.get("duplicate_keys", []), limit)
-    _append_issue_preview(lines, "Duplicate PT groups", report.get("duplicate_pt_groups", []), limit)
+    _append_issue_preview(
+        lines, "Ambiguous aliases", report.get("ambiguous_source_aliases", []), limit
+    )
+    _append_issue_preview(
+        lines,
+        "Portuguese source aliases",
+        report.get("portuguese_source_aliases", []),
+        limit,
+    )
+    _append_issue_preview(
+        lines, "Duplicate keys", report.get("duplicate_keys", []), limit
+    )
+    _append_issue_preview(
+        lines, "Duplicate PT groups", report.get("duplicate_pt_groups", []), limit
+    )
     return "\n".join(lines)
 
 
-def _append_issue_preview(lines: list[str], title: str, issues: list[dict[str, Any]], limit: int) -> None:
+def _append_issue_preview(
+    lines: list[str], title: str, issues: list[dict[str, Any]], limit: int
+) -> None:
     if not issues:
         return
     lines.append("")
     lines.append(f"{title}:")
     for issue in issues[:limit]:
-        value = issue.get("value") or issue.get("key") or issue.get("pt") or issue.get("alias") or ""
+        value = (
+            issue.get("value")
+            or issue.get("key")
+            or issue.get("pt")
+            or issue.get("alias")
+            or ""
+        )
         refs = issue.get("refs") or issue.get("terms") or []
-        rendered_refs = ", ".join(str(ref.get("key", ref)) if isinstance(ref, dict) else str(ref) for ref in refs[:4])
+        rendered_refs = ", ".join(
+            str(ref.get("key", ref)) if isinstance(ref, dict) else str(ref)
+            for ref in refs[:4]
+        )
         suffix = f" -> {rendered_refs}" if rendered_refs else ""
         lines.append(f"- {value}{suffix}")
     if len(issues) > limit:
         lines.append(f"- ... {len(issues) - limit} more")
 
 
-def _group_duplicate_terms(terms: list[dict[str, Any]], field: str) -> list[dict[str, Any]]:
+def _group_duplicate_terms(
+    terms: list[dict[str, Any]], field: str
+) -> list[dict[str, Any]]:
     groups: dict[str, list[dict[str, Any]]] = {}
     display: dict[str, str] = {}
     for idx, term in enumerate(terms):
@@ -177,7 +208,9 @@ def _group_duplicate_terms(terms: list[dict[str, Any]], field: str) -> list[dict
     return issues
 
 
-def _duplicate_aliases_within_terms(terms: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _duplicate_aliases_within_terms(
+    terms: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     issues = []
     for idx, term in enumerate(terms):
         aliases = source_aliases_for_entry(term)
@@ -201,12 +234,17 @@ def _duplicate_aliases_within_terms(terms: list[dict[str, Any]]) -> list[dict[st
 
 
 def _source_alias_mismatches(terms: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Processamento interno auxiliar."""
     issues = []
     for idx, term in enumerate(terms):
         if "source_aliases" not in term or "aliases" not in term:
             continue
-        source_aliases = [normalize_text(alias) for alias in as_list(term.get("source_aliases"))]
-        legacy_aliases = [normalize_text(alias) for alias in as_list(term.get("aliases"))]
+        source_aliases = [
+            normalize_text(alias) for alias in as_list(term.get("source_aliases"))
+        ]
+        legacy_aliases = [
+            normalize_text(alias) for alias in as_list(term.get("aliases"))
+        ]
         if source_aliases != legacy_aliases:
             issues.append(
                 {
@@ -220,6 +258,7 @@ def _source_alias_mismatches(terms: list[dict[str, Any]]) -> list[dict[str, Any]
 
 
 def _portuguese_source_aliases(terms: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Processamento interno auxiliar."""
     issues = []
     for idx, term in enumerate(terms):
         for alias in source_aliases_for_entry(term):
@@ -236,13 +275,17 @@ def _portuguese_source_aliases(terms: list[dict[str, Any]]) -> list[dict[str, An
 
 
 def _ambiguous_source_aliases(terms: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Processamento interno auxiliar."""
     refs_by_alias: dict[str, list[dict[str, Any]]] = {}
     display: dict[str, str] = {}
     for idx, term in enumerate(terms):
         key = str(term.get("key", "")).strip()
         if not key:
             continue
-        values = [("key", key), *[("source_alias", alias) for alias in source_aliases_for_entry(term)]]
+        values = [
+            ("key", key),
+            *[("source_alias", alias) for alias in source_aliases_for_entry(term)],
+        ]
         seen_for_term: set[str] = set()
         for field, value in values:
             norm = normalize_text(value)
@@ -267,6 +310,7 @@ def _ambiguous_source_aliases(terms: list[dict[str, Any]]) -> list[dict[str, Any
 
 
 def _redundant_source_aliases(terms: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Processamento interno auxiliar."""
     issues = []
     for idx, term in enumerate(terms):
         key = str(term.get("key", "")).strip()

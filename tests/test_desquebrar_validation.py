@@ -6,17 +6,22 @@ from tradutor.utils import setup_logging
 
 
 class _StubBackend:
+    """Processamento interno auxiliar."""
+
     def __init__(self, outputs):
+        """Processamento interno auxiliar."""
         self.outputs = outputs
         self.calls = 0
 
     def generate(self, prompt):
+        """Processamento interno auxiliar."""
         out = self.outputs[self.calls]
         self.calls += 1
         return types.SimpleNamespace(text=out)
 
 
 def test_desquebrar_rejects_lonely_quote_and_falls_back():
+    """Processamento interno auxiliar."""
     cfg = AppConfig(desquebrar_chunk_chars=500)
     logger = setup_logging()
     original = "For now, yes...\nBut we continue."
@@ -34,6 +39,7 @@ def test_desquebrar_rejects_lonely_quote_and_falls_back():
 
 
 def test_desquebrar_rejects_content_loss():
+    """Processamento interno auxiliar."""
     cfg = AppConfig(desquebrar_chunk_chars=500)
     logger = setup_logging()
     original = "Nggh…I do think they’ve rather served..."

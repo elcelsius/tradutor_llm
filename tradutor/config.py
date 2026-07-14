@@ -13,7 +13,6 @@ from typing import Literal
 
 import yaml
 
-
 BackendType = Literal["ollama", "gemini"]
 GuardrailsType = Literal["strict", "relaxed", "off"]
 DialogueGuardrailsType = Literal["strict", "relaxed", "off"]
@@ -91,7 +90,9 @@ class AppConfig:
     request_timeout: int = 120
 
     # Cleanup deterministico antes do refine
-    cleanup_before_refine: str | bool = "auto"  # valores: off | auto | on (bool suportado por configs antigas)
+    cleanup_before_refine: str | bool = (
+        "auto"  # valores: off | auto | on (bool suportado por configs antigas)
+    )
 
     # PDF
     pdf_title_font_size: int = 16
@@ -169,7 +170,9 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
         if "size" in pdf_font_block:
             overrides["pdf_font_size"] = pdf_font_block.get("size", base.pdf_font_size)
         if "leading" in pdf_font_block:
-            overrides["pdf_font_leading"] = pdf_font_block.get("leading", base.pdf_font_leading)
+            overrides["pdf_font_leading"] = pdf_font_block.get(
+                "leading", base.pdf_font_leading
+            )
     for key, value in data.items():
         if key == "pdf_font":
             continue

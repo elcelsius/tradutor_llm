@@ -2,6 +2,7 @@ from tradutor.postprocess import final_pt_postprocess
 
 
 def test_final_pt_postprocess_fixes_small_editorial_artifacts() -> None:
+    """Processamento interno auxiliar."""
     text = (
         "O criatura caiu.””\n\n"
         "Eu fui mandada para as Ruínas do Descarte? Não: eu ter sido mandada para as Ruínas do Descarte.\n\n"
@@ -47,7 +48,10 @@ def test_final_pt_postprocess_fixes_small_editorial_artifacts() -> None:
     assert "Arriscar sua vida talvez tenha sido um pouco demais." in result
     assert "criações estão funcionando corretamente" in result
     assert "Sua ajuda nos primeiros socorros e no combate foi essencial" in result
-    assert "Sua ajuda nos primeiros socorros e na luta contra Kirihara foi essencial" in result
+    assert (
+        "Sua ajuda nos primeiros socorros e na luta contra Kirihara foi essencial"
+        in result
+    )
     assert "Sua ajuda nos primeiros socorros e no combate foi essencial" in result
     assert "Eu devo ter esquecido disso" in result
     assert "se apegar demais a isso" in result
@@ -56,7 +60,10 @@ def test_final_pt_postprocess_fixes_small_editorial_artifacts() -> None:
     assert "exerce sobre seu corpo e que precisamos considerar" not in result
     assert "exerce sobre seu corpo, algo que precisamos considerar" in result
     assert result.count("exerce sobre seu corpo, algo que precisamos considerar") >= 2
-    assert "habilidade de Kyokugen impõe ao corpo dela, algo que precisamos considerar" in result
+    assert (
+        "habilidade de Kyokugen impõe ao corpo dela, algo que precisamos considerar"
+        in result
+    )
     assert "a acreditar em mim" in result
     assert "se arregalaram de surpresa" in result
     assert "se virou para longe de mim" in result
@@ -65,7 +72,9 @@ def test_final_pt_postprocess_fixes_small_editorial_artifacts() -> None:
     assert "Não faltaram pretendentes?”" in result
     assert "poupá-la de usá-lo como exemplo — você entende?" in result
     assert "a Seras-san está aqui, então vou poupá-la de usá-lo como exemplo" in result
-    assert "como a Seras Ashrain está aqui, vou poupá-la de usá-lo como exemplo" in result
+    assert (
+        "como a Seras Ashrain está aqui, vou poupá-la de usá-lo como exemplo" in result
+    )
     assert "come alguma coisa" in result
     assert "tomavam a iniciativa" in result
     assert "Mas, ah… sei disso" in result
@@ -84,7 +93,9 @@ def test_final_pt_postprocess_fixes_small_editorial_artifacts() -> None:
     assert "As estratégias garantiram a vitória" in result
     assert "Desde que todos queiramos a mesma coisa" in result
     assert "“Entendo”, disse Hijiri" in result
-    assert "limites para o que conseguíamos descobrir por meio daquele familiar" in result
+    assert (
+        "limites para o que conseguíamos descobrir por meio daquele familiar" in result
+    )
     assert "Acredito que o verdadeiro você seja diferente" in result
     assert "seu apanhador no campo de centeio" in result
     assert "sofrer lavagem cerebral" in result
@@ -116,6 +127,7 @@ def test_final_pt_postprocess_fixes_small_editorial_artifacts() -> None:
 
 
 def test_final_pt_postprocess_fixes_action_calques() -> None:
+    """Processamento interno auxiliar."""
     result = final_pt_postprocess(
         "Ela viu a espada da Seras — está se cuidando dela. Do que ela tá feliz? "
         "Mantenho o Slei galopando. O monstro estava na pose do ponteiro olímpico. "
@@ -144,6 +156,7 @@ def test_final_pt_postprocess_fixes_action_calques() -> None:
 
 
 def test_final_pt_postprocess_normalizes_dashes_and_action_variants() -> None:
+    """Processamento interno auxiliar."""
     result = final_pt_postprocess(
         "Ele viu a espada da Seras—está desconfiado dela. Cuidadoso para manter uma distância segura de seus ataques. "
         "O monstro estava na pose do ponte de ginástica. Slei estava alterando sua forma para apoiar o corpo inferior da Seras e fornecendo suspensão. "
@@ -158,6 +171,7 @@ def test_final_pt_postprocess_normalizes_dashes_and_action_variants() -> None:
 
 
 def test_final_pt_postprocess_fixes_goddess_calques() -> None:
+    """Processamento interno auxiliar."""
     result = final_pt_postprocess(
         "Ah, você poderia calar a boca por mim, Worm? Agora então, ajoelhe-se se não se importa. "
         "Ah, você pode calar a boca por mim, Worm? Ainda há aquelas insetos no oeste. "
@@ -178,6 +192,7 @@ def test_final_pt_postprocess_fixes_goddess_calques() -> None:
 
 
 def test_final_pt_postprocess_fixes_nyaki_reunion_artifacts() -> None:
+    """Processamento interno auxiliar."""
     result = final_pt_postprocess(
         "Você é uma membro importante. “… Boa sorte pra você, Nyaki.” "
         "“Miau-ow — Piggymaru! Slei!” “Nee-nyaaaa —! Waaahn!”"
@@ -190,6 +205,7 @@ def test_final_pt_postprocess_fixes_nyaki_reunion_artifacts() -> None:
 
 
 def test_final_pt_postprocess_fixes_scene_marker_and_late_editorial_artifacts() -> None:
+    """Processamento interno auxiliar."""
     result = final_pt_postprocess(
         "** Os carros seguiram para o norte.\n\n"
         "Foi sua muitas estratégias que venceu a batalha.\n\n"
@@ -205,17 +221,23 @@ def test_final_pt_postprocess_fixes_scene_marker_and_late_editorial_artifacts() 
     assert "Foram as suas muitas estratégias que decidiram a batalha." in result
     assert "em frente ao Yasu" in result
     assert "nossa carruagem chegou" in result
-    assert "Yasu fora um dos vários que eles haviam levado consigo pelo caminho" in result
+    assert (
+        "Yasu fora um dos vários que eles haviam levado consigo pelo caminho" in result
+    )
     assert "todos pareciam felizes" in result
     assert "Todos saíram ilesos do confronto" in result
     assert "Touka, você foi muito esperto" in result
     assert "Ser atencioso… é isso que Hijiri culpa pelo próprio fracasso" in result
-    assert "Gentileza não é o tipo de coisa que dá pra simplesmente rejeitar assim, de cara" in result
+    assert (
+        "Gentileza não é o tipo de coisa que dá pra simplesmente rejeitar assim, de cara"
+        in result
+    )
     assert "impulso extra" in result
     assert "Beleza!" in result
 
 
 def test_final_pt_postprocess_fixes_reviewed_chapter_calques() -> None:
+    """Processamento interno auxiliar."""
     result = final_pt_postprocess(
         "Vicius pode aumentar seu poder como deusa, talvez? Quando o Congelar for removido, ela pode perder a confiança em Hijiri, que foi quem a convenceu a me apoiar. Mas se enviar nós, heróis, para casa consome muito.\n\n"
         "Num cenário pior, isso basta. Você só está trabalhando de trás pra frente depois da derrota. T-trabalhando de trás pra frente…?\n\n"

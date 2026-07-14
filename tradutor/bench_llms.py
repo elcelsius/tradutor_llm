@@ -1,4 +1,3 @@
-
 """
 Benchmark simples para comparar modelos Ollama na traducao.
 
@@ -35,16 +34,20 @@ from tradutor.utils import setup_logging
 
 
 def slugify_model(name: str) -> str:
+    """Processamento interno auxiliar."""
     return re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_")
 
 
 def _normalize_base_url(endpoint: str) -> str:
+    """Processamento interno auxiliar."""
     if endpoint.endswith("/api/generate"):
         return endpoint[: -len("/api/generate")]
     return endpoint.rstrip("/")
 
 
-def build_backend(model: str, endpoint: str, cfg: AppConfig, logger: logging.Logger) -> LLMBackend:
+def build_backend(
+    model: str, endpoint: str, cfg: AppConfig, logger: logging.Logger
+) -> LLMBackend:
     return LLMBackend(
         backend="ollama",
         model=model,
@@ -126,7 +129,11 @@ def _list_models_via_cli() -> list[str]:
             continue
         try:
             data = json.loads(output)
-            names = [item["name"] for item in data if isinstance(item, dict) and "name" in item]
+            names = [
+                item["name"]
+                for item in data
+                if isinstance(item, dict) and "name" in item
+            ]
             if names:
                 return names
         except Exception:
@@ -174,6 +181,7 @@ def list_installed_models(endpoint: str) -> list[str]:
 
 
 def read_input(path: Path, max_chars: int) -> str:
+    """Processamento interno auxiliar."""
     if path.suffix.lower() == ".pdf":
         text = extract_pdf_text(path, logger=None)
     else:
@@ -183,7 +191,14 @@ def read_input(path: Path, max_chars: int) -> str:
     return text.strip()
 
 
-def write_model_output(out_dir: Path, slug: str, model: str, translated: str, elapsed: float, input_path: Path) -> str:
+def write_model_output(
+    out_dir: Path,
+    slug: str,
+    model: str,
+    translated: str,
+    elapsed: float,
+    input_path: Path,
+) -> str:
     model_slug = slugify_model(model)
     out_path = out_dir / f"{slug}_{model_slug}.md"
     header = [
@@ -197,7 +212,9 @@ def write_model_output(out_dir: Path, slug: str, model: str, translated: str, el
     return out_path.name
 
 
-def write_error_output(out_dir: Path, slug: str, model: str, elapsed: float, input_path: Path, error: str) -> str:
+def write_error_output(
+    out_dir: Path, slug: str, model: str, elapsed: float, input_path: Path, error: str
+) -> str:
     model_slug = slugify_model(model)
     out_path = out_dir / f"{slug}_{model_slug}_erro.md"
     header = [
@@ -217,9 +234,12 @@ def write_error_output(out_dir: Path, slug: str, model: str, elapsed: float, inp
 
 
 def write_quality_report(out_dir: Path, slug: str, model: str, report: dict) -> str:
+    """Processamento interno auxiliar."""
     model_slug = slugify_model(model)
     out_path = out_dir / f"{slug}_{model_slug}_qa.json"
-    out_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    out_path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     return out_path.name
 
 
@@ -260,26 +280,64 @@ def write_summary(
         lines.append(
             f"| {row['model']} | {row['file']} | {row.get('quality', '')} | {row.get('qa_file', '')} | {elapsed:.2f} | {row['status']} | {row.get('error', '')} |"
         )
-    (out_dir / f"resumo_{slug}.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (out_dir / f"resumo_{slug}.md").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8"
+    )
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Benchmark de traducao com varios modelos Ollama.")
-    parser.add_argument("--input", required=True, help="Arquivo de entrada em ingles (.txt, .md ou .pdf)")
+    """Processamento interno auxiliar."""
+    parser = argparse.ArgumentParser(
+        description="Benchmark de traducao com varios modelos Ollama."
+    )
+    parser.add_argument(
+        "--input",
+        required=True,
+        help="Arquivo de entrada em ingles (.txt, .md ou .pdf)",
+    )
     parser.add_argument("--models", nargs="*", help="Lista de modelos Ollama a usar")
-    parser.add_argument("--max-chars", type=int, default=1500, help="Maximo de caracteres do texto de entrada")
-    parser.add_argument("--out-dir", default="benchmark/traducao", help="Diretorio de saida para resultados")
+    parser.add_argument(
+        "--max-chars",
+        type=int,
+        default=1500,
+        help="Maximo de caracteres do texto de entrada",
+    )
+    parser.add_argument(
+        "--out-dir",
+        default="benchmark/traducao",
+        help="Diretorio de saida para resultados",
+    )
     parser.add_argument(
         "--single-prompt",
         action="store_true",
         help="Modo legado: envia todo o texto em uma unica chamada, sem chunking/retry do pipeline.",
     )
-    parser.add_argument("--temperature", type=float, help="Override de translate_temperature do config.yaml")
-    parser.add_argument("--num-ctx", type=int, help="Override de translate_num_ctx do config.yaml")
-    parser.add_argument("--num-predict", type=int, help="Override de translate_num_predict do config.yaml")
-    parser.add_argument("--repeat-penalty", type=float, help="Override de translate_repeat_penalty do config.yaml")
-    parser.add_argument("--chunk-chars", type=int, help="Override de translate_chunk_chars do config.yaml")
-    parser.add_argument("--timeout", type=int, help="Override de request_timeout do config.yaml")
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        help="Override de translate_temperature do config.yaml",
+    )
+    parser.add_argument(
+        "--num-ctx", type=int, help="Override de translate_num_ctx do config.yaml"
+    )
+    parser.add_argument(
+        "--num-predict",
+        type=int,
+        help="Override de translate_num_predict do config.yaml",
+    )
+    parser.add_argument(
+        "--repeat-penalty",
+        type=float,
+        help="Override de translate_repeat_penalty do config.yaml",
+    )
+    parser.add_argument(
+        "--chunk-chars",
+        type=int,
+        help="Override de translate_chunk_chars do config.yaml",
+    )
+    parser.add_argument(
+        "--timeout", type=int, help="Override de request_timeout do config.yaml"
+    )
     parser.add_argument(
         "--use-glossary",
         action="store_true",
@@ -312,6 +370,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """Processamento interno auxiliar."""
     logger = setup_logging(logging.INFO)
     cfg = load_config()
     args = parse_args()
@@ -326,11 +385,15 @@ def main() -> None:
             missing = [m for m in models if m not in installed]
             available = [m for m in models if m in installed]
             if missing:
-                print(f"Atencao: ignorando modelos nao instalados: {', '.join(missing)}")
+                print(
+                    f"Atencao: ignorando modelos nao instalados: {', '.join(missing)}"
+                )
             if available:
                 models = available
             elif missing:
-                raise SystemExit("Nenhum dos modelos informados esta instalado segundo o Ollama.")
+                raise SystemExit(
+                    "Nenhum dos modelos informados esta instalado segundo o Ollama."
+                )
     else:
         models = installed
         if not models:
@@ -353,13 +416,27 @@ def main() -> None:
     cfg = replace(
         cfg,
         output_dir=state_dir,
-        translate_temperature=args.temperature if args.temperature is not None else cfg.translate_temperature,
-        translate_num_ctx=args.num_ctx if args.num_ctx is not None else cfg.translate_num_ctx,
-        translate_num_predict=args.num_predict if args.num_predict is not None else cfg.translate_num_predict,
-        translate_repeat_penalty=args.repeat_penalty if args.repeat_penalty is not None else cfg.translate_repeat_penalty,
-        translate_chunk_chars=args.chunk_chars if args.chunk_chars is not None else cfg.translate_chunk_chars,
-        request_timeout=args.timeout if args.timeout is not None else cfg.request_timeout,
-        ollama_api_mode=args.ollama_api_mode if args.ollama_api_mode is not None else cfg.ollama_api_mode,
+        translate_temperature=args.temperature
+        if args.temperature is not None
+        else cfg.translate_temperature,
+        translate_num_ctx=args.num_ctx
+        if args.num_ctx is not None
+        else cfg.translate_num_ctx,
+        translate_num_predict=args.num_predict
+        if args.num_predict is not None
+        else cfg.translate_num_predict,
+        translate_repeat_penalty=args.repeat_penalty
+        if args.repeat_penalty is not None
+        else cfg.translate_repeat_penalty,
+        translate_chunk_chars=args.chunk_chars
+        if args.chunk_chars is not None
+        else cfg.translate_chunk_chars,
+        request_timeout=args.timeout
+        if args.timeout is not None
+        else cfg.request_timeout,
+        ollama_api_mode=args.ollama_api_mode
+        if args.ollama_api_mode is not None
+        else cfg.ollama_api_mode,
         ollama_think=think_override,
     )
     set_cache_base_dir(cfg.output_dir)
@@ -379,7 +456,9 @@ def main() -> None:
         )
         if glossary_state:
             glossary_manual_terms = glossary_state.manual_terms
-            glossary_text = format_manual_pairs_for_translation(glossary_manual_terms, limit=30)
+            glossary_text = format_manual_pairs_for_translation(
+                glossary_manual_terms, limit=30
+            )
             logger.info(
                 "Glossário do benchmark carregado: %d termos de %s",
                 len(glossary_manual_terms),
@@ -416,8 +495,12 @@ def main() -> None:
                     glossary_text=glossary_text,
                     glossary_manual_terms=glossary_manual_terms,
                 )
-            fname = write_model_output(out_dir, slug, model, translated, elapsed, input_path)
-            quality_report = run_translation_quality_checks(text, translated, glossary_manual_terms)
+            fname = write_model_output(
+                out_dir, slug, model, translated, elapsed, input_path
+            )
+            quality_report = run_translation_quality_checks(
+                text, translated, glossary_manual_terms
+            )
             qa_file = write_quality_report(out_dir, slug, model, quality_report)
             rows.append(
                 {
@@ -434,8 +517,20 @@ def main() -> None:
             elapsed = time.monotonic() - started
             error = str(exc).replace("|", "\\|").replace("\n", " ")
             logger.error("Benchmark de traducao falhou para %s: %s", model, exc)
-            fname = write_error_output(out_dir, slug, model, elapsed, input_path, str(exc))
-            rows.append({"model": model, "file": fname, "qa_file": "", "quality": "", "elapsed": elapsed, "status": "falhou", "error": error})
+            fname = write_error_output(
+                out_dir, slug, model, elapsed, input_path, str(exc)
+            )
+            rows.append(
+                {
+                    "model": model,
+                    "file": fname,
+                    "qa_file": "",
+                    "quality": "",
+                    "elapsed": elapsed,
+                    "status": "falhou",
+                    "error": error,
+                }
+            )
 
     mode = "single-prompt" if args.single_prompt else "pipeline"
     write_summary(
