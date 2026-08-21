@@ -131,7 +131,7 @@ def _write_timing_report(
     nested_timings: dict | None = None,
 ) -> dict | None:
     """
-    Gera e salva o relatório de métricas de tempo (timings) no diretório de saída.
+    Gera o relatório mais recente e uma cópia histórica das métricas de tempo.
     Opcionalmente também grava os dados na sessão de debug, se ativa.
     """
     try:
@@ -151,11 +151,19 @@ def _write_timing_report(
         report_path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+        history_dir = cfg.output_dir / "timings"
+        history_dir.mkdir(parents=True, exist_ok=True)
+        run_stamp = started_at.strftime("%Y%m%d_%H%M%S_%f")
+        history_path = history_dir / f"{source_slug}_{run_stamp}_{status}.json"
+        history_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         if debug_run:
             debug_run.write_timing(payload)
         logger.info(
-            "Relatório de tempos salvo em %s (total=%s)",
+            "Relatório de tempos salvo em %s; histórico em %s (total=%s)",
             report_path,
+            history_path,
             payload["total_elapsed_human"],
         )
         return payload

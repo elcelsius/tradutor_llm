@@ -121,4 +121,4 @@ flowchart TD
 - Debug da revisão bilíngue: `saida/debug_runs/<slug>/<run>/46_bilingual_review/`.
 - Refine final: `saida/<slug>_pt_refinado.md`.
 - Revisão final: `saida/<slug>_pt_review_report.json`, `saida/<slug>_pt_refinado_review_report.json` e `saida/<slug>_source_sections.json`.
-- Tempos por etapa: `saida/<slug>_timings.json` e, com `--debug`, `99_reports/timings.json`.
+- Tempos por etapa: `saida/<slug>_timings.json` para o run mais recente, `saida/timings/<slug>_<timestamp>_<status>.json` para o histórico e, com `--debug`, `99_reports/timings.json`.

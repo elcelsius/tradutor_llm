@@ -30,7 +30,8 @@
 - PDF:
   - `saida/pdf/<slug>_pt_refinado.pdf` (quando `--pdf-enabled` ou config).
 - Tempos:
-  - `saida/<slug>_timings.json` (sempre ao final de `traduz`/`traduz-md`, inclusive em falha após início do processamento)
+  - `saida/<slug>_timings.json` (run mais recente, sempre ao final de `traduz`/`traduz-md`, inclusive em falha após início do processamento)
+  - `saida/timings/<slug>_<timestamp>_<status>.json` (histórico persistente de todos os runs)
   - Com `--debug`: `debug_runs/<slug>/<run>/99_reports/timings.json`
   - `stages.translate` inclui o repair seletivo e a revisão bilíngue; seus tempos aparecem também em `nested_stages.translation_repair` e `nested_stages.bilingual_review`, como detalhe sem dupla contagem.
   - `stages.post_translate_review` registra a revisão determinística após a tradução; `stages.post_refine_normalize` inclui a revisão final após o refine.
