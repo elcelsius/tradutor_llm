@@ -26,7 +26,9 @@ DEFAULT_SOURCE_LEAKS = (
     "Monster Slayer King",
     "Monster Slayer Knights",
     "Arright",
+    "and",
     "boost",
+    "but",
     "they",
     "Phew",
     "Geez",
@@ -39,6 +41,7 @@ DEFAULT_SOURCE_LEAKS = (
     "selves",
     "I see",
     "KYS",
+    "or",
 )
 
 FEMININE_MASCULINE_MARKERS = (
@@ -89,6 +92,24 @@ MIXED_GENDER_PATTERNS = (
 MASCULINE_NOUN_CONTEXT_RE = re.compile(
     r"\b(?:olhar|rosto|semblante|sorriso|tom)\b", re.IGNORECASE
 )
+_KNOWN_GRAMMAR_DEFECTS = (
+    (
+        re.compile(r"\brecuperar-se\s+d[ao]s?\s+consciênc(?:ia|ias)\b", re.IGNORECASE),
+        "Uso reflexivo incorreto para 'recuperar a consciência'.",
+    ),
+    (
+        re.compile(r"\bse\s+recuperando-se\b", re.IGNORECASE),
+        "Pronome reflexivo foi duplicado no gerúndio.",
+    ),
+    (
+        re.compile(
+            r"\bpara\s+que\s+(?:(?:ele|ela|eles|elas|você|vocês|a\s+gente|"
+            r"[A-ZÀ-Ý][A-Za-zÀ-ÿ]+)\s+)?se\s+recuperar\b",
+            re.IGNORECASE,
+        ),
+        "O subjuntivo foi perdido após 'para que'.",
+    ),
+)
 
 
 def _term_variants(term: GlossaryEntry) -> list[str]:
@@ -109,6 +130,11 @@ def _bad_aliases(term: GlossaryEntry) -> list[str]:
         aliases = [aliases]
     if not isinstance(aliases, list):
         aliases = []
+    contextual_aliases = term.get("contextual_bad_aliases") or []
+    if isinstance(contextual_aliases, str):
+        contextual_aliases = [contextual_aliases]
+    if not isinstance(contextual_aliases, list):
+        contextual_aliases = []
     target_replacements = term.get("target_replacements") or {}
     replacement_aliases = (
         target_replacements.keys() if isinstance(target_replacements, dict) else []
@@ -116,6 +142,11 @@ def _bad_aliases(term: GlossaryEntry) -> list[str]:
     return list(
         dict.fromkeys(
             [str(alias).strip() for alias in aliases if str(alias).strip()]
+            + [
+                str(alias).strip()
+                for alias in contextual_aliases
+                if str(alias).strip()
+            ]
             + [
                 str(alias).strip()
                 for alias in replacement_aliases
@@ -407,6 +438,22 @@ def _check_structure(translated_text: str, issues: list[dict[str, str]]) -> None
         )
 
 
+def _check_known_grammar_defects(
+    translated_text: str, issues: list[dict[str, str]]
+) -> None:
+    """Flag deterministic grammar defects that previous LLM reviews produced."""
+    for pattern, message in _KNOWN_GRAMMAR_DEFECTS:
+        for match in pattern.finditer(translated_text):
+            found = match.group(0)
+            _add_issue(
+                issues,
+                "known_grammar_defect",
+                message,
+                found=found,
+                snippet=_snippet(translated_text, found),
+            )
+
+
 def run_translation_quality_checks(
     source_text: str,
     translated_text: str,
@@ -421,6 +468,7 @@ def run_translation_quality_checks(
     _check_default_source_leaks(translated_text, issues)
     _check_gender(translated_text, terms, issues)
     _check_structure(translated_text, issues)
+    _check_known_grammar_defects(translated_text, issues)
 
     penalties = {
         "bad_alias_in_target": 10,
@@ -434,6 +482,7 @@ def run_translation_quality_checks(
         "malformed_quote_boundary": 6,
         "missing_quote_spacing": 3,
         "stray_format_marker": 3,
+        "known_grammar_defect": 4,
     }
     score = 100
     for issue in issues:

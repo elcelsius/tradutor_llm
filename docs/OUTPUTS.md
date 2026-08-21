@@ -13,6 +13,10 @@
   - `<slug>_repair_metrics.json` (por chunk)
   - Com `--debug`: `debug_runs/<slug>/<run>/45_repair/repair_manifest.json`
   - Com `--debug`: `45_repair/debug_repair/chunkNNN_before_pt.txt` e `chunkNNN_after_pt.txt` para chunks reparados.
+- Revisão bilíngue conservadora (`tradutor/bilingual_review.py`, chamada depois da tradução/repair):
+  - `<slug>_bilingual_review_metrics.json` (tempo, chunks alterados, propostas aceitas, recusadas e focos de inspeção por chunk)
+  - Com `--debug`: `debug_runs/<slug>/<run>/46_bilingual_review/bilingual_review_manifest.json`
+  - Com `--debug`: `46_bilingual_review/chunkNNN_raw.txt` e `chunkNNN_review.json` para auditoria da proposta do revisor.
 - Refine (`tradutor/refine.py`):
   - `saida/<slug>_pt_refinado.md`
   - `<slug>_refine_report.json`
@@ -28,20 +32,22 @@
 - Tempos:
   - `saida/<slug>_timings.json` (sempre ao final de `traduz`/`traduz-md`, inclusive em falha após início do processamento)
   - Com `--debug`: `debug_runs/<slug>/<run>/99_reports/timings.json`
-  - `stages.translate` inclui o repair seletivo; quando houver tempo de repair, ele aparece também em `nested_stages.translation_repair` como detalhe sem dupla contagem.
+  - `stages.translate` inclui o repair seletivo e a revisão bilíngue; seus tempos aparecem também em `nested_stages.translation_repair` e `nested_stages.bilingual_review`, como detalhe sem dupla contagem.
   - `stages.post_translate_review` registra a revisão determinística após a tradução; `stages.post_refine_normalize` inclui a revisão final após o refine.
 
 ## Caches (`tradutor/cache_utils.py`)
 - `saida/cache_traducao`
 - `saida/cache_repair`
+- `saida/cache_revisao_bilingue`
 - `saida/cache_refine`
 - `saida/cache_desquebrar`
 
-Use `--clear-cache {all,translate,repair,refine,desquebrar}` para limpar.
+Use `--clear-cache {all,translate,repair,review,refine,desquebrar}` para limpar.
 
 ## Debug / estado
 - Tradução: `*_pt_chunks_debug.jsonl` (se `--debug-chunks`), `debug_traducao/` para falhas.
 - Debug completo: `saida/debug_runs/<slug>/<timestamp>/40_translate/translate_manifest.json` inclui metadados do glossário por chunk; `debug_traducao/chunkNNN_glossary.txt` guarda o bloco de glossário enviado ao prompt.
 - Repair: `saida/debug_runs/<slug>/<timestamp>/45_repair/repair_manifest.json` inclui problemas detectados, tentativas, cache, suspeitas e se o chunk foi alterado.
+- Revisão bilíngue: `saida/debug_runs/<slug>/<timestamp>/46_bilingual_review/bilingual_review_manifest.json` inclui propostas, rejeições e justificativas de validação.
 - Refine: `*_pt_refinado_chunks_debug.jsonl` (se `--debug-chunks`), `debug_refine*` quando `--debug-refine`.
 - Estados rápidos: `saida/state_traducao.json`, `saida/state_refine.json`.

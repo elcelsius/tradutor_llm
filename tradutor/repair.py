@@ -29,7 +29,7 @@ from .postprocess_translation import postprocess_translation
 from .qa import count_quote_lines, count_quotes
 from .sanitizer import sanitize_refine_output
 
-REPAIR_PIPELINE_VERSION = "7"
+REPAIR_PIPELINE_VERSION = "10"
 REPAIR_START_MARKER_RE = r"###\s*TEXTO_REPARADO_INICIO"
 REPAIR_END_MARKER_RE = r"###\s*TEXTO_REPARADO_FIM"
 
@@ -99,6 +99,8 @@ Corrija SOMENTE os problemas listados. Não reescreva o trecho inteiro se não f
 REGRAS:
 - Traduza para PT-BR qualquer frase, fala ou trecho narrativo que ainda esteja em inglês.
 - Corrija termos do glossário que estejam em forma não canônica.
+- Para um alias contextual, corrija também a concordância de artigos, adjetivos,
+  pronomes e outras palavras ligadas ao termo no mesmo trecho.
 - Preserve nomes próprios, honoríficos e termos canônicos do glossário.
 - Preserve eventos, ordem narrativa, falas e sentido.
 - Preserve a ordem e a quantidade de parágrafos sempre que possível.
@@ -133,9 +135,30 @@ def parse_repair_output(raw: str) -> str:
         raw,
         flags=re.IGNORECASE | re.DOTALL,
     )
-    if match:
-        return match.group(1).strip()
-    return sanitize_refine_output(raw).strip()
+    text = match.group(1).strip() if match else sanitize_refine_output(raw).strip()
+    return _strip_outer_triple_quote_wrapper(text)
+
+
+def _strip_outer_triple_quote_wrapper(text: str) -> str:
+    """Remove aspas triplas que a LLM usa apenas como invólucro de saída."""
+    cleaned = text.strip()
+    for wrapper in ('"""', "'''"):
+        if (
+            cleaned.startswith(wrapper)
+            and cleaned.endswith(wrapper)
+            and len(cleaned) > len(wrapper) * 2
+        ):
+            return cleaned[len(wrapper) : -len(wrapper)].strip()
+    return cleaned
+
+
+def _string_list(value: Any) -> list[str]:
+    """Normaliza campos opcionais de aliases vindos do glossário."""
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
 
 
 def detect_translation_repair_issues(
@@ -195,17 +218,61 @@ def detect_translation_repair_issues(
             issues.append(
                 {"type": "source_term_leak", "found": key, "detail": f"use {pt}"}
             )
-        bad_aliases = term.get("bad_aliases") or term.get("forbidden_aliases") or []
-        if isinstance(bad_aliases, str):
-            bad_aliases = [bad_aliases]
-        if isinstance(bad_aliases, list):
-            for alias in bad_aliases:
-                alias_s = str(alias).strip()
-                if alias_s and _contains(translated_text, alias_s):
-                    issues.append(
-                        {"type": "bad_alias", "found": alias_s, "detail": f"use {pt}"}
-                    )
+        bad_aliases = _string_list(
+            term.get("bad_aliases") or term.get("forbidden_aliases") or []
+        )
+        contextual_bad_aliases = _string_list(term.get("contextual_bad_aliases"))
+        seen_aliases: set[str] = set()
+        for alias_s in bad_aliases:
+            marker = alias_s.casefold()
+            if marker in seen_aliases:
+                continue
+            seen_aliases.add(marker)
+            if _contains(translated_text, alias_s):
+                issues.append(
+                    {"type": "bad_alias", "found": alias_s, "detail": f"use {pt}"}
+                )
+        for alias_s in contextual_bad_aliases:
+            marker = alias_s.casefold()
+            if marker in seen_aliases:
+                continue
+            seen_aliases.add(marker)
+            if _contains(translated_text, alias_s):
+                issues.append(
+                    {
+                        "type": "contextual_bad_alias",
+                        "found": alias_s,
+                        "detail": (
+                            f"use {pt}; ajuste artigos, adjetivos e pronomes "
+                            "para a concordancia correta"
+                        ),
+                    }
+                )
     return issues
+
+
+def _blocking_repair_issues(
+    *,
+    source_text: str,
+    translated_text: str,
+    glossary_terms: list[dict] | None,
+) -> list[dict[str, str]]:
+    """Retorna somente defeitos que o repair deve eliminar antes de aceitar a saída."""
+    blocking_types = {
+        "residual_english",
+        "source_term_leak",
+        "bad_alias",
+        "contextual_bad_alias",
+    }
+    return [
+        issue
+        for issue in detect_translation_repair_issues(
+            source_text=source_text,
+            translated_text=translated_text,
+            glossary_terms=glossary_terms,
+        )
+        if issue.get("type") in blocking_types
+    ]
 
 
 def validate_repair_candidate(
@@ -213,8 +280,14 @@ def validate_repair_candidate(
     source_text: str,
     translated_text: str,
     candidate_text: str,
+    allow_opening_change: bool = False,
 ) -> str | None:
-    """Rejeita reparos que parecem ter removido conteúdo já traduzido."""
+    """Rejeita reparos que parecem ter removido conteúdo já traduzido.
+
+    Correções de inglês ou de glossário podem legitimamente alterar a primeira
+    linha; nesses casos os guardrails de tamanho, parágrafos e diálogos ainda
+    protegem contra uma reescrita destrutiva.
+    """
     candidate = candidate_text.strip()
     current = translated_text.strip()
     if not candidate:
@@ -242,7 +315,8 @@ def validate_repair_candidate(
 
     first_line = _first_meaningful_line(current)
     if (
-        first_line
+        not allow_opening_change
+        and first_line
         and len(first_line) >= 30
         and not detect_residual_english(first_line)[0]
     ):
@@ -273,6 +347,16 @@ def repair_translation_chunk(
         source_text=source_text,
         translated_text=translated_text,
         glossary_terms=glossary_terms,
+    )
+    allow_opening_change = any(
+        issue.get("type")
+        in {
+            "residual_english",
+            "source_term_leak",
+            "bad_alias",
+            "contextual_bad_alias",
+        }
+        for issue in issues
     )
     if not issues:
         return RepairResult(
@@ -308,10 +392,19 @@ def repair_translation_chunk(
     if cache_exists("repair", cache_key):
         cached = load_cache("repair", cache_key)
         final_output = str(cached.get("final_output") or "")
-        if final_output and not validate_repair_candidate(
-            source_text=source_text,
-            translated_text=translated_text,
-            candidate_text=final_output,
+        if (
+            final_output
+            and not validate_repair_candidate(
+                source_text=source_text,
+                translated_text=translated_text,
+                candidate_text=final_output,
+                allow_opening_change=allow_opening_change,
+            )
+            and not _blocking_repair_issues(
+                source_text=source_text,
+                translated_text=final_output,
+                glossary_terms=glossary_terms,
+            )
         ):
             return RepairResult(
                 text=final_output,
@@ -353,14 +446,25 @@ def repair_translation_chunk(
         ):
             retry_reasons.append("collapse_detector")
         else:
-            residual_english, residual_reason = detect_residual_english(candidate)
-            if residual_english:
-                retry_reasons.append(residual_reason)
+            remaining_issues = _blocking_repair_issues(
+                source_text=source_text,
+                translated_text=candidate,
+                glossary_terms=glossary_terms,
+            )
+            if remaining_issues:
+                retry_reasons.append(
+                    "repair_issues_remain:"
+                    + ",".join(
+                        f"{issue.get('type', 'unknown')}:{issue.get('found', '')}"
+                        for issue in remaining_issues[:5]
+                    )
+                )
             else:
                 validation_reason = validate_repair_candidate(
                     source_text=source_text,
                     translated_text=translated_text,
                     candidate_text=candidate,
+                    allow_opening_change=allow_opening_change,
                 )
                 if validation_reason:
                     retry_reasons.append(validation_reason)

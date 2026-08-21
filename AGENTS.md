@@ -2,7 +2,7 @@
 
 ## Objetivo do projeto (5–10 linhas)
 - Pipeline completo para traduzir Light Novels de **EN → PT-BR** usando LLMs (Ollama ou Gemini).
-- Fluxo cobre extração de PDF/MD, limpeza, “desquebrar” linhas, tradução em chunks com contexto deslizante, QA/repair seletivo, refine, revisão final determinística e geração de PDF.
+- Fluxo cobre extração de PDF/MD, limpeza, “desquebrar” linhas, tradução em chunks com contexto deslizante, QA/repair seletivo, revisão bilíngue conservadora, refine PT-only opcional, revisão final determinística e geração de PDF.
 - Configuração central em `config.yaml`, com overrides por flags de CLI.
 - Saídas e auditoria gravadas em `saida/` (markdown final, métricas, manifests, relatórios de revisão e PDFs).
 - Glossários manuais/dinâmicos são suportados e injetados por chunk.
@@ -50,15 +50,15 @@ python -m tradutor.main traduz \
   --request-timeout 180 \
   --num-predict 3072
 ```
-- Flags comuns: `--skip-front-matter`, `--split-by-sections`, `--translation-repair/--no-translation-repair`, `--debug`, `--debug-chunks`, `--clear-cache {all,translate,repair,refine,desquebrar}`.
+- Flags comuns: `--skip-front-matter`, `--split-by-sections`, `--translation-repair/--no-translation-repair`, `--bilingual-review/--no-bilingual-review`, `--debug`, `--debug-chunks`, `--clear-cache {all,translate,repair,review,refine,desquebrar}`.
 - Modelos/ctx/num_predict podem ser configurados no `config.yaml` ou sobrescritos por flags.
 
 ## Caches, progresso, estado (e como limpar)
 - Caches por chunk (em `saida/` por padrão):
-  - `saida/cache_traducao`, `saida/cache_repair`, `saida/cache_refine`, `saida/cache_desquebrar` (ver `tradutor/cache_utils.py`).
+  - `saida/cache_traducao`, `saida/cache_repair`, `saida/cache_revisao_bilingue`, `saida/cache_refine`, `saida/cache_desquebrar` (ver `tradutor/cache_utils.py`).
 - Progress/state:
   - `*_progress.json` (tradução/refine), `state_refine.json` (refine).
-  - Debug: `*_pt_chunks_debug.jsonl`, `*_chunks_debug.jsonl`.
+  - Debug: `*_pt_chunks_debug.jsonl`, `*_chunks_debug.jsonl`, `46_bilingual_review/`.
   - Revisão final: `<slug>_source_sections.json`, `<slug>_pt_review_report.json`, `<slug>_pt_refinado_review_report.json`.
 - Limpeza segura:
   - Preferível: `--clear-cache all` na CLI.

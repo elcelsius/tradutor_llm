@@ -40,6 +40,24 @@ class _StubBackend:
         )
 
 
+class _CacheReuseBackend(_StubBackend):
+    def generate(self, prompt: str):
+        self.calls += 1
+        body = (
+            "A tradução preserva o sentido da cena e mantém a pontuação natural. "
+            "Os personagens conversam com clareza enquanto avançam pelo caminho. "
+            "A narração descreve o ambiente sem repetir nenhuma construção extensa. "
+            "Cada frase acrescenta uma informação diferente ao trecho revisado. "
+            "O grupo observa a paisagem e decide continuar a jornada naquela manhã. "
+            "Uma resposta breve encerra o diálogo antes da próxima mudança de cena. "
+            "O texto final permanece fluente, completo e adequado ao leitor brasileiro. "
+            "Assim, a saída atende aos limites de qualidade usados pela pipeline."
+        )
+        return _StubResponse(
+            f"### TEXTO_TRADUZIDO_INICIO\n{body}\n### TEXTO_TRADUZIDO_FIM"
+        )
+
+
 def test_translate_cache_mismatch_is_ignored(tmp_path: Path) -> None:
     """Processamento interno auxiliar."""
     cfg = AppConfig(output_dir=tmp_path)
@@ -140,3 +158,39 @@ def test_translate_cache_ignores_allow_adaptation_change(tmp_path: Path) -> None
 
     assert "CACHED_SHOULD_BE_IGNORED" not in result
     assert backend.calls >= 1
+
+
+def test_translate_cache_is_reused_when_full_signature_matches(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        output_dir=tmp_path,
+        split_by_sections=False,
+        use_translation_repair=False,
+    )
+    backend = _CacheReuseBackend()
+    logger = logging.getLogger("translate-cache-reuse")
+    kwargs = {
+        "pdf_text": "This source sentence is long enough for cache validation. " * 10,
+        "backend": backend,
+        "cfg": cfg,
+        "logger": logger,
+        "source_slug": "sample",
+        "resume_manifest": None,
+        "glossary_text": None,
+        "debug_translation": False,
+        "parallel_workers": 1,
+        "debug_chunks": False,
+        "already_preprocessed": True,
+        "translation_repair": False,
+    }
+
+    first = translate_document(
+        **kwargs,
+        progress_path=tmp_path / "first_progress.json",
+    )
+    second = translate_document(
+        **kwargs,
+        progress_path=tmp_path / "second_progress.json",
+    )
+
+    assert first == second
+    assert backend.calls == 1

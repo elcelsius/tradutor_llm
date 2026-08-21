@@ -61,3 +61,41 @@ def test_split_ignores_numeric_toc_entries() -> None:
     assert len(sections) == 1
     assert sections[0]["title"].lower().startswith("chapter 3")
     assert "Body text." in sections[0]["body"]
+
+
+def test_split_marks_chapter_subtitles_separately_from_narration() -> None:
+    text = (
+        "Chapter 2:\n\nSwirling Wills I\n\nDESCENDED FROM the carriage.\n\n"
+        "Chapter 5:\n\nConnections\n\nMY MIND resurfaced."
+    )
+
+    sections = split_into_sections(text)
+
+    assert sections[0]["title"] == "Chapter 2:"
+    assert sections[0]["body"].startswith(
+        "# Chapter 2:\n\n## Swirling Wills\n\nI descended from"
+    )
+    assert sections[1]["title"] == "Chapter 5:"
+    assert sections[1]["body"].startswith(
+        "# Chapter 5:\n\n## Connections\n\nMy mind resurfaced."
+    )
+
+
+def test_split_preserves_small_caps_entity_at_section_opening() -> None:
+    sections = split_into_sections("Chapter 1:\n\nMIMORI TOUKA had departed.")
+
+    assert "MIMORI TOUKA had departed." in sections[0]["body"]
+
+
+def test_split_separates_inline_pov_from_small_caps_opening() -> None:
+    text = (
+        "Chapter 1:\n"
+        "Mimori Touka THE NEXT MORNING… The army was ready to depart.\n\n"
+        "“Thanks, Sogou.” The Goddess Vicius IT WAS ON the morning that preparations ended."
+    )
+
+    sections = split_into_sections(text)
+
+    assert "## Mimori Touka\n\nThe next morning… The army was ready" in sections[0]["body"]
+    assert "## The Goddess Vicius\n\nIt was on the morning" in sections[0]["body"]
+    assert "“Thanks, Sogou.”\n\n## The Goddess Vicius" in sections[0]["body"]

@@ -154,6 +154,12 @@ def format_audit_report(report: dict[str, Any], *, limit: int = 20) -> str:
     _append_issue_preview(
         lines, "Duplicate PT groups", report.get("duplicate_pt_groups", []), limit
     )
+    _append_issue_preview(
+        lines,
+        "Redundant source aliases",
+        report.get("redundant_source_aliases", []),
+        limit,
+    )
     return "\n".join(lines)
 
 

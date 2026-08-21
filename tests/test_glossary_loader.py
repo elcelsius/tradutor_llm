@@ -26,6 +26,7 @@ def test_glossary_loader_preserves_enforcement_metadata(tmp_path: Path) -> None:
                         "aliases": ["Kayako Suou", "Kayado"],
                         "source_aliases": ["Kayako Suou"],
                         "bad_aliases": ["Kayado"],
+                        "contextual_bad_aliases": ["Kayaka"],
                         "allowed_target_aliases": ["Kayako"],
                         "source_case_sensitive": True,
                         "notes": "Aliada de Ayaka.",
@@ -51,6 +52,7 @@ def test_glossary_loader_preserves_enforcement_metadata(tmp_path: Path) -> None:
     assert term["source_aliases"] == ["Kayako Suou"]
     assert term["aliases"] == ["Kayako Suou"]
     assert term["bad_aliases"] == ["Kayado"]
+    assert term["contextual_bad_aliases"] == ["Kayaka"]
     assert term["allowed_target_aliases"] == ["Kayako"]
     assert term["source_case_sensitive"] is True
 
@@ -91,6 +93,21 @@ def test_translation_glossary_prompt_includes_forbidden_aliases() -> None:
     )
 
     assert "nao usar: Discípulos de Vicius" in block
+
+
+def test_translation_glossary_prompt_marks_contextual_forbidden_aliases() -> None:
+    block = format_manual_pairs_for_translation(
+        [
+            {
+                "key": "Eucharists",
+                "pt": "eucaristias",
+                "contextual_bad_aliases": ["eucaristos"],
+            }
+        ],
+        limit=None,
+    )
+
+    assert "nao usar; ajuste a concordancia: eucaristos" in block
 
 
 def test_resolve_manual_glossary_path_prefers_explicit_path(tmp_path: Path) -> None:

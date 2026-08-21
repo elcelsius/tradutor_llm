@@ -54,3 +54,19 @@ def test_ollama_omits_num_ctx_when_none(monkeypatch):
     backend.generate("hi")
     payload = captured["payload"]
     assert "num_ctx" not in payload["options"]
+
+
+def test_ollama_includes_seed_when_configured(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(lb.requests, "post", _fake_post(captured))
+    backend = lb.LLMBackend(
+        backend="ollama",
+        model="m",
+        temperature=0.1,
+        logger=logging.getLogger("ollama-seed-test"),
+        seed=42,
+    )
+
+    backend.generate("hi")
+
+    assert captured["payload"]["options"]["seed"] == 42

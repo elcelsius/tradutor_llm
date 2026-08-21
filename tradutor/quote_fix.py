@@ -7,6 +7,11 @@ from typing import Tuple
 NARRATION_PATTERN = re.compile(
     r"(?<=[.!?])\s+(?:Ele|Ela|Eles|Elas|Ayaka|Banewolf|Agit|Abis|Kirihara|Oyamada)\b"
 )
+_REPORTING_VERB_PATTERN = re.compile(
+    r"\b(?:afirmou|comentou|disse|exclamou|falou|gritou|indagou|murmurou|"
+    r"observou|perguntou|respondeu|retrucou)\b",
+    flags=re.IGNORECASE,
+)
 
 
 def count_curly_quotes(text: str) -> Tuple[int, int]:
@@ -59,10 +64,41 @@ def _safe_missing_open_insert_position(text: str, unmatched_close: int) -> int |
     """
     line_start = text.rfind("\n", 0, unmatched_close) + 1
     prefix = text[line_start:unmatched_close]
-    if "“" in prefix or len(prefix.strip()) < 8:
+    stripped_prefix = prefix.strip()
+    if "“" in prefix:
         return None
+    if len(stripped_prefix) < 8:
+        # Uma nota musical isolada seguida de fechamento (``♪”``) é uma fala
+        # curta que perdeu a abertura na extração. Não abrimos aspas para
+        # outros fragmentos curtos, pois seriam ambíguos.
+        if stripped_prefix != "♪":
+            return None
     leading = len(prefix) - len(prefix.lstrip())
     return line_start + leading
+
+
+def _safe_stray_close_remove_position(text: str, unmatched_close: int) -> int | None:
+    """Identifica um fechamento extra apos uma fala ja encerrada e narracao.
+
+    Um caso recorrente da LLM e fechar novamente, no fim do paragrafo, uma fala
+    que ja foi fechada antes de uma frase de narracao. Nao removemos uma aspa
+    apenas pela contagem global: exigimos uma fala local balanceada, um verbo de
+    elocucao e pelo menos uma segunda frase de narracao antes do fechamento.
+    """
+    line_start = text.rfind("\n", 0, unmatched_close) + 1
+    prefix = text[line_start:unmatched_close]
+    if not prefix or prefix.count("“") != prefix.count("”") or "“" not in prefix:
+        return None
+
+    last_close = prefix.rfind("”")
+    narration_tail = prefix[last_close + 1 :].strip()
+    if len(narration_tail) < 24:
+        return None
+    if not _REPORTING_VERB_PATTERN.search(narration_tail):
+        return None
+    if not re.search(r"[.!?…]\s+\S", narration_tail):
+        return None
+    return unmatched_close
 
 
 def repair_missing_open_quotes_per_paragraph(
@@ -116,6 +152,58 @@ def repair_missing_open_quotes_per_paragraph(
     return "".join(parts), fixes
 
 
+def repair_missing_closing_curly_quotes_per_paragraph(
+    text: str,
+    logger: logging.Logger | None = None,
+    label: str | None = None,
+) -> Tuple[str, int]:
+    """Converte um fechamento reto terminal em ``”`` quando ele é inequívoco.
+
+    Alguns PDFs preservam a abertura curva de uma fala, mas extraem o
+    fechamento final como ``\"``. A conversão só ocorre quando o parágrafo tem
+    exatamente uma abertura curva pendente, nenhum fechamento órfão e termina
+    na aspa reta. Assim, medidas como ``6\"`` e aspas inline normais não são
+    alteradas.
+    """
+    if not text or "“" not in text or '"' not in text:
+        return text, 0
+
+    parts = re.split(r"(\n\s*\n)", text)
+    fixes = 0
+    for index in range(0, len(parts), 2):
+        paragraph = parts[index]
+        stripped_end = len(paragraph.rstrip())
+        if not paragraph or not stripped_end or paragraph[stripped_end - 1] != '"':
+            continue
+
+        depth = 0
+        has_unmatched_close = False
+        for char in paragraph:
+            if char == "“":
+                depth += 1
+            elif char == "”":
+                if depth:
+                    depth -= 1
+                else:
+                    has_unmatched_close = True
+                    break
+
+        if depth != 1 or has_unmatched_close:
+            continue
+        parts[index] = (
+            paragraph[: stripped_end - 1] + "”" + paragraph[stripped_end:]
+        )
+        fixes += 1
+
+    if fixes and logger:
+        logger.info(
+            "Fechamentos de diálogo normalizados%s: %d",
+            f" ({label})" if label else "",
+            fixes,
+        )
+    return "".join(parts), fixes
+
+
 def fix_unbalanced_quotes(
     text: str, logger: logging.Logger | None = None, label: str | None = None
 ) -> Tuple[str, bool]:
@@ -159,6 +247,10 @@ def fix_unbalanced_quotes(
         unmatched = _first_unmatched_close(text)
         if unmatched is None:
             return text, False
+        remove_pos = _safe_stray_close_remove_position(text, unmatched)
+        if remove_pos is not None:
+            fixed = text[:remove_pos] + text[remove_pos + 1 :]
+            return fixed, True
         insert_pos = _safe_missing_open_insert_position(text, unmatched)
         if insert_pos is None:
             return text, False

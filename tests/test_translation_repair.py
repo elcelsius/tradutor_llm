@@ -6,6 +6,7 @@ from tradutor.cache_utils import set_cache_base_dir
 from tradutor.config import AppConfig
 from tradutor.repair import (
     detect_translation_repair_issues,
+    parse_repair_output,
     repair_translation_chunk,
     validate_repair_candidate,
 )
@@ -91,6 +92,29 @@ class _AmputatingRepairBackend:
         return type("Resp", (), {"text": text})
 
 
+class _ContextualGlossaryRepairBackend:
+    """Simula um repair que corrige termo e concordância no mesmo trecho."""
+
+    backend = "stub"
+    model = "stub"
+    num_predict = 10
+    temperature = 0.1
+    repeat_penalty = 1.0
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def generate(self, prompt: str):
+        self.calls += 1
+        assert "contextual_bad_alias" in prompt
+        text = (
+            "### TEXTO_REPARADO_INICIO\n"
+            "As eucaristias gigantes avançaram.\n"
+            "### TEXTO_REPARADO_FIM"
+        )
+        return type("Resp", (), {"text": text})
+
+
 def test_detect_translation_repair_issues_flags_residual_english() -> None:
     """Processamento interno auxiliar."""
     issues = detect_translation_repair_issues(
@@ -99,6 +123,13 @@ def test_detect_translation_repair_issues_flags_residual_english() -> None:
     )
 
     assert any(issue["type"] == "residual_english" for issue in issues)
+
+
+def test_parse_repair_output_strips_outer_triple_quote_wrapper() -> None:
+    assert (
+        parse_repair_output('"""As duas enormes eucaristias avançaram."""')
+        == "As duas enormes eucaristias avançaram."
+    )
 
 
 def test_repair_translation_chunk_fixes_residual_english(tmp_path: Path) -> None:
@@ -117,6 +148,39 @@ def test_repair_translation_chunk_fixes_residual_english(tmp_path: Path) -> None
     assert result.changed
     assert result.elapsed_seconds >= 0
     assert "Não tenho vontade de morrer" in result.text
+    assert backend.calls == 1
+
+
+def test_repair_translation_chunk_fixes_contextual_glossary_alias(tmp_path: Path) -> None:
+    set_cache_base_dir(tmp_path)
+    terms = [
+        {
+            "key": "Eucharists",
+            "pt": "eucaristias",
+            "contextual_bad_aliases": ["eucaristos"],
+        }
+    ]
+    issues = detect_translation_repair_issues(
+        source_text="The huge eucharists advanced.",
+        translated_text="Os eucaristos gigantes avançaram.",
+        glossary_terms=terms,
+    )
+    assert any(issue["type"] == "contextual_bad_alias" for issue in issues)
+
+    backend = _ContextualGlossaryRepairBackend()
+    result = repair_translation_chunk(
+        source_text="The huge eucharists advanced.",
+        translated_text="Os eucaristos gigantes avançaram.",
+        backend=backend,
+        logger=logging.getLogger("repair-contextual-alias-test"),
+        glossary_terms=terms,
+        max_attempts=1,
+    )
+
+    assert result.attempted
+    assert result.changed
+    assert result.text == "As eucaristias gigantes avançaram."
+    assert '"' not in result.text
     assert backend.calls == 1
 
 

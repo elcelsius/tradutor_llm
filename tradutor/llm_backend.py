@@ -50,6 +50,7 @@ class LLMBackend:
         keep_alive: str | int | None = "30m",
         api_mode: str = "generate",
         think: bool | None = None,
+        seed: int | None = None,
     ) -> None:
         """Processamento interno auxiliar."""
         self.backend = backend
@@ -65,6 +66,7 @@ class LLMBackend:
         self.keep_alive = keep_alive
         self.api_mode = api_mode
         self.think = think
+        self.seed = seed
 
     def generate(self, prompt: str) -> LLMResponse:
         """Envia o prompt para o backend configurado e retorna a resposta formatada."""
@@ -99,6 +101,8 @@ class LLMBackend:
             payload["options"]["repeat_penalty"] = self.repeat_penalty
         if self.num_ctx is not None:
             payload["options"]["num_ctx"] = self.num_ctx
+        if self.seed is not None:
+            payload["options"]["seed"] = self.seed
         if self.keep_alive is not None:
             payload["keep_alive"] = self.keep_alive
         try:
@@ -129,6 +133,8 @@ class LLMBackend:
             payload["options"]["repeat_penalty"] = self.repeat_penalty
         if self.num_ctx is not None:
             payload["options"]["num_ctx"] = self.num_ctx
+        if self.seed is not None:
+            payload["options"]["seed"] = self.seed
         if self.keep_alive is not None:
             payload["keep_alive"] = self.keep_alive
         if self.think is not None:

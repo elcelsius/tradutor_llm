@@ -27,6 +27,7 @@ def _cache_dirs() -> dict[str, Path]:
     return {
         "translate": base / "cache_traducao",
         "repair": base / "cache_repair",
+        "review": base / "cache_revisao_bilingue",
         "refine": base / "cache_refine",
         "desquebrar": base / "cache_desquebrar",
     }
@@ -208,7 +209,7 @@ def detect_model_collapse(
 def clear_cache(mode: str = "all") -> None:
     """
     Remove diretórios de cache respeitando o _CACHE_BASE_DIR atual.
-    mode: all | translate | repair | refine | desquebrar
+    mode: all | translate | repair | review | refine | desquebrar
     """
     dirs = _cache_dirs()
     targets: dict[str, Path] = {}

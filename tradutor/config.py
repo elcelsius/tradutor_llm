@@ -32,11 +32,13 @@ class AppConfig:
 
     # Modelos
     translate_backend: BackendType = "ollama"
-    translate_model: str = "brunoconterato/Gemma-3-Gaia-PT-BR-4b-it:f16"
+    translate_model: str = "mistral-small3.2:24b-instruct-2506-q4_K_M"
+    bilingual_review_backend: BackendType = "ollama"
+    bilingual_review_model: str = "gemma4:26b-a4b-it-q4_K_M"
     refine_backend: BackendType = "ollama"
-    refine_model: str = "cnmoro/gemma3-gaia-ptbr-4b:q4_k_m"
+    refine_model: str = "gemma4:26b-a4b-it-q4_K_M"
     desquebrar_backend: BackendType = "ollama"
-    desquebrar_model: str = "cnmoro/gemma3-gaia-ptbr-4b:q4_k_m"
+    desquebrar_model: str = "gemma3:27b-it-q4_K_M"
     dump_chunks: bool = False
     refine_guardrails: GuardrailsType = "strict"
     refine_after_translate: bool = False
@@ -45,25 +47,31 @@ class AppConfig:
     fail_on_chunk_error: bool = False
 
     # Temperaturas
-    translate_temperature: float = 0.15
-    refine_temperature: float = 0.30
+    translate_temperature: float = 0.35
+    bilingual_review_temperature: float = 0.10
+    refine_temperature: float = 0.20
     desquebrar_temperature: float = 0.08
     translate_repeat_penalty: float = 1.1
-    refine_repeat_penalty: float | None = None
+    bilingual_review_repeat_penalty: float | None = 1.05
+    refine_repeat_penalty: float | None = 1.08
     desquebrar_repeat_penalty: float | None = 1.08
-    translate_num_ctx: int | None = None
-    refine_num_ctx: int | None = None
-    desquebrar_num_ctx: int | None = None
+    translate_num_ctx: int | None = 6144
+    bilingual_review_num_ctx: int | None = 6144
+    refine_num_ctx: int | None = 6144
+    desquebrar_num_ctx: int | None = 4096
     ollama_keep_alive: str | int = "30m"
-    ollama_api_mode: OllamaApiMode = "generate"
-    ollama_think: bool | None = None
+    ollama_api_mode: OllamaApiMode = "chat"
+    ollama_think: bool | None = False
     skip_front_matter: bool = True
     split_by_sections: bool = True
-    translate_allow_adaptation: bool = False
+    translate_allow_adaptation: bool = True
     use_translation_repair: bool = True
     translate_context_paragraphs: int = 3
     translate_context_chars: int = 1200
     translate_context_include_pt: bool = True
+    bilingual_review_after_translate: bool = True
+    bilingual_review_max_changes: int = 6
+    bilingual_review_seed: int | None = 42
     translate_dialogue_guardrails: DialogueGuardrailsType = "strict"
     translate_dialogue_retry_temps: list[float] = field(default_factory=list)
     translate_dialogue_split_fallback: bool = True
@@ -73,13 +81,14 @@ class AppConfig:
 
     # Comprimento de sa¡da
     translate_num_predict: int = 3072
-    refine_num_predict: int = 1024
-    desquebrar_num_predict: int = 1024
+    bilingual_review_num_predict: int = 1600
+    refine_num_predict: int = 4096
+    desquebrar_num_predict: int = 2048
 
     # Chunk sizes
-    translate_chunk_chars: int = 2400
-    refine_chunk_chars: int = 2400
-    desquebrar_chunk_chars: int = 2400
+    translate_chunk_chars: int = 2048
+    refine_chunk_chars: int = 3072
+    desquebrar_chunk_chars: int = 2560
 
     # Tentativas e backoff
     max_retries: int = 3

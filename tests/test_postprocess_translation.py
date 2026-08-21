@@ -89,6 +89,12 @@ def test_pre_qa_postprocess_fixes_mixed_english_artifacts(tmp_path: Path) -> Non
     assert backend.calls == 1
 
 
+def test_pre_qa_postprocess_does_not_turn_full_english_into_hybrid() -> None:
+    result = postprocess_translation("I have no desire to die.")
+
+    assert result == "I have no desire to die."
+
+
 def test_pre_qa_postprocess_adapts_af_slang() -> None:
     """Processamento interno auxiliar."""
     result = postprocess_translation("Ela é super desconfiada AF.")
@@ -140,3 +146,65 @@ def test_pre_qa_postprocess_fixes_english_stutter_before_qa() -> None:
     result = postprocess_translation("Y-you divindades podem ser interessantes.")
 
     assert result == "V-vocês, divindades, podem ser interessantes."
+
+
+def test_pre_qa_postprocess_fixes_malformed_portuguese_divinity_stutter() -> None:
+    result = postprocess_translation("V-você divinos podem ser interessantes.")
+
+    assert result == "V-vocês, divindades, podem ser interessantes."
+
+
+def test_pre_qa_postprocess_fixes_embedded_connectors_without_blind_gender_swap() -> None:
+    result = postprocess_translation(
+        "And assim seguimos, or pelo menos tentamos, but esses eucaristos vencerão."
+    )
+
+    assert result == "E assim seguimos, ou pelo menos tentamos, mas esses eucaristos vencerão."
+
+
+def test_pre_qa_postprocess_corrects_carriage_artifacts_only_for_carriage_source() -> None:
+    source = "They returned to the carriage and waited inside that carriage."
+    result = postprocess_translation(
+        "Voltaram para o carroça e esperaram dentro daquele carro.", en_text=source
+    )
+    untouched = postprocess_translation("O carro estava vazio.", en_text="The car was empty.")
+
+    assert result == "Voltaram para a carruagem e esperaram dentro daquela carruagem."
+    assert untouched == "O carro estava vazio."
+
+
+def test_pre_qa_postprocess_fixes_recurrent_literal_artifacts() -> None:
+    result = postprocess_translation(
+        "A algum momento depois de chegar, Convincentemente Nyantan a confiar nela "
+        "foi impressionante. Yasu fora um dos vários que pegaram no caminho. "
+        "Ela estava tã bonita. Terei a maior dor sobre todas as dimensões e todos os mundos. "
+        "Tragarei o maior sofrimento sobre todas as dimensões e todos os mundos. "
+        "Forra uma criatura fraca. Os trajes de espadachins voadoras chegaram. "
+        "Ah, Pode calar a boca. As divindades mais significativas fossem enviadas. "
+        "Virando seu ódio uns contra os outros, ela chutou-a levemente quando ela caiu. "
+        "Ela chutou levemente de volta quando ela caiu."
+    )
+
+    assert "Em algum momento depois de chegar" in result
+    assert "Convencer Nyantan a confiar nela foi impressionante" in result
+    assert "Yasu fora um dos vários que eles haviam levado consigo pelo caminho" in result
+    assert "tão bonita" in result
+    assert "Trarei o maior sofrimento sobre todas as dimensões e todos os mundos" in result
+    assert "Tragarei o maior sofrimento" not in result
+    assert "Era uma criatura fraca" in result
+    assert "trajes de espadachins voadores" in result
+    assert "Ah, pode calar a boca" in result
+    assert "divindades mais poderosas fossem enviadas" in result
+    assert "voltando seu ódio uns contra os outros" in result
+    assert "chutou-a de leve de volta para o alto quando ela caiu" in result
+
+
+def test_pre_qa_postprocess_fixes_literal_matter_only_with_matching_source() -> None:
+    result = postprocess_translation(
+        "Há uma coisa em mente.",
+        en_text="There is one matter on my mind.",
+    )
+    untouched = postprocess_translation("Há uma coisa em mente.")
+
+    assert result == "Há uma coisa que está me preocupando."
+    assert untouched == "Há uma coisa em mente."

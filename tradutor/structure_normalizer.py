@@ -19,6 +19,7 @@ _MARKDOWN_SIMPLE_CHAPTER_RE = re.compile(
     r"^#\s*cap[ií]tulo\s+(?P<number>\d+):?\s*$",
     re.IGNORECASE,
 )
+_MARKDOWN_SUBTITLE_RE = re.compile(r"^##\s+(?P<subtitle>\S.+?)\s*$")
 _TIME_LABEL_RE = re.compile(
     r"^(?P<name>[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’-]+(?:\s+[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’-]+){1,3})\s+"
     r"(?P<label>ALGUM TEMPO ANTES(?:,\s*há um tempo)?…?)$"
@@ -109,6 +110,32 @@ def normalize_structure(text: str) -> str:
 
         chapter_match = _SIMPLE_CHAPTER_RE.match(stripped)
         if chapter_match:
+            # Um subtitulo Markdown explicito e mais confiavel do que uma linha
+            # curta anterior, que pode pertencer a um bloco de status.
+            markdown_subtitle, markdown_subtitle_idx = _next_markdown_chapter_subtitle(
+                lines, i + 1
+            )
+            if markdown_subtitle:
+                normalized.append(
+                    f"# Capítulo {chapter_match.group('number')}: {markdown_subtitle}"
+                )
+                add_blank()
+                i = markdown_subtitle_idx + 1
+                continue
+            previous_heading_idx = _last_nonblank_index(normalized)
+            if (
+                previous_heading_idx is not None
+                and _looks_like_chapter_subtitle(
+                    normalized[previous_heading_idx].strip()
+                )
+            ):
+                normalized[previous_heading_idx] = (
+                    f"# Capítulo {chapter_match.group('number')}: "
+                    f"{normalized[previous_heading_idx].strip()}"
+                )
+                add_blank()
+                i += 1
+                continue
             subtitle, subtitle_idx = _next_chapter_subtitle(lines, i + 1)
             if subtitle:
                 normalized.append(
@@ -187,6 +214,21 @@ def _next_chapter_subtitle(lines: list[str], start: int) -> tuple[str | None, in
     if next_idx >= len(lines):
         return None, idx
     return candidate, idx
+
+
+def _next_markdown_chapter_subtitle(
+    lines: list[str], start: int
+) -> tuple[str | None, int]:
+    """Retorna o subtítulo marcado com ``##`` após um heading de capítulo."""
+    idx = start
+    while idx < len(lines) and not lines[idx].strip():
+        idx += 1
+    if idx >= len(lines):
+        return None, idx
+    match = _MARKDOWN_SUBTITLE_RE.match(lines[idx].strip())
+    if not match:
+        return None, idx
+    return match.group("subtitle"), idx
 
 
 def _looks_like_chapter_subtitle(line: str) -> bool:

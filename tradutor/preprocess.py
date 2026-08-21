@@ -884,6 +884,10 @@ def _reflow_paragraphs(text: str) -> tuple[str, dict]:
         """Processamento interno auxiliar."""
         return s.startswith(('"', "“"))
 
+    def _is_inline_quoted_continuation(s: str) -> bool:
+        """Identifica uma citação curta que completa a frase anterior."""
+        return bool(re.match(r'^["“‘]\s*[a-zà-öø-ÿ]', s))
+
     chapter_line_re = re.compile(r"chapter\s+\d+:?", re.IGNORECASE)
     last_emitted: str | None = None
     for idx, line in enumerate(lines):
@@ -906,7 +910,11 @@ def _reflow_paragraphs(text: str) -> tuple[str, dict]:
             reflowed.append(stripped)
             _flush()
             continue
-        if _is_dialogue_start(stripped):
+        if _is_dialogue_start(stripped) and not (
+            buffer
+            and _is_inline_quoted_continuation(stripped)
+            and not re.search(r"[.!?…]['\"”’]?$", buffer[-1].rstrip())
+        ):
             _flush()
             buffer.append(stripped)
             continue

@@ -142,6 +142,7 @@ def _load_terms(path: Path, source: str, logger: logging.Logger) -> List[Glossar
         bad_aliases = _string_list(
             entry.get("bad_aliases") or entry.get("forbidden_aliases") or []
         )
+        contextual_bad_aliases = _string_list(entry.get("contextual_bad_aliases"))
         allowed_target_aliases = _string_list(
             entry.get("allowed_target_aliases") or entry.get("target_aliases") or []
         )
@@ -168,6 +169,10 @@ def _load_terms(path: Path, source: str, logger: logging.Logger) -> List[Glossar
             "aliases_norm": [normalize_key(a) for a in source_aliases],
             "source_aliases_norm": [normalize_key(a) for a in source_aliases],
             "bad_aliases": bad_aliases,
+            # Formas que exigem ajuste de concordância no trecho inteiro. Elas
+            # são detectadas e enviadas ao repair, nunca trocadas palavra a
+            # palavra pelo pós-processamento determinístico.
+            "contextual_bad_aliases": contextual_bad_aliases,
             "allowed_target_aliases": allowed_target_aliases,
             "target_replacements": target_replacements,
             # Algumas habilidades têm nomes que também são palavras comuns em
@@ -320,6 +325,12 @@ def format_manual_pairs_for_translation(
         bad_aliases = _string_list(entry.get("bad_aliases"))
         if bad_aliases:
             hints.append("nao usar: " + ", ".join(bad_aliases[:5]))
+        contextual_bad_aliases = _string_list(entry.get("contextual_bad_aliases"))
+        if contextual_bad_aliases:
+            hints.append(
+                "nao usar; ajuste a concordancia: "
+                + ", ".join(contextual_bad_aliases[:5])
+            )
         if notes:
             hints.append(str(notes))
         if hints:
@@ -437,6 +448,7 @@ def select_terms_for_target_text(
         variants.extend(
             _string_list(term.get("bad_aliases") or term.get("forbidden_aliases"))
         )
+        variants.extend(_string_list(term.get("contextual_bad_aliases")))
         replacements = term.get("target_replacements") or {}
         if isinstance(replacements, dict):
             variants.extend(

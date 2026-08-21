@@ -1,4 +1,4 @@
-# Configuração centralizada — Tradução (PDF) + Desquebrar + Refine
+# Configuração centralizada — Tradução (PDF) + Desquebrar + Revisão + Refine
 # Recomendado para Light Novel (fantasia/RPG) com robustez de pipeline.
 
 ollama_keep_alive: "30m"             # mantém o modelo carregado entre chamadas
@@ -12,6 +12,7 @@ translate_repeat_penalty: 1.10       # penalidade de repetição (ollama)
 translate_chunk_chars: 2000          # tamanho alvo por chunk (caracteres)
 translate_num_predict: 3072          # limite de tokens gerados por chunk
 translate_num_ctx: null              # contexto máximo (opcional, Ollama)
+translate_allow_adaptation: true      # permite adaptação moderada de diálogo, gírias e registro
 use_translation_repair: true         # QA/repair seletivo antes do refine
 translate_context_paragraphs: 3      # janela deslizante de parágrafos anteriores
 translate_context_chars: 1200        # limite de contexto recente injetado no prompt
@@ -21,6 +22,18 @@ translate_dialogue_retry_temps: [0.40, 0.25, 0.10] # temperaturas usadas em retr
 translate_dialogue_split_fallback: true # ativa fallback de split quando omitir falas
 translate_glossary_match_limit: 80   # injeta apenas termos que aparecem no chunk (limite)
 translate_glossary_fallback_limit: 30 # fallback para top-N se nenhum termo casou
+
+# Revisão bilíngue conservadora: recebe original + PT-BR e só aplica correções
+# pontuais que preservam estrutura, diálogo, QA e termos protegidos.
+bilingual_review_after_translate: true
+bilingual_review_backend: ollama
+bilingual_review_model: gemma4:26b-a4b-it-q4_K_M
+bilingual_review_temperature: 0.10
+bilingual_review_repeat_penalty: 1.05
+bilingual_review_num_predict: 1600
+bilingual_review_num_ctx: 6144
+bilingual_review_max_changes: 6
+bilingual_review_seed: 42            # resposta reproduzível para o mesmo chunk/prompt
 
 use_desquebrar: true                 # ativa desquebrar automaticamente para PDF
 desquebrar_backend: ollama           # backend do desquebrar
@@ -32,7 +45,7 @@ desquebrar_chunk_chars: 2600         # chunk do desquebrar (pode ser um pouco ma
 desquebrar_num_predict: 2048         # limite de tokens gerados no desquebrar
 desquebrar_num_ctx: 4096             # contexto máximo para desquebrar (Ollama)
 
-# PDF (pós-tradução/refine opcional)
+# PDF (após a última etapa disponível)
 pdf_enabled: false                   # gera PDF automaticamente após a etapa final disponível
 pdf_font:
   file: C:/Windows/Fonts/Aptos.ttf    # caminho da fonte principal (TTF/OTF)

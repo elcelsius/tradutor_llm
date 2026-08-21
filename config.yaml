@@ -1,4 +1,4 @@
-# Configuração centralizada — Tradução (PDF) + Desquebrar + Refine
+# Configuração centralizada — Tradução (PDF) + Desquebrar + Revisão + Refine
 # Recomendado para Light Novel (fantasia/RPG) com robustez de pipeline.
 
 # ============================================================================
@@ -12,9 +12,11 @@ ollama_think: false                  # null/true/false; false evita gastar token
 # Sugestão inicial para seu hardware:
 # - desquebrar: 4096 (prompt curto, objetivo)
 # - tradução:   6144 (equilíbrio entre qualidade e custo)
+# - revisão:    6144 (original + PT-BR, correções pontuais)
 # - refine:     6144 (refine grande demais tende a reestruturar parágrafos)
 desquebrar_num_ctx: 4096
 translate_num_ctx: 6144
+bilingual_review_num_ctx: 6144
 refine_num_ctx: 6144
 
 # ============================================================================
@@ -26,10 +28,25 @@ translate_temperature: 0.35          # equilíbrio validado: reduz variação gr
 translate_repeat_penalty: 1.10
 translate_chunk_chars: 2048          # alvo por chunk (caracteres)
 translate_num_predict: 3072          # limite de tokens gerados por chunk
+translate_allow_adaptation: true      # preserva adaptação moderada de diálogo, gírias e registro
 use_translation_repair: true         # QA/repair seletivo antes do refine
 translate_context_paragraphs: 3      # janela deslizante de parágrafos anteriores
 translate_context_chars: 1200        # limite de contexto recente injetado no prompt
 translate_context_include_pt: true   # inclui PT já traduzido como âncora de tom/termos
+
+# ============================================================================
+# Revisão bilíngue conservadora (original EN + tradução PT-BR)
+# ============================================================================
+# Segunda passada curta após toda a tradução. Aplica somente substituições
+# exatas validadas; nomes e formas protegidas do glossário não podem mudar.
+bilingual_review_after_translate: true
+bilingual_review_backend: ollama
+bilingual_review_model: gemma4:26b-a4b-it-q4_K_M
+bilingual_review_temperature: 0.10
+bilingual_review_repeat_penalty: 1.05
+bilingual_review_num_predict: 1600
+bilingual_review_max_changes: 6
+bilingual_review_seed: 42            # resposta reproduzível para o mesmo chunk/prompt
 
 # ============================================================================
 # Desquebrar (normaliza quebras antes de traduzir)
@@ -43,7 +60,7 @@ desquebrar_chunk_chars: 2560
 desquebrar_num_predict: 2048
 
 # ============================================================================
-# PDF (pós-refine)
+# PDF (após a última etapa disponível)
 # ============================================================================
 pdf_enabled: false
 pdf_font:

@@ -17,6 +17,7 @@ DEBUG_SUBDIRS = (
     "30_split_chunk",
     "40_translate",
     "45_repair",
+    "46_bilingual_review",
     "50_cleanup_pre_refine",
     "60_refine",
     "99_reports",

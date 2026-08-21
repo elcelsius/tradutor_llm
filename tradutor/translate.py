@@ -45,12 +45,18 @@ from .postprocess_translation import postprocess_translation
 from .quote_fix import (
     collapse_repeated_curly_quotes,
     fix_unbalanced_quotes,
+    repair_missing_closing_curly_quotes_per_paragraph,
     repair_missing_open_quotes_per_paragraph,
     count_curly_quotes,
 )
 from .text_postprocess import apply_structural_normalizers, apply_custom_normalizers
 from .language_guardrails import detect_residual_english, english_leak_segments as _english_leak_segments
 from .repair import repair_translation_chunk, repair_prompt_fingerprint, REPAIR_PIPELINE_VERSION
+from .bilingual_review import (
+    BILINGUAL_REVIEW_PIPELINE_VERSION,
+    bilingual_review_prompt_fingerprint,
+    review_translation_chunk,
+)
 
 STUB_HEADER_RE = re.compile(
     r"^#?\s*(prologue|chapter\s+\d+(?::[^\n]+)?|epilogue|afterword)\s*$",
@@ -60,11 +66,201 @@ PT_HEADING_RE = re.compile(
     r"^#?\s*(pr[oó]logo|cap[ií]tulo\s+\d+(?::[^\n]*)?|ep[ií]logo|p[oó]s[- ]?escrito|posf[aá]cio)\s*$",
     re.IGNORECASE,
 )
-TRANSLATE_PIPELINE_VERSION = "40"
+TRANSLATE_PIPELINE_VERSION = "63"
 TRANSLATE_START_MARKER_RE = r"###\s*TEXTO_TRADUZ(?:IDO|DO)?_INICIO"
 TRANSLATE_END_MARKER_RE = r"###\s*TEXTO_TRADUZ(?:IDO|DO)?_FIM"
 TRANSLATE_ANY_MARKER_RE = r"###\s*TEXTO_TRADUZ[A-Z_]*"
 SCENE_SEPARATOR_RE = re.compile(r"^\s*(?:\*\s*){3,}\s*$|^\s*[—–-]{3,}\s*$", re.MULTILINE)
+INLINE_SOUND_TOKENS = frozenset(
+    {
+        "ah",
+        "bam",
+        "bang",
+        "clack",
+        "clunk",
+        "crack",
+        "ding",
+        "gulp",
+        "hah",
+        "haha",
+        "heh",
+        "hm",
+        "hmm",
+        "huff",
+        "hup",
+        "oh",
+        "pfft",
+        "snort",
+        "tap",
+        "thud",
+        "ugh",
+        "uh",
+        "whoa",
+        "whoosh",
+    }
+)
+
+
+def _remove_spurious_terminal_quote_pair(source_text: str, translated_text: str) -> str:
+    """Remove um par de aspas extra que envolveu narração final da saída."""
+    source_open, source_close = count_curly_quotes(source_text)
+    target_open, target_close = count_curly_quotes(translated_text)
+    if (
+        source_open != source_close
+        or target_open != source_open + 1
+        or target_close != source_close + 1
+    ):
+        return translated_text
+
+    source_last = next(
+        (line.strip() for line in reversed(source_text.splitlines()) if line.strip()),
+        "",
+    )
+    if not source_last:
+        return translated_text
+    if (
+        "“" in source_last
+        or "”" in source_last
+        or source_last.lstrip().startswith(('"', "—", "-"))
+        or source_last.rstrip().endswith('"')
+    ):
+        return translated_text
+
+    parts = re.split(r"(\n\s*\n)", translated_text)
+    for index in range(len(parts) - 1, -1, -2):
+        paragraph = parts[index]
+        stripped = paragraph.strip()
+        if not stripped:
+            continue
+        if (
+            stripped.startswith("“")
+            and stripped.endswith("”")
+            and stripped.count("“") == 1
+            and stripped.count("”") == 1
+        ):
+            leading = len(paragraph) - len(paragraph.lstrip())
+            trailing = len(paragraph) - len(paragraph.rstrip())
+            body_end = len(paragraph) - trailing - 1
+            parts[index] = (
+                paragraph[:leading]
+                + paragraph[leading + 1 : body_end]
+                + paragraph[body_end + 1 :]
+            )
+            return "".join(parts)
+        # A LLM também pode deixar a narração intacta e pôr aspas só na última
+        # frase de pensamento. A fonte acima confirma que o parágrafo final
+        # não é diálogo, então esse único par adicional é espúrio.
+        inline_terminal = re.search(r"“(?P<content>[^“”\n]+)”(?P<trailing>\s*)$", paragraph)
+        if inline_terminal and inline_terminal.group("content").strip():
+            parts[index] = (
+                paragraph[: inline_terminal.start()]
+                + inline_terminal.group("content")
+                + inline_terminal.group("trailing")
+            )
+            return "".join(parts)
+        return translated_text
+    return translated_text
+
+
+def _remove_spurious_terminal_closing_quote(
+    source_text: str, translated_text: str
+) -> str:
+    """Remove um fechamento de fala inventado no fim de narração final.
+
+    O modelo às vezes preserva toda a estrutura de um chunk e acrescenta apenas
+    ``”`` ao fim da última frase narrativa. Não é seguro compensar isso com uma
+    abertura: a fonte confirma que o último bloco não é diálogo e que o último
+    fechamento é o marcador sem par correspondente.
+    """
+    source_open, source_close = count_curly_quotes(source_text)
+    target_open, target_close = count_curly_quotes(translated_text)
+    if (
+        source_open != source_close
+        or target_open != source_open
+        or target_close != source_close + 1
+    ):
+        return translated_text
+
+    source_last = next(
+        (line.strip() for line in reversed(source_text.splitlines()) if line.strip()),
+        "",
+    )
+    target_last = next(
+        (line.rstrip() for line in reversed(translated_text.splitlines()) if line.strip()),
+        "",
+    )
+    if (
+        not source_last
+        or "“" in source_last
+        or "”" in source_last
+        or "“" in target_last
+        or not target_last.endswith("”")
+    ):
+        return translated_text
+
+    terminal_close = len(translated_text.rstrip()) - 1
+    depth = 0
+    for index, char in enumerate(translated_text):
+        if char == "“":
+            depth += 1
+        elif char == "”":
+            if depth:
+                depth -= 1
+            elif index != terminal_close:
+                return translated_text
+
+    if depth:
+        return translated_text
+    return translated_text[:terminal_close] + translated_text[terminal_close + 1 :]
+
+
+def _source_has_unquoted_sound(source_text: str, token: str) -> bool:
+    """Confirma que uma onomatopeia aparece na fonte fora de aspas curvas."""
+    token_re = re.compile(rf"(?<![A-Za-zÀ-ÿ]){re.escape(token)}(?![A-Za-zÀ-ÿ])", re.IGNORECASE)
+    for match in token_re.finditer(source_text):
+        before = source_text[: match.start()].rstrip()
+        after = source_text[match.end() :].lstrip()
+        if not before.endswith("“") and not after.startswith("”"):
+            return True
+    return False
+
+
+def _remove_spurious_inline_sound_quote_pair(source_text: str, translated_text: str) -> str:
+    """Desfaz aspas extras que a LLM adiciona a um som dentro da narração."""
+    source_open, source_close = count_curly_quotes(source_text)
+    target_open, target_close = count_curly_quotes(translated_text)
+    if (
+        source_open != source_close
+        or target_open != source_open + 1
+        or target_close != source_close + 1
+    ):
+        return translated_text
+
+    stack: list[int] = []
+    pairs: list[tuple[int, int]] = []
+    for index, char in enumerate(translated_text):
+        if char == "“":
+            stack.append(index)
+        elif char == "”" and stack:
+            pairs.append((stack.pop(), index))
+
+    for opening, closing in pairs:
+        content = translated_text[opening + 1 : closing].strip()
+        token = re.sub(r"[^A-Za-zÀ-ÿ]+", "", content).casefold()
+        paragraph_prefix = translated_text[
+            translated_text.rfind("\n\n", 0, opening) + 2 : opening
+        ].strip()
+        next_char = translated_text[closing + 1 : closing + 2]
+        if (
+            token not in INLINE_SOUND_TOKENS
+            or not paragraph_prefix
+            or not next_char
+            or next_char not in ".,;:!?…"
+            or not _source_has_unquoted_sound(source_text, token)
+        ):
+            continue
+        return translated_text[:opening] + translated_text[opening + 1 : closing] + translated_text[closing + 1 :]
+    return translated_text
 
 
 def _remove_premature_curly_close(source_text: str, translated_text: str) -> str:
@@ -120,6 +316,9 @@ def _normalize_chunk_dialogue_quotes(source_text: str, translated_text: str) -> 
     if not translated_text:
         return translated_text
 
+    translated_text = _remove_spurious_inline_sound_quote_pair(source_text, translated_text)
+    translated_text = _remove_spurious_terminal_quote_pair(source_text, translated_text)
+    translated_text = _remove_spurious_terminal_closing_quote(source_text, translated_text)
     translated_text = _remove_premature_curly_close(source_text, translated_text)
 
     source_open, source_close = count_curly_quotes(source_text)
@@ -155,12 +354,12 @@ def _repair_residual_english_segments(
     repaired = translated_text
     attempts_total = 0
     replacements = 0
-    blocks: list[str] = []
+    blocks: list[tuple[str, str]] = []
     seen_blocks: set[str] = set()
-    for segment in _english_leak_segments(translated_text):
-        if not segment.strip():
+    for leaked_segment in _english_leak_segments(translated_text):
+        if not leaked_segment.strip():
             continue
-        position = translated_text.find(segment)
+        position = translated_text.find(leaked_segment)
         if position < 0:
             continue
         block_start = translated_text.rfind("\n\n", 0, position) + 2
@@ -171,23 +370,43 @@ def _repair_residual_english_segments(
         if not block or block in seen_blocks:
             continue
         seen_blocks.add(block)
-        blocks.append(block)
+        blocks.append((block, leaked_segment))
 
-    for segment_index, segment in enumerate(blocks, start=1):
+    for segment_index, (segment, leaked_segment) in enumerate(blocks, start=1):
         if segment not in repaired:
             continue
-        prompt = build_translation_prompt(
-            segment,
-            context=None,
-            glossary_text=glossary_text,
-            allow_adaptation=allow_adaptation,
-            chunk_profile="dialogue",
-        )
-        prompt += (
-            "\n\nATENÇÃO: Este é somente o segmento residual em inglês. "
-            "Traduza integralmente para PT-BR, preserve aspas, hesitações e pontuação. "
-            "Não devolva o texto em inglês nem explicações."
-        )
+        glossary_block = ""
+        if glossary_text:
+            glossary_block = (
+                "GLOSSÁRIO OFICIAL (use estas formas quando forem aplicáveis):\n"
+                f"{glossary_text}\n\n"
+            )
+        prompt = f'''
+Você é um revisor de tradução EN -> PT-BR.
+
+O parágrafo abaixo já está majoritariamente em português brasileiro, mas contém
+um trecho residual em inglês. Reescreva o parágrafo inteiro em PT-BR:
+- traduza integralmente o trecho residual em inglês;
+- preserve nomes próprios, aspas, hesitações, pontuação e o restante que já está em PT-BR;
+- não deixe nenhuma palavra ou frase em inglês na resposta;
+- não acrescente explicações nem comentários.
+
+TRECHO RESIDUAL EM INGLÊS (não o copie; traduza-o):
+"""{leaked_segment}"""
+
+FORMATO DE SAÍDA:
+Retorne exclusivamente:
+
+### TEXTO_TRADUZIDO_INICIO
+
+<parágrafo corrigido>
+### TEXTO_TRADUZIDO_FIM
+
+Nada antes ou depois dos marcadores.
+
+{glossary_block}TEXTO A SER TRADUZIDO:
+"""{segment}"""
+'''
         previous_temperature = backend.temperature
         backend.temperature = temperature
         try:
@@ -415,6 +634,7 @@ REGRAS PRINCIPAIS:
 6. Manter nomes exatos conforme glossário.
 7. Manter número/pessoa corretos: não inverter singular/plural; não use "vocês" quando o original está no singular.
 8. NÃO use "..." ou "…" para omitir trechos; só use reticências quando elas já existirem no original.
+9. Preserve headings Markdown (# e ##) em linhas próprias, sem colar título ou subtítulo à narração. Preserve numerais romanos em headings.
 
 {profile_block}
 
@@ -679,7 +899,9 @@ def _glossary_chunk_manifest(
 def enforce_canonical_terms(text: str, terms: list[dict]) -> tuple[str, dict]:
     """
     Substitui termos marcados com enforce=True pelos equivalentes em PT.
-    Apenas atua nos termos selecionados para o chunk.
+    Apenas atua nos termos selecionados para o chunk. Formas em
+    ``contextual_bad_aliases`` ficam para o repair por LLM, pois a troca pode
+    exigir concordância fora da palavra substituída.
     """
     if not text or not terms:
         return text, {}
@@ -748,6 +970,8 @@ def translate_document(
     split_by_sections: bool | None = None,
     allow_adaptation: bool | None = None,
     translation_repair: bool | None = None,
+    bilingual_review: bool | None = None,
+    bilingual_review_backend: LLMBackend | None = None,
     fail_on_chunk_error: bool | None = None,
     debug_run: DebugRunWriter | None = None,
 ) -> str:
@@ -758,14 +982,31 @@ def translate_document(
     split_flag = cfg.split_by_sections if split_by_sections is None else split_by_sections
     allow_adapt_flag = cfg.translate_allow_adaptation if allow_adaptation is None else allow_adaptation
     repair_enabled = getattr(cfg, "use_translation_repair", True) if translation_repair is None else translation_repair
+    review_requested = (
+        getattr(cfg, "bilingual_review_after_translate", False)
+        if bilingual_review is None
+        else bilingual_review
+    )
+    review_enabled = bool(review_requested and bilingual_review_backend is not None)
+    if review_requested and bilingual_review_backend is None:
+        logger.warning(
+            "Revisao bilingue solicitada, mas nenhum backend foi configurado; mantendo somente a traducao."
+        )
     fail_on_error = cfg.fail_on_chunk_error if fail_on_chunk_error is None else fail_on_chunk_error
     if not hasattr(backend, "temperature"):
         backend.temperature = cfg.translate_temperature
     clean = pdf_text if already_preprocessed else preprocess_text(pdf_text, logger, skip_front_matter=cfg.skip_front_matter)
     clean = _separate_short_dialogues(clean)
-    clean, source_quote_repairs = repair_missing_open_quotes_per_paragraph(clean, logger=logger, label="source")
+    clean, source_quote_open_repairs = repair_missing_open_quotes_per_paragraph(
+        clean, logger=logger, label="source"
+    )
+    clean, source_quote_close_repairs = repair_missing_closing_curly_quotes_per_paragraph(
+        clean, logger=logger, label="source"
+    )
     clean, source_quote_boundary_fixed = fix_unbalanced_quotes(clean, logger=logger, label="source")
-    source_quote_boundary_fixed = source_quote_boundary_fixed or bool(source_quote_repairs)
+    source_quote_boundary_fixed = source_quote_boundary_fixed or bool(
+        source_quote_open_repairs or source_quote_close_repairs
+    )
     if source_quote_boundary_fixed:
         logger.info("Fronteiras de aspas do texto-fonte foram restauradas antes da tradução.")
     doc_hash = chunk_hash(clean)
@@ -941,6 +1182,12 @@ def translate_document(
     repair_cache_hits_total = 0
     repair_suspect_total = 0
     repair_elapsed_total = 0.0
+    bilingual_review_metrics: list[dict] = []
+    bilingual_review_attempted_total = 0
+    bilingual_review_changed_total = 0
+    bilingual_review_cache_hits_total = 0
+    bilingual_review_rejected_total = 0
+    bilingual_review_elapsed_total = 0.0
 
     glossary_hash = chunk_hash(glossary_text) if glossary_text else None
     manual_glossary_hash = (
@@ -980,6 +1227,16 @@ def translate_document(
         if not isinstance(meta, dict):
             return False
         return all(meta.get(k) == v for k, v in current_cache_signature.items())
+
+    def _cache_mismatch_keys(data: dict) -> list[str]:
+        meta = data.get("metadata")
+        if not isinstance(meta, dict):
+            return ["metadata"]
+        return [
+            key
+            for key, value in current_cache_signature.items()
+            if meta.get(key) != value
+        ]
 
     if resume_manifest:
         manifest_doc_hash = resume_manifest.get("doc_hash")
@@ -1204,7 +1461,10 @@ def translate_document(
             data = load_cache("translate", chunk_hash_val)
             meta_ok = _is_cache_compatible(data)
             if not meta_ok:
-                logger.debug("Cache de tradução ignorado: assinatura diferente de backend/model/num_predict.")
+                logger.debug(
+                    "Cache de traducao ignorado: assinatura diferente em %s.",
+                    ", ".join(_cache_mismatch_keys(data)),
+                )
             else:
                 cached = data.get("final_output")
                 if cached:
@@ -1260,13 +1520,14 @@ def translate_document(
                             temp_for_attempt = dialogue_retry_temps[min(attempt, len(dialogue_retry_temps) - 1)]
                             backend.temperature = temp_for_attempt
                             try:
-                                raw_text, _clean_text, llm_attempts, sanitizer_report = _call_with_retry(
+                                raw_text, _clean_text, call_attempts, sanitizer_report = _call_with_retry(
                                     backend=backend,
                                     prompt=prompt,
                                     cfg=cfg,
                                     logger=logger,
                                     label=f"trad-{idx}/{len(chunks)}",
                                 )
+                                llm_attempts += call_attempts
                             finally:
                                 backend.temperature = prev_temp
                             parsed = _parse_translation_output(raw_text)
@@ -1416,13 +1677,14 @@ def translate_document(
                                     prev_temp_block = backend.temperature
                                     backend.temperature = dialogue_retry_temps[-1]
                                     try:
-                                        block_raw, _block_clean, _, block_report = _call_with_retry(
+                                        block_raw, _block_clean, block_attempts, block_report = _call_with_retry(
                                             backend=backend,
                                             prompt=block_prompt,
                                             cfg=cfg,
                                             logger=logger,
                                             label=f"trad-split-{idx}-{b_idx}",
                                         )
+                                        llm_attempts += block_attempts
                                     finally:
                                         backend.temperature = prev_temp_block
                                     block_parsed = _parse_translation_output(block_raw)
@@ -1588,27 +1850,7 @@ def translate_document(
                         cache_payload = {
                             "chunk_index": idx,
                             "mode": "translate",
-                            "source": source_slug or "",
-                            "doc_hash": doc_hash,
-                            "backend": getattr(backend, "backend", None),
-                            "model": getattr(backend, "model", None),
-                            "num_predict": getattr(backend, "num_predict", None),
-                            "temperature": getattr(backend, "temperature", None),
-                            "repeat_penalty": getattr(backend, "repeat_penalty", None),
-                            "translate_chunk_chars": cfg.translate_chunk_chars,
-                            "glossary_hash": glossary_hash,
-                            "manual_glossary_hash": manual_glossary_hash,
-                            "allow_adaptation": allow_adapt_flag,
-                            "translation_repair": bool(repair_enabled),
-                            "repair_prompt_hash": repair_prompt_fingerprint() if repair_enabled else None,
-                            "repair_pipeline_version": REPAIR_PIPELINE_VERSION if repair_enabled else None,
-                            "translate_context_paragraphs": context_paragraphs,
-                            "translate_context_chars": context_chars,
-                            "translate_context_include_pt": context_include_pt,
-                            "split_by_sections": split_flag,
-                            "dialogue_guardrails_mode": dialogue_guardrails_mode,
-                            "prompt_hash": prompt_hash,
-                            "pipeline_version": TRANSLATE_PIPELINE_VERSION,
+                            **current_cache_signature,
                         }
                     except Exception as exc:
                         # debug de falha
@@ -1784,6 +2026,14 @@ def translate_document(
                 "repair_suspect_reason": repair_suspect_reason,
                 "repair_elapsed_seconds": round(repair_elapsed_seconds, 3),
                 "pre_repair_hash": chunk_hash(pre_repair_text) if pre_repair_text else None,
+                "bilingual_review_attempted": False,
+                "bilingual_review_changed": False,
+                "bilingual_review_used_cache": False,
+                "bilingual_review_suggested_changes": 0,
+                "bilingual_review_applied_changes": [],
+                "bilingual_review_rejected_changes": [],
+                "bilingual_review_failure_reason": "",
+                "bilingual_review_elapsed_seconds": 0.0,
                 "dialogue_splits": normalizer_stats.get("dialogue_splits", 0),
                 "triple_quotes_removed": normalizer_stats.get("triple_quotes_removed", 0),
                 "suspect_output": suspect_output,
@@ -1972,6 +2222,128 @@ def translate_document(
             failed_chunks.add(midx)
         _write_progress()
 
+    if review_enabled:
+        review_max_changes = max(
+            1, int(getattr(cfg, "bilingual_review_max_changes", 6) or 6)
+        )
+        logger.info(
+            "Iniciando revisao bilingue conservadora: model=%s max_changes=%d chunks=%d",
+            getattr(bilingual_review_backend, "model", ""),
+            review_max_changes,
+            total_chunks,
+        )
+        for idx, chunk in enumerate(chunks, start=1):
+            current_output = chunk_outputs.get(idx, "")
+            if idx in failed_chunks or current_output.startswith("[CHUNK_"):
+                bilingual_review_metrics.append(
+                    {
+                        "chunk_index": idx,
+                        "skipped": True,
+                        "skip_reason": "failed_or_placeholder",
+                    }
+                )
+                continue
+
+            _, _, _, review_terms = _build_chunk_glossary(
+                glossary_manual_terms,
+                chunk,
+                match_limit=glossary_match_limit,
+                fallback_limit=0,
+                logger=logger,
+                chunk_index=idx,
+            )
+            review_result = review_translation_chunk(
+                source_text=chunk,
+                translated_text=current_output,
+                backend=bilingual_review_backend,
+                logger=logger,
+                # O glossario protege termos por validacao deterministica. Nao o
+                # enviamos como texto ao revisor para evitar que ele priorize
+                # normalizacoes de nomes em vez de erros de traducao.
+                glossary_text=None,
+                glossary_terms=glossary_manual_terms,
+                max_changes=review_max_changes,
+                cache_metadata={
+                    "chunk_index": idx,
+                    "source": source_slug or "",
+                    "doc_hash": doc_hash,
+                    "manual_glossary_hash": manual_glossary_hash,
+                },
+            )
+            if review_result.attempted:
+                bilingual_review_attempted_total += 1
+            if review_result.used_cache:
+                bilingual_review_cache_hits_total += 1
+            bilingual_review_rejected_total += len(review_result.rejected_changes)
+            bilingual_review_elapsed_total += review_result.elapsed_seconds
+
+            reviewed_output = review_result.text
+            if review_result.changed:
+                reviewed_output = postprocess_translation(reviewed_output, chunk)
+                reviewed_output = _normalize_chunk_dialogue_quotes(chunk, reviewed_output)
+                if review_terms:
+                    reviewed_output, _ = enforce_canonical_terms(
+                        reviewed_output, review_terms
+                    )
+                chunk_outputs[idx] = reviewed_output
+                bilingual_review_changed_total += 1
+                logger.info(
+                    "Revisao bilingue chunk %d/%d: aplicadas=%d rejeitadas=%d",
+                    idx,
+                    total_chunks,
+                    len(review_result.applied_changes),
+                    len(review_result.rejected_changes),
+                )
+
+            metric = next(
+                (
+                    item
+                    for item in chunk_metrics
+                    if item.get("chunk_index") == idx
+                ),
+                None,
+            )
+            if metric is not None:
+                metric.update(
+                    {
+                        "bilingual_review_attempted": review_result.attempted,
+                        "bilingual_review_changed": review_result.changed,
+                        "bilingual_review_used_cache": review_result.used_cache,
+                        "bilingual_review_suggested_changes": review_result.suggested_changes,
+                        "bilingual_review_applied_changes": review_result.applied_changes,
+                        "bilingual_review_rejected_changes": review_result.rejected_changes,
+                        "bilingual_review_failure_reason": review_result.failure_reason,
+                        "bilingual_review_focus_issues": review_result.focus_issues,
+                        "bilingual_review_elapsed_seconds": round(
+                            review_result.elapsed_seconds, 3
+                        ),
+                    }
+                )
+
+            review_payload = {
+                "chunk_index": idx,
+                "attempted": review_result.attempted,
+                "changed": review_result.changed,
+                "used_cache": review_result.used_cache,
+                "llm_attempts": review_result.llm_attempts,
+                "suggested_changes": review_result.suggested_changes,
+                "applied_changes": review_result.applied_changes,
+                "rejected_changes": review_result.rejected_changes,
+                "failure_reason": review_result.failure_reason,
+                "focus_issues": review_result.focus_issues,
+                "elapsed_seconds": round(review_result.elapsed_seconds, 3),
+            }
+            bilingual_review_metrics.append(review_payload)
+            if debug_run and debug_run.should_write_chunk(idx):
+                debug_run.write_json(
+                    f"46_bilingual_review/chunk{idx:03d}_review.json", review_payload
+                )
+                if debug_run.store_llm_raw and review_result.raw_output:
+                    debug_run.write_text(
+                        f"46_bilingual_review/chunk{idx:03d}_raw.txt",
+                        review_result.raw_output,
+                    )
+
     heading_fixes = 0
     seen_output_sections: set[int] = set()
     for idx in range(1, total_chunks + 1):
@@ -2058,6 +2430,12 @@ def translate_document(
         "repair_cache_hits": repair_cache_hits_total,
         "repair_suspect_chunks": repair_suspect_total,
         "repair_elapsed_seconds": round(repair_elapsed_total, 3),
+        "bilingual_review_enabled": review_enabled,
+        "bilingual_review_attempted_chunks": bilingual_review_attempted_total,
+        "bilingual_review_changed_chunks": bilingual_review_changed_total,
+        "bilingual_review_cache_hits": bilingual_review_cache_hits_total,
+        "bilingual_review_rejected_changes": bilingual_review_rejected_total,
+        "bilingual_review_elapsed_seconds": round(bilingual_review_elapsed_total, 3),
         "translate_context_paragraphs": context_paragraphs,
         "translate_context_chars": context_chars,
         "translate_context_include_pt": context_include_pt,
@@ -2088,10 +2466,18 @@ def translate_document(
             "repair_cache_hits": repair_cache_hits_total,
             "repair_suspect_chunks": repair_suspect_total,
             "repair_elapsed_seconds": round(repair_elapsed_total, 3),
+            "bilingual_review_enabled": review_enabled,
+            "bilingual_review_attempted_chunks": bilingual_review_attempted_total,
+            "bilingual_review_changed_chunks": bilingual_review_changed_total,
+            "bilingual_review_cache_hits": bilingual_review_cache_hits_total,
+            "bilingual_review_rejected_changes": bilingual_review_rejected_total,
+            "bilingual_review_elapsed_seconds": round(bilingual_review_elapsed_total, 3),
             "translate_context_paragraphs": context_paragraphs,
             "translate_context_chars": context_chars,
             "translate_context_include_pt": context_include_pt,
             "source_quote_boundary_fixed": source_quote_boundary_fixed,
+            "source_quote_open_repairs": source_quote_open_repairs,
+            "source_quote_close_repairs": source_quote_close_repairs,
         }
         metrics_path = Path(cfg.output_dir) / f"{slug}_translate_metrics.json"
         metrics_path.write_text(json.dumps(metrics_payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -2118,6 +2504,33 @@ def translate_document(
                     **repair_report,
                     "chunks": repair_metrics,
                 },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        bilingual_review_report = {
+            "mode": "bilingual_review",
+            "enabled": review_enabled,
+            "input": source_slug or "",
+            "total_chunks": total_chunks,
+            "attempted_chunks": bilingual_review_attempted_total,
+            "changed_chunks": bilingual_review_changed_total,
+            "cache_hits": bilingual_review_cache_hits_total,
+            "rejected_changes": bilingual_review_rejected_total,
+            "elapsed_seconds": round(bilingual_review_elapsed_total, 3),
+            "pipeline_version": BILINGUAL_REVIEW_PIPELINE_VERSION,
+            "prompt_hash": bilingual_review_prompt_fingerprint()
+            if review_enabled
+            else None,
+            "timestamp": datetime.now().isoformat(),
+        }
+        bilingual_review_path = (
+            Path(cfg.output_dir) / f"{slug}_bilingual_review_metrics.json"
+        )
+        bilingual_review_path.write_text(
+            json.dumps(
+                {**bilingual_review_report, "chunks": bilingual_review_metrics},
                 ensure_ascii=False,
                 indent=2,
             ),
@@ -2198,6 +2611,35 @@ def translate_document(
             },
         }
         debug_run.write_manifest("repair", repair_manifest)
+        bilingual_review_manifest = {
+            "run_id": debug_run.run_id,
+            "stage": "bilingual_review",
+            "source_slug": source_slug or "",
+            "enabled": review_enabled,
+            "pipeline_version": BILINGUAL_REVIEW_PIPELINE_VERSION,
+            "prompt_hash": bilingual_review_prompt_fingerprint()
+            if review_enabled
+            else None,
+            "backend": {
+                "backend": getattr(bilingual_review_backend, "backend", None),
+                "model": getattr(bilingual_review_backend, "model", None),
+                "temperature": getattr(bilingual_review_backend, "temperature", None),
+                "num_predict": getattr(bilingual_review_backend, "num_predict", None),
+            },
+            "chunks": bilingual_review_metrics,
+            "totals": {
+                "total_chunks": total_chunks,
+                "attempted_chunks": bilingual_review_attempted_total,
+                "changed_chunks": bilingual_review_changed_total,
+                "cache_hits": bilingual_review_cache_hits_total,
+                "rejected_changes": bilingual_review_rejected_total,
+                "elapsed_seconds": round(bilingual_review_elapsed_total, 3),
+            },
+        }
+        debug_run.write_json(
+            "46_bilingual_review/bilingual_review_manifest.json",
+            bilingual_review_manifest,
+        )
     if failed_chunks:
         msg = (
             f"Traducao finalizada com falhas: {len(failed_chunks)}/{total_chunks} chunks nao foram traduzidos. "

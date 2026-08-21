@@ -203,6 +203,22 @@ def test_quality_checks_flags_bad_alias_separately_from_source_alias() -> None:
     assert report["issues_by_type"]["bad_alias_in_target"] == 1
 
 
+def test_quality_checks_flags_contextual_bad_alias() -> None:
+    report = run_translation_quality_checks(
+        "The eucharists advanced.",
+        "Os eucaristos avançaram.",
+        [
+            {
+                "key": "Eucharists",
+                "pt": "eucaristias",
+                "contextual_bad_aliases": ["eucaristos"],
+            }
+        ],
+    )
+
+    assert report["issues_by_type"]["bad_alias_in_target"] == 1
+
+
 def test_quality_checks_flags_contextual_target_replacement_alias() -> None:
     """Processamento interno auxiliar."""
     report = run_translation_quality_checks(
@@ -362,3 +378,17 @@ def test_quality_checks_flags_stray_format_marker_after_dialogue() -> None:
     report = run_translation_quality_checks("Source", "“Tudo bem.”*", [])
 
     assert report["issues_by_type"]["stray_format_marker"] == 1
+
+
+def test_quality_checks_flags_known_recovery_grammar_defects() -> None:
+    report = run_translation_quality_checks(
+        "Source",
+        (
+            "Ela tentou recuperar-se da consciência. "
+            "Pedi para que ela se recuperar. "
+            "Ela está se recuperando-se."
+        ),
+        [],
+    )
+
+    assert report["issues_by_type"]["known_grammar_defect"] == 3

@@ -254,6 +254,19 @@ def final_pt_postprocess(text: str) -> str:
             "Mas se enviar todos nós de volta para casa consome",
         ),
         (r"\bnum cenário pior\b", "no pior dos cenários"),
+        (r"\bem um cenário pior\b", "no pior dos cenários"),
+        (
+            r"\bA pureza dela facilita para os outros tingirem ela com suas cores\b",
+            "Sua pureza torna mais fácil para os outros tingi-la com as próprias cores",
+        ),
+        (
+            r"\bSlei comeu o pequeno pedaço de salsicha seca e deu um feliz “pumpee\. ♪”\.",
+            "Slei comeu o pequeno pedaço de salsicha seca e soltou um alegre “pumpee. ♪”.",
+        ),
+        (
+            r"\bYasu lembrou do punho cerrado que o dono dos carros fez ao dizer aquelas palavras\b",
+            "Yasu se lembrou de como o dono das carruagens fechou o punho ao dizer aquelas palavras",
+        ),
         (
             r"\bVocê só está trabalhando de trás pra frente depois da derrota\b",
             "Você só está raciocinando de trás para frente a partir da derrota",
@@ -285,6 +298,7 @@ def final_pt_postprocess(text: str) -> str:
         (r"\bboost\b", "impulso"),
         (r"\bganharam o dia\b", "garantiram a vitória"),
         (r"\bDesde que todos queremos\b", "Desde que todos queiramos"),
+        (r"\bEu see\b", "Entendo"),
         (r"\bI see\b", "Entendo"),
         (r"\bI-isso\b", "S-sim"),
         (r"\bI não\b", "Eu não"),
@@ -402,7 +416,7 @@ def final_pt_postprocess(text: str) -> str:
             "Trarei o maior sofrimento sobre todas as dimensões e todos os mundos",
         ),
         (r"\bToda existência me pertence\b", "Toda a existência me pertence"),
-        (r"\buma membro\b", "um membro"),
+        (r"\buma membro\b", "uma integrante"),
         (r"“…\s*Boa sorte pra você, Nyaki\.”", "“… Que bom pra você, Nyaki.”"),
         (r"\bMiau-ow\s+—\s*Piggymaru\b", "Miau-ow—Piggymaru"),
         (r"\bNee-nyaaaa\s+—!", "Nee-nyaaaa—!"),

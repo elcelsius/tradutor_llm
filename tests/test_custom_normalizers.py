@@ -32,6 +32,22 @@ def test_custom_normalizer_translates_common_english_interjections() -> None:
     assert "Ugh" not in out
 
 
+def test_custom_normalizer_translates_whoa_and_generic_skill() -> None:
+    text = "Whoa! Essa é a melhor skill; essas skills vão ajudar."
+
+    out = apply_custom_normalizers(text, convert_quote_dialogues=False)
+
+    assert out == "Uau! Essa é a melhor habilidade; essas habilidades vão ajudar."
+
+
+def test_custom_normalizer_translates_embedded_english_connectors() -> None:
+    text = "And assim seguimos, or pelo menos tentamos, but você sabe disso."
+
+    out = apply_custom_normalizers(text, convert_quote_dialogues=False)
+
+    assert out == "E assim seguimos, ou pelo menos tentamos, mas você sabe disso."
+
+
 def test_custom_normalizer_quotes_to_dash() -> None:
     """Processamento interno auxiliar."""
     text = '“Hello there.”\nNarration line.\n"Oi!"'

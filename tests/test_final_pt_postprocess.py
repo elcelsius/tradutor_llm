@@ -20,7 +20,7 @@ def test_final_pt_postprocess_fixes_small_editorial_artifacts() -> None:
         "O alcance é mais ou menos igual ao do Paralisar.\n\n"
         "Havia limites no que podíamos alcançar por meio daquele familiar. Isso exigiria um talento de palco significativo. Todos pensam muito bem demais de mim.\n\n"
         "A habilidade exerce no corpo dela para considerar. Ela foi lavada a cérebro. As identidades temporárias para um propósito bastam.\n\n"
-        "Arriscar sua vida pode ter sido um pouco demais, embora. As estratégias ganharam o dia. Desde que todos queremos a mesma coisa. “I see”, disse Hijiri.\n\n"
+        "Arriscar sua vida pode ter sido um pouco demais, embora. As estratégias ganharam o dia. Desde que todos queremos a mesma coisa. “I see”, disse Hijiri. “Eu see”, disse Hijiri.\n\n"
         "O alcance é mais ou menos o mesmo que Paralisar. Havia limites ao que conseguíamos através daquele familiar. Acredito que o verdadeiro eu seja diferente.\n\n"
         "Ela precisava ser o apanhador no campo de centeio dela, não ser lavada cerebralmente.\n\n"
         "I-isso? I não me importo. KYS. P mais ou menos. Se ela fizesse isso a gente e fizer isso a gente, eu faço um bom imitar. Ela sabe lavar cérebro.\n\n"
@@ -93,6 +93,7 @@ def test_final_pt_postprocess_fixes_small_editorial_artifacts() -> None:
     assert "As estratégias garantiram a vitória" in result
     assert "Desde que todos queiramos a mesma coisa" in result
     assert "“Entendo”, disse Hijiri" in result
+    assert "Eu see" not in result
     assert (
         "limites para o que conseguíamos descobrir por meio daquele familiar" in result
     )
@@ -199,7 +200,7 @@ def test_final_pt_postprocess_fixes_nyaki_reunion_artifacts() -> None:
     )
 
     assert result == (
-        "Você é um membro importante. “… Que bom pra você, Nyaki.” "
+        "Você é uma integrante importante. “… Que bom pra você, Nyaki.” "
         "“Miau-ow—Piggymaru! Slei!” “Nee-nyaaaa—! Waaahn!”"
     )
 
@@ -262,3 +263,18 @@ def test_final_pt_postprocess_fixes_reviewed_chapter_calques() -> None:
     assert "mensageiros a cavalo velozes" in result
     assert "evitava a estrada justamente por causa dessas criaturas" in result
     assert "Deixe o que está lá fora por nossa conta" in result
+
+
+def test_final_pt_postprocess_fixes_late_chapter_literary_artifacts() -> None:
+    """Corrige calques observados na revisão do capítulo completo."""
+    result = final_pt_postprocess(
+        "Em um cenário pior, isso basta. A pureza dela facilita para os outros "
+        "tingirem ela com suas cores. Slei comeu o pequeno pedaço de salsicha seca "
+        "e deu um feliz “pumpee. ♪”. Yasu lembrou do punho cerrado que o dono dos "
+        "carros fez ao dizer aquelas palavras."
+    )
+
+    assert "no pior dos cenários" in result
+    assert "tingi-la com as próprias cores" in result
+    assert "soltou um alegre “pumpee. ♪”" in result
+    assert "Yasu se lembrou de como o dono das carruagens fechou o punho" in result

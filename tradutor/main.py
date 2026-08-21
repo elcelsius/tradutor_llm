@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .advanced_preprocess import clean_text as advanced_clean
+from .bilingual_review import bilingual_review_prompt_fingerprint
 from .cache_utils import clear_cache, set_cache_base_dir
 from .config import AppConfig, ensure_paths, load_config
 from .debug_run import DebugRunWriter
@@ -182,6 +183,56 @@ def _load_repair_timing_detail(output_dir: Path, source_slug: str) -> dict:
             "included_in": "translate",
         }
     }
+
+
+def _load_bilingual_review_timing_detail(output_dir: Path, source_slug: str) -> dict:
+    """Load the source-aware review time nested inside the translation stage."""
+    try:
+        metrics_path = output_dir / f"{source_slug}_bilingual_review_metrics.json"
+        payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+        elapsed = float(payload.get("elapsed_seconds", 0.0) or 0.0)
+    except Exception:
+        return {}
+    if elapsed <= 0:
+        return {}
+    return {
+        "bilingual_review": {
+            "elapsed_seconds": elapsed,
+            "included_in": "translate",
+            "note": "revisao fonte+PT por substituicoes pontuais",
+        }
+    }
+
+
+def _should_run_bilingual_review(args, cfg: AppConfig) -> bool:
+    """Resolve the CLI/config switch for the conservative bilingual review."""
+    return bool(
+        getattr(
+            args,
+            "bilingual_review",
+            getattr(cfg, "bilingual_review_after_translate", False),
+        )
+    )
+
+
+def _build_bilingual_review_backend(
+    args, cfg: AppConfig, logger: logging.Logger
+) -> LLMBackend:
+    """Create the dedicated model used after all translation chunks are ready."""
+    return LLMBackend(
+        backend=cfg.bilingual_review_backend,
+        model=cfg.bilingual_review_model,
+        temperature=cfg.bilingual_review_temperature,
+        logger=logger,
+        request_timeout=args.request_timeout,
+        repeat_penalty=cfg.bilingual_review_repeat_penalty,
+        num_predict=cfg.bilingual_review_num_predict,
+        num_ctx=cfg.bilingual_review_num_ctx or cfg.refine_num_ctx,
+        keep_alive=getattr(cfg, "ollama_keep_alive", "30m"),
+        api_mode=getattr(cfg, "ollama_api_mode", "generate"),
+        think=getattr(cfg, "ollama_think", None),
+        seed=getattr(cfg, "bilingual_review_seed", None),
+    )
 
 
 def _glossary_terms(glossary_state) -> list[dict]:
@@ -364,9 +415,13 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
     t = sub.add_parser(
         "traduz",
         parents=[common],
-        help="Traduz PDFs da pasta data/ (ou um arquivo especifico).",
+        help="Traduz PDFs da pasta data/ (ou um arquivo/pasta especifico).",
     )
-    t.add_argument("--input", type=str, help="PDF especifico para traduzir.")
+    t.add_argument(
+        "--input",
+        type=str,
+        help="PDF especifico ou pasta com PDFs para traduzir.",
+    )
     t.add_argument(
         "--backend",
         type=str,
@@ -393,6 +448,12 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=cfg.use_translation_repair,
         help="Executa QA/repair seletivo da tradução antes do refine (padrão: config).",
+    )
+    t.add_argument(
+        "--bilingual-review",
+        action=argparse.BooleanOptionalAction,
+        default=cfg.bilingual_review_after_translate,
+        help="Executa revisão conservadora fonte+PT após a tradução (padrão: config).",
     )
     t.add_argument(
         "--desquebrar-mode",
@@ -454,7 +515,7 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
     )
     t.add_argument(
         "--clear-cache",
-        choices=["all", "translate", "repair", "refine", "desquebrar"],
+        choices=["all", "translate", "repair", "review", "refine", "desquebrar"],
         help="Limpa caches antes de traduzir (respeita output_dir da config).",
     )
     t.add_argument(
@@ -576,6 +637,12 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
         help="Executa QA/repair seletivo da tradução antes do refine (padrão: config).",
     )
     tm.add_argument(
+        "--bilingual-review",
+        action=argparse.BooleanOptionalAction,
+        default=cfg.bilingual_review_after_translate,
+        help="Executa revisão conservadora fonte+PT após a tradução (padrão: config).",
+    )
+    tm.add_argument(
         "--resume",
         action="store_true",
         help="Retoma tradução usando manifesto de progresso existente (se houver).",
@@ -613,7 +680,7 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
     )
     tm.add_argument(
         "--clear-cache",
-        choices=["all", "translate", "repair", "refine", "desquebrar"],
+        choices=["all", "translate", "repair", "review", "refine", "desquebrar"],
         help="Limpa caches antes de traduzir (respeita output_dir da config).",
     )
     tm.add_argument(
@@ -694,7 +761,7 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
     )
     r.add_argument(
         "--clear-cache",
-        choices=["all", "translate", "repair", "refine", "desquebrar"],
+        choices=["all", "translate", "repair", "review", "refine", "desquebrar"],
         help="Limpa caches antes de refinar (respeita output_dir da config).",
     )
     r.add_argument(
@@ -787,9 +854,12 @@ def build_parser(cfg: AppConfig) -> argparse.ArgumentParser:
 
 
 def find_pdfs(data_dir: Path, specific: str | None = None) -> list[Path]:
-    """Lista PDFs no diretório ou retorna apenas o arquivo indicado."""
+    """Lista PDFs no diretório padrão, em uma pasta indicada ou um arquivo."""
     if specific:
-        return [Path(specific)]
+        candidate = Path(specific)
+        if candidate.is_dir():
+            return sorted(path for path in candidate.glob("*.pdf") if path.is_file())
+        return [candidate]
     return sorted(p for p in data_dir.glob("*.pdf"))
 
 
@@ -834,6 +904,12 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
         api_mode=getattr(cfg, "ollama_api_mode", "generate"),
         think=getattr(cfg, "ollama_think", None),
     )
+    bilingual_review_enabled = _should_run_bilingual_review(args, cfg)
+    bilingual_review_backend = (
+        _build_bilingual_review_backend(args, cfg, logger)
+        if bilingual_review_enabled
+        else None
+    )
     logger.info(
         "LLM de tradução: backend=%s model=%s temp=%.2f chunk=%d timeout=%ds num_predict=%d",
         args.backend,
@@ -843,6 +919,15 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
         args.request_timeout,
         args.num_predict,
     )
+    if bilingual_review_backend:
+        logger.info(
+            "Revisao bilingue conservadora: backend=%s model=%s temp=%.2f seed=%s max_changes=%d",
+            cfg.bilingual_review_backend,
+            cfg.bilingual_review_model,
+            cfg.bilingual_review_temperature,
+            getattr(cfg, "bilingual_review_seed", None),
+            cfg.bilingual_review_max_changes,
+        )
 
     manual_glossary_path: Path | None = None
     fail_on_chunk_error = getattr(args, "fail_on_chunk_error", None)
@@ -915,6 +1000,16 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                     "repeat_penalty": cfg.translate_repeat_penalty,
                 },
                 "refine": None,
+                "bilingual_review": None
+                if not bilingual_review_backend
+                else {
+                    "backend": cfg.bilingual_review_backend,
+                    "model": cfg.bilingual_review_model,
+                    "temperature": cfg.bilingual_review_temperature,
+                    "num_predict": cfg.bilingual_review_num_predict,
+                    "repeat_penalty": cfg.bilingual_review_repeat_penalty,
+                    "prompt_hash": bilingual_review_prompt_fingerprint(),
+                },
                 "desquebrar": {
                     "backend": args.desquebrar_backend,
                     "model": args.desquebrar_model,
@@ -1184,11 +1279,16 @@ def run_translate(args, cfg: AppConfig, logger: logging.Logger) -> None:
                 translation_repair=getattr(
                     args, "translation_repair", cfg.use_translation_repair
                 ),
+                bilingual_review=bilingual_review_enabled,
+                bilingual_review_backend=bilingual_review_backend,
                 fail_on_chunk_error=fail_on_chunk_error,
                 debug_run=debug_run,
             )
             timings["translate"] = time.perf_counter() - start_stage
             nested_timings.update(_load_repair_timing_detail(cfg.output_dir, pdf.stem))
+            nested_timings.update(
+                _load_bilingual_review_timing_detail(cfg.output_dir, pdf.stem)
+            )
             md_path = cfg.output_dir / f"{pdf.stem}_pt.md"
             start_stage = time.perf_counter()
             translated_md, translation_review = _apply_final_review(
@@ -1474,6 +1574,7 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
     if getattr(args, "clear_cache", None):
         clear_cache(args.clear_cache)
         logger.info("Cache %s limpo em %s", args.clear_cache, cfg.output_dir)
+    bilingual_review_enabled = _should_run_bilingual_review(args, cfg)
 
     text_path = Path(args.input)
     if not text_path.exists():
@@ -1520,6 +1621,16 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
                 "repeat_penalty": cfg.translate_repeat_penalty,
             },
             "refine": None,
+            "bilingual_review": None
+            if not bilingual_review_enabled
+            else {
+                "backend": cfg.bilingual_review_backend,
+                "model": cfg.bilingual_review_model,
+                "temperature": cfg.bilingual_review_temperature,
+                "num_predict": cfg.bilingual_review_num_predict,
+                "repeat_penalty": cfg.bilingual_review_repeat_penalty,
+                "prompt_hash": bilingual_review_prompt_fingerprint(),
+            },
             "desquebrar": None,
         }
         debug_run.write_backend(backend_payload)
@@ -1578,6 +1689,11 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
             api_mode=getattr(cfg, "ollama_api_mode", "generate"),
             think=getattr(cfg, "ollama_think", None),
         )
+        bilingual_review_backend = (
+            _build_bilingual_review_backend(args, cfg, logger)
+            if bilingual_review_enabled
+            else None
+        )
         logger.info(
             "LLM de tradu‡Æo: backend=%s model=%s temp=%.2f chunk=%d timeout=%ds num_predict=%d",
             args.backend,
@@ -1587,6 +1703,14 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
             args.request_timeout,
             args.num_predict,
         )
+        if bilingual_review_backend:
+            logger.info(
+                "Revisao bilingue conservadora: backend=%s model=%s temp=%.2f max_changes=%d",
+                cfg.bilingual_review_backend,
+                cfg.bilingual_review_model,
+                cfg.bilingual_review_temperature,
+                cfg.bilingual_review_max_changes,
+            )
 
         glossary_text = None
         glossary_state = None
@@ -1666,12 +1790,17 @@ def run_translate_md(args, cfg: AppConfig, logger: logging.Logger) -> None:
             translation_repair=getattr(
                 args, "translation_repair", cfg.use_translation_repair
             ),
+            bilingual_review=bilingual_review_enabled,
+            bilingual_review_backend=bilingual_review_backend,
             fail_on_chunk_error=fail_on_chunk_error,
             debug_run=debug_run,
         )
         timings["translate"] = time.perf_counter() - start_stage
         nested_timings.update(
             _load_repair_timing_detail(cfg.output_dir, text_path.stem)
+        )
+        nested_timings.update(
+            _load_bilingual_review_timing_detail(cfg.output_dir, text_path.stem)
         )
         md_path = cfg.output_dir / f"{text_path.stem}_pt.md"
         start_stage = time.perf_counter()

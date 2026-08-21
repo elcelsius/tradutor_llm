@@ -13,13 +13,15 @@ flowchart TD
     D1 --> E1[Contexto deslizante + perfil diálogo/narração]
     E1 --> E[Tradução por chunk com glossário]
     E --> F[QA da tradução]
-    F -->|sem problema| H[Markdown PT]
     F -->|problema objetivo| G[Repair seletivo]
     G --> F
-    H --> I[Cleanup pré-refine]
-    I --> J[Refine literário]
-    J --> K[Revisão determinística final automática]
-    K --> L[QA final / relatórios / PDF]
+    F -->|aprovado| H[Revisão bilíngue conservadora]
+    H --> I[Revisão determinística final automática]
+    I --> J{Refine PT-only opt-in?}
+    J -->|não| L[QA final / relatórios / PDF]
+    J -->|sim| K[Cleanup pré-refine + refine]
+    K --> M[Revisão determinística final]
+    M --> L
 ```
 
 ## Regra Por Etapa
@@ -61,18 +63,29 @@ flowchart TD
    - Recebe original em inglês, tradução atual, lista de problemas e glossário do chunk.
    - Corrige apenas os problemas listados.
    - Não deve reescrever o trecho inteiro nem alterar estrutura narrativa.
-   - Rejeita reparos que encurtam demais o chunk, removem parágrafos/falas ou apagam o começo já traduzido.
-   - O resultado reparado vira a entrada do refine.
+   - Rejeita reparos que encurtam demais o chunk, removem parágrafos/falas ou apagam o começo já traduzido. A primeira linha pode mudar quando o defeito objetivo está nela, como um termo não canônico ou inglês residual.
+   - O resultado reparado vira a entrada da revisão bilíngue.
 
-7. **Pós-processamento determinístico**
-   - Roda no `*_pt.md` antes do refine e novamente no `*_pt_refinado.md`.
-   - Corrige artefatos simples como aspas duplicadas, falsos literais recorrentes e erros gramaticais determinísticos.
+7. **Revisão bilíngue conservadora**
+   - Roda uma vez após a tradução/repair completos, não por chunk durante a tradução. Isso evita alternância de modelos na VRAM a cada chunk.
+   - Recebe o trecho original EN e o PT-BR correspondente. Retorna somente uma lista JSON de substituições exatas, nunca uma reescrita integral.
+   - Examina erros objetivos de fidelidade e de gramática que exigem comparar as duas línguas: sujeito, gênero, pronome, referência, concordância, regência, conectivo obrigatório e inglês residual.
+   - Cada proposta passa por validação local: parágrafos, diálogo, aspas, idioma, entidades e formas protegidas/canônicas do glossário devem permanecer válidos.
+   - Não recebe o glossário inteiro no prompt. As formas do glossário são usadas pelo validador local, evitando que o revisor priorize normalização de nomes em vez de corrigir a frase.
+   - Trocas de estilo, sinônimos isolados, artigos antes de nomes e mudanças em nomes/termos protegidos são recusadas.
+   - O revisor preserva oralidade correta de diálogo em PT-BR e o validador rejeita formalização indevida, regressões de regência, pronome reflexivo duplicado e subjuntivo incorreto.
+   - No Ollama, `bilingual_review_seed` mantém a resposta reproduzível para o mesmo prompt e chunk, facilitando auditoria e comparação entre execuções.
+   - É configurada por `bilingual_review_after_translate`; `--no-bilingual-review` permite desativá-la em uma execução de diagnóstico.
 
-8. **Cleanup pré-refine**
+8. **Pós-processamento determinístico**
+   - Roda no `*_pt.md` após a revisão bilíngue e novamente no `*_pt_refinado.md`.
+   - Corrige artefatos simples como aspas duplicadas, falsos literais recorrentes, aliases seguros, headings e erros gramaticais determinísticos.
+
+9. **Cleanup pré-refine**
    - Remove duplicações óbvias e corrige diálogos colados antes do refine.
    - Controlado por `cleanup_before_refine: off|auto|on`.
 
-9. **Refine literário**
+10. **Refine literário PT-only**
    - É opt-in após a tradução (`refine_after_translate: false` ou `--refine`); o subcomando `refina` continua disponível para avaliação isolada.
    - Edita o PT-BR para fluidez, pontuação, ritmo e naturalidade.
    - Recebe apenas os termos canônicos relevantes no chunk PT-BR, evitando contexto de glossário não relacionado.
@@ -80,18 +93,8 @@ flowchart TD
    - Mantém uma rede de segurança para inglês residual, mas essa não é sua responsabilidade principal.
    - Quando acionado no fluxo automático, só substitui o texto traduzido se o QA final não cair.
 
-10. **Revisão determinística final automática**
-   - Roda após a tradução e novamente após o refine, sem nova chamada de LLM.
-   - Corrige problemas mecânicos:
-     - `bad_aliases` do glossário;
-     - duplicações e caixa de nomes canônicos conhecidos;
-     - artigos/gênero conhecidos;
-     - headings/subtítulos e marcadores de cena colados;
-     - aspas malformadas e correções editoriais conservadoras.
-   - Gera QA e relatório por saída. O mesmo processo pode ser aplicado manualmente com `scripts/review_translation.py --finalize`.
-
 11. **QA final / relatórios**
-    - Gera métricas de tradução, repair e refine.
+   - Gera métricas de tradução, repair, revisão bilíngue e refine.
     - Com `--debug`, grava manifests e arquivos por chunk em `saida/debug_runs/`.
 
 ## Modularidade Por Obra
@@ -100,9 +103,10 @@ flowchart TD
 - Use `source_aliases` apenas para busca no original.
 - Um alias de origem, por si só, não exige que a saída expanda a forma canônica; isso evita tratar abreviações naturais como erro.
 - Use `source_case_sensitive: true` em termos técnicos cujo nome coincide com uma palavra comum em inglês; a busca e o QA só consideram a grafia canônica, como `Freeze` e não `freeze`.
-- Use `bad_aliases` para formas proibidas no texto final.
+- Use `bad_aliases` para formas proibidas cuja troca direta por `pt` é segura.
+- Use `contextual_bad_aliases` para formas proibidas cuja correção requer concordância no trecho. Elas acionam o repair por LLM e continuam visíveis no QA se o repair não as eliminar.
 - Use `allowed_target_aliases` para formas aceitas que contam como tradução válida no QA e não devem gerar falso positivo.
-- Use `target_replacements` para correções contextuais de uma forma final proibida, por exemplo quando a troca exige ajustar artigo ou preposição.
+- Use `target_replacements` para substituições finais explícitas e seguras que não sejam simplesmente `alias -> pt`.
 - Use `enforce: true` quando a forma `pt` for obrigatória tanto para a chave quanto para seus aliases de origem. `locked` protege a entrada do glossário contra atualizações automáticas, mas não ativa enforcement por si só.
 - O glossário dinâmico padrão é isolado por obra em `saida/<slug>_glossario_dinamico.json`; use `--dynamic-glossary` para um caminho explícito.
 - O algoritmo de QA/repair não depende de personagens ou termos de uma obra específica.
@@ -113,6 +117,8 @@ flowchart TD
 - Repair report: `saida/<slug>_repair_report.json`.
 - Repair metrics: `saida/<slug>_repair_metrics.json`.
 - Debug do repair: `saida/debug_runs/<slug>/<run>/45_repair/`.
+- Revisão bilíngue: `saida/<slug>_bilingual_review_metrics.json`.
+- Debug da revisão bilíngue: `saida/debug_runs/<slug>/<run>/46_bilingual_review/`.
 - Refine final: `saida/<slug>_pt_refinado.md`.
 - Revisão final: `saida/<slug>_pt_review_report.json`, `saida/<slug>_pt_refinado_review_report.json` e `saida/<slug>_source_sections.json`.
 - Tempos por etapa: `saida/<slug>_timings.json` e, com `--debug`, `99_reports/timings.json`.

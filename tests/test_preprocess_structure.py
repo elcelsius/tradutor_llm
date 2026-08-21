@@ -54,6 +54,15 @@ def test_preprocess_joins_inline_quoted_continuation_after_pdf_gap() -> None:
     assert stats["hard_wrap_merges"] == 1
 
 
+def test_preprocess_joins_inline_quoted_continuation_without_pdf_gap() -> None:
+    raw = "It is possible that he believes that from\n“the bottom of his heart.”"
+
+    cleaned, stats = preprocess_text(raw, return_stats=True)
+
+    assert cleaned == "It is possible that he believes that from “the bottom of his heart.”"
+    assert stats["reflow_merges"] >= 1
+
+
 def test_translation_chunks_do_not_split_open_curly_dialogue() -> None:
     """Processamento interno auxiliar."""
     paragraphs = [

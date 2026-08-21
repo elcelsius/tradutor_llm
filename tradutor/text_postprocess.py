@@ -54,6 +54,32 @@ ATTRIBUTION_PRONOUN_RE = re.compile(
     r"^(?:eu|você|voce|vocês|voces|tu|ele|ela|eles|elas|nós|nos|a gente)\b",
     flags=re.IGNORECASE,
 )
+_EMBEDDED_ENGLISH_CONNECTOR_RE = re.compile(
+    r"(?<![A-Za-zÀ-ÿ])(?P<connector>and|or|but)(?=\s+[a-zà-ÿ])",
+    flags=re.IGNORECASE,
+)
+_EMBEDDED_ENGLISH_CONNECTOR_REPLACEMENTS = {
+    "and": "e",
+    "or": "ou",
+    "but": "mas",
+}
+
+
+def translate_embedded_english_connectors(text: str) -> str:
+    """Traduz conectores ingleses isolados em uma frase já em PT-BR.
+
+    A condição à direita evita alterar nomes próprios e títulos em inglês: o
+    conector só é substituído quando introduz uma continuação em minúsculas.
+    """
+    if not text:
+        return text
+
+    def _replace(match: re.Match[str]) -> str:
+        connector = match.group("connector")
+        replacement = _EMBEDDED_ENGLISH_CONNECTOR_REPLACEMENTS[connector.casefold()]
+        return replacement.upper() if connector[:1].isupper() else replacement
+
+    return _EMBEDDED_ENGLISH_CONNECTOR_RE.sub(_replace, text)
 
 
 def _remove_trailing_triple_quotes(text: str) -> Tuple[str, int]:
@@ -200,7 +226,8 @@ def apply_custom_normalizers(text: str, *, convert_quote_dialogues: bool = True)
     Ajustes determinísticos adicionais:
     - Canoniza variantes de Touka.
     - Onomatopeia: linha/parágrafo "Gulp." -> "Glup.".
-    - Interjeições inglesas comuns: "Phew" -> "Ufa", "Geez" -> "Nossa", "Huh" -> "Hã", "Ugh" -> "Argh".
+    - Interjeições inglesas comuns: "Phew" -> "Ufa", "Geez" -> "Nossa", "Huh" -> "Hã", "Whoa" -> "Uau", "Ugh" -> "Argh".
+    - Termo genérico de mecânica: "skill" -> "habilidade".
     - Opcionalmente, fala inteira entre aspas vira travessão (sem mexer em narração mista).
     - Corrige typo comum: "poderam" -> "puderam".
     - Junta linhas de atribuição em travessão quebradas pelo refine.
@@ -208,6 +235,8 @@ def apply_custom_normalizers(text: str, *, convert_quote_dialogues: bool = True)
     """
     if not text:
         return text
+
+    text = translate_embedded_english_connectors(text)
 
     # Canoniza Touka
     touka_pattern = re.compile(
@@ -218,7 +247,10 @@ def apply_custom_normalizers(text: str, *, convert_quote_dialogues: bool = True)
     text = re.sub(r"\bphew\b", "Ufa", text, flags=re.IGNORECASE)
     text = re.sub(r"\bgeez\b", "Nossa", text, flags=re.IGNORECASE)
     text = re.sub(r"\bhuh\b", "Hã", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bwhoa\b", "Uau", text, flags=re.IGNORECASE)
     text = re.sub(r"\bugh\b", "Argh", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bskills\b", "habilidades", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bskill\b", "habilidade", text, flags=re.IGNORECASE)
 
     lines = text.splitlines()
     normalized_lines: list[str] = []

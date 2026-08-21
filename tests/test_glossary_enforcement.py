@@ -72,3 +72,21 @@ def test_enforce_explicit_target_replacement_for_selected_term():
 
     assert normalized == "Usei Paralisar."
     assert replacements == {"Paralizar": 1}
+
+
+def test_enforce_leaves_contextual_alias_for_llm_repair():
+    terms = [
+        {
+            "key": "Eucharists",
+            "pt": "eucaristias",
+            "enforce": True,
+            "contextual_bad_aliases": ["eucaristos"],
+        }
+    ]
+
+    normalized, replacements = enforce_canonical_terms(
+        "Os eucaristos avançaram.", terms
+    )
+
+    assert normalized == "Os eucaristos avançaram."
+    assert replacements == {}

@@ -27,10 +27,12 @@ def test_targeted_residual_english_fallback_replaces_only_leaked_dialogue(
     """Processamento interno auxiliar."""
     backend = _StubBackend()
     labels: list[str] = []
+    prompts: list[str] = []
 
     def fake_call_with_retry(backend, prompt, cfg, logger, label):
         """Processamento interno auxiliar."""
         labels.append(label)
+        prompts.append(prompt)
         source = _extract_block(prompt)
         if label.startswith("trad-residual-"):
             output = (
@@ -69,3 +71,8 @@ def test_targeted_residual_english_fallback_replaces_only_leaked_dialogue(
     assert "I'm sorry" not in result
     assert "me desculpe" in result
     assert any(label.startswith("trad-residual-") for label in labels)
+    residual_prompt = next(
+        prompt for label, prompt in zip(labels, prompts) if label.startswith("trad-residual-")
+    )
+    assert "TRECHO RESIDUAL EM INGLÊS" in residual_prompt
+    assert "I'm sorry" in residual_prompt

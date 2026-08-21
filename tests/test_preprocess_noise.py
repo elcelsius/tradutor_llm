@@ -482,8 +482,7 @@ def test_preprocess_merges_quote_continuation_and_keeps_ellipsis_line() -> None:
     )
     cleaned = preprocess_text(raw)
     lines = cleaned.splitlines()
-    assert any("believes that from" in ln for ln in lines)
-    assert "“the bottom of his heart.”" in lines[1]
+    assert "believes that from “the bottom of his heart.”" in lines[0]
     assert "\n...\n" in cleaned
 
 
