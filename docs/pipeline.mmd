@@ -1,0 +1,31 @@
+%% Fonte canônica editável do diagrama da pipeline.
+%% Atualize o SVG correspondente quando este fluxo mudar.
+flowchart TD
+    INPUT[/PDF ou Markdown/] --> READ[Leitura / extração]
+    READ --> PRE[Pré-processamento determinístico]
+    PRE --> DESQ[Desquebrar linhas<br/>PDF ou modo ativo]
+    DESQ --> TRANSLATE[Tradução por chunks<br/>contexto deslizante + glossário + perfil]
+    TRANSLATE --> QA{QA por chunk}
+    QA -->|problema objetivo| REPAIR[Repair seletivo]
+    REPAIR -->|revalida| QA
+    QA -->|aprovado| BILINGUAL[Revisão bilíngue conservadora<br/>original EN + PT-BR]
+    BILINGUAL --> FINAL[Revisão final determinística]
+    FINAL --> REFINE{Refine PT-only<br/>opt-in?}
+    REFINE -->|não| OUTPUT[Markdown PT-BR + QA + PDF + timings]
+    REFINE -->|sim| LLM_REFINE[Cleanup + refine literário]
+    LLM_REFINE --> FINAL_REFINED[Revisão final determinística]
+    FINAL_REFINED --> OUTPUT
+
+    classDef input fill:#F3F4F6,stroke:#4B5563,color:#111827,stroke-width:1.5px;
+    classDef deterministic fill:#EAF2FF,stroke:#2563EB,color:#172554,stroke-width:1.5px;
+    classDef llm fill:#EAF7EF,stroke:#16803C,color:#14532D,stroke-width:1.5px;
+    classDef qa fill:#FFF4CC,stroke:#B7791F,color:#713F12,stroke-width:1.5px;
+    classDef optional fill:#F6F7F9,stroke:#6B7280,color:#374151,stroke-width:1.5px;
+    classDef output fill:#E9F7F5,stroke:#0F766E,color:#134E4A,stroke-width:1.5px;
+
+    class INPUT input;
+    class READ,PRE,DESQ,FINAL,FINAL_REFINED deterministic;
+    class TRANSLATE,REPAIR,BILINGUAL,LLM_REFINE llm;
+    class QA qa;
+    class REFINE optional;
+    class OUTPUT output;

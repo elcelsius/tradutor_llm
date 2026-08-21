@@ -66,7 +66,9 @@ python -m tradutor.main pdf --input "saida/meu_livro_pt_refinado.md"
 ```
 
 ## Pipeline v5 (como o código executa)
-Diagrama e regra completa: [docs/PIPELINE.md](docs/PIPELINE.md).
+Diagrama e regra completa: [docs/PIPELINE.md](docs/PIPELINE.md). A fonte editável está em [Mermaid](docs/pipeline.mmd) e a visualização estática em [SVG](docs/pipeline.svg).
+
+[![Diagrama da pipeline](docs/pipeline.svg)](docs/PIPELINE.md)
 
 1) **Extração e pré-processo** (`tradutor/preprocess.py::extract_text_from_pdf`, `preprocess_text`):
    - Normaliza quebras, remove rodapés/ruído e front-matter/TOC se `skip_front_matter` estiver ativo (padrão vindo do config).

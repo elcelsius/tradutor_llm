@@ -1,0 +1,125 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1010" viewBox="0 0 1440 1010" role="img" aria-labelledby="title desc">
+  <title id="title">Fluxo da pipeline do Tradutor de Light Novels</title>
+  <desc id="desc">Diagrama da entrada PDF ou Markdown ate a traducao, QA, revisoes, refine opcional e artefatos finais.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/>
+    </marker>
+    <style>
+      .title { font: 700 28px Arial, sans-serif; fill: #0f172a; }
+      .subtitle { font: 400 15px Arial, sans-serif; fill: #475569; }
+      .legend { font: 600 13px Arial, sans-serif; fill: #334155; }
+      .node-title { font: 700 16px Arial, sans-serif; fill: #0f172a; }
+      .node-copy { font: 400 13px Arial, sans-serif; fill: #334155; }
+      .edge { fill: none; stroke: #475569; stroke-width: 2; marker-end: url(#arrow); }
+      .edge-label { font: 600 12px Arial, sans-serif; fill: #475569; }
+      .node { stroke-width: 1.6; }
+    </style>
+  </defs>
+
+  <rect width="1440" height="1010" fill="#ffffff"/>
+  <text x="60" y="52" class="title">Pipeline de Tradução EN -&gt; PT-BR</text>
+  <text x="60" y="78" class="subtitle">Fluxo padrão para PDF ou Markdown, com controles conservadores de qualidade e auditoria por execução.</text>
+
+  <g transform="translate(60 108)">
+    <rect x="0" y="0" width="18" height="18" rx="3" fill="#EAF2FF" stroke="#2563EB"/>
+    <text x="27" y="14" class="legend">Determinístico</text>
+    <rect x="160" y="0" width="18" height="18" rx="3" fill="#EAF7EF" stroke="#16803C"/>
+    <text x="187" y="14" class="legend">LLM</text>
+    <rect x="260" y="0" width="18" height="18" rx="3" fill="#FFF4CC" stroke="#B7791F"/>
+    <text x="287" y="14" class="legend">QA / decisão</text>
+    <rect x="425" y="0" width="18" height="18" rx="3" fill="#F6F7F9" stroke="#6B7280"/>
+    <text x="452" y="14" class="legend">Opcional</text>
+    <rect x="560" y="0" width="18" height="18" rx="3" fill="#E9F7F5" stroke="#0F766E"/>
+    <text x="587" y="14" class="legend">Saída</text>
+  </g>
+
+  <path class="edge" d="M240 218 H280"/>
+  <path class="edge" d="M450 218 H490"/>
+  <path class="edge" d="M680 218 H720"/>
+  <path class="edge" d="M910 218 H960"/>
+  <path class="edge" d="M1140 274 V330"/>
+  <path class="edge" d="M1000 350 H900 V350 H870"/>
+  <path class="edge" d="M870 390 H920 V390 H1000"/>
+  <path class="edge" d="M1140 406 V470"/>
+  <path class="edge" d="M1140 560 V610"/>
+  <path class="edge" d="M1140 686 V730"/>
+  <path class="edge" d="M1248 779 H1310 V875 H1230"/>
+  <path class="edge" d="M1032 779 H945 V785 H780"/>
+  <path class="edge" d="M615 866 V905"/>
+  <path class="edge" d="M780 942 H930"/>
+
+  <text x="878" y="345" class="edge-label">problema objetivo</text>
+  <text x="900" y="407" class="edge-label">revalida</text>
+  <text x="1260" y="766" class="edge-label">não</text>
+  <text x="905" y="766" class="edge-label">sim</text>
+
+  <g>
+    <rect class="node" x="60" y="180" width="180" height="76" rx="8" fill="#F3F4F6" stroke="#4B5563"/>
+    <text x="150" y="211" text-anchor="middle" class="node-title">Entrada</text>
+    <text x="150" y="235" text-anchor="middle" class="node-copy">PDF ou Markdown</text>
+  </g>
+  <g>
+    <rect class="node" x="280" y="180" width="170" height="76" rx="8" fill="#EAF2FF" stroke="#2563EB"/>
+    <text x="365" y="211" text-anchor="middle" class="node-title">Leitura / extração</text>
+    <text x="365" y="235" text-anchor="middle" class="node-copy">texto bruto</text>
+  </g>
+  <g>
+    <rect class="node" x="490" y="180" width="190" height="76" rx="8" fill="#EAF2FF" stroke="#2563EB"/>
+    <text x="585" y="211" text-anchor="middle" class="node-title">Pré-processamento</text>
+    <text x="585" y="235" text-anchor="middle" class="node-copy">ruído, TOC e estrutura</text>
+  </g>
+  <g>
+    <rect class="node" x="720" y="180" width="190" height="76" rx="8" fill="#EAF2FF" stroke="#2563EB"/>
+    <text x="815" y="211" text-anchor="middle" class="node-title">Desquebrar linhas</text>
+    <text x="815" y="235" text-anchor="middle" class="node-copy">PDF ou modo ativo</text>
+  </g>
+  <g>
+    <rect class="node" x="960" y="158" width="360" height="116" rx="8" fill="#EAF7EF" stroke="#16803C"/>
+    <text x="1140" y="195" text-anchor="middle" class="node-title">Tradução por chunks</text>
+    <text x="1140" y="222" text-anchor="middle" class="node-copy">contexto deslizante + glossário</text>
+    <text x="1140" y="244" text-anchor="middle" class="node-copy">perfil de diálogo ou narração</text>
+  </g>
+
+  <g>
+    <rect class="node" x="1000" y="330" width="280" height="76" rx="8" fill="#FFF4CC" stroke="#B7791F"/>
+    <text x="1140" y="361" text-anchor="middle" class="node-title">QA da tradução</text>
+    <text x="1140" y="385" text-anchor="middle" class="node-copy">checagem objetiva por chunk</text>
+  </g>
+  <g>
+    <rect class="node" x="600" y="330" width="270" height="76" rx="8" fill="#EAF7EF" stroke="#16803C"/>
+    <text x="735" y="361" text-anchor="middle" class="node-title">Repair seletivo</text>
+    <text x="735" y="385" text-anchor="middle" class="node-copy">só quando o QA detecta falha</text>
+  </g>
+  <g>
+    <rect class="node" x="920" y="470" width="440" height="90" rx="8" fill="#EAF7EF" stroke="#16803C"/>
+    <text x="1140" y="505" text-anchor="middle" class="node-title">Revisão bilíngue conservadora</text>
+    <text x="1140" y="531" text-anchor="middle" class="node-copy">original EN + PT-BR / substituições pontuais validadas</text>
+  </g>
+  <g>
+    <rect class="node" x="920" y="610" width="440" height="76" rx="8" fill="#EAF2FF" stroke="#2563EB"/>
+    <text x="1140" y="641" text-anchor="middle" class="node-title">Revisão final determinística</text>
+    <text x="1140" y="665" text-anchor="middle" class="node-copy">aspas, headings, aliases seguros e QA final</text>
+  </g>
+
+  <g>
+    <path d="M1140 730 L1248 779 L1140 828 L1032 779 Z" fill="#F6F7F9" stroke="#6B7280" stroke-width="1.6"/>
+    <text x="1140" y="774" text-anchor="middle" class="node-title">Refine PT-only?</text>
+    <text x="1140" y="796" text-anchor="middle" class="node-copy">opt-in</text>
+  </g>
+  <g>
+    <rect class="node" x="450" y="785" width="330" height="81" rx="8" fill="#EAF7EF" stroke="#16803C"/>
+    <text x="615" y="818" text-anchor="middle" class="node-title">Cleanup + refine literário</text>
+    <text x="615" y="843" text-anchor="middle" class="node-copy">fluidez PT-BR sem retradução</text>
+  </g>
+  <g>
+    <rect class="node" x="450" y="905" width="330" height="74" rx="8" fill="#EAF2FF" stroke="#2563EB"/>
+    <text x="615" y="935" text-anchor="middle" class="node-title">Revisão final determinística</text>
+    <text x="615" y="959" text-anchor="middle" class="node-copy">proteção pós-refine</text>
+  </g>
+  <g>
+    <rect class="node" x="930" y="875" width="400" height="82" rx="8" fill="#E9F7F5" stroke="#0F766E"/>
+    <text x="1130" y="908" text-anchor="middle" class="node-title">Artefatos finais</text>
+    <text x="1130" y="933" text-anchor="middle" class="node-copy">Markdown PT-BR / relatórios QA / PDF / timings</text>
+  </g>
+</svg>

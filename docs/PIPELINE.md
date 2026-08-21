@@ -4,25 +4,9 @@ Este documento descreve a regra atual do pipeline EN -> PT-BR. A lógica é gen�
 
 ## Diagrama
 
-```mermaid
-flowchart TD
-    A[PDF ou Markdown] --> B[Extração / leitura]
-    B --> C[Preprocess determinístico]
-    C --> D[Desquebrar linhas]
-    D --> D1[Reparo conservador de aspas da fonte]
-    D1 --> E1[Contexto deslizante + perfil diálogo/narração]
-    E1 --> E[Tradução por chunk com glossário]
-    E --> F[QA da tradução]
-    F -->|problema objetivo| G[Repair seletivo]
-    G --> F
-    F -->|aprovado| H[Revisão bilíngue conservadora]
-    H --> I[Revisão determinística final automática]
-    I --> J{Refine PT-only opt-in?}
-    J -->|não| L[QA final / relatórios / PDF]
-    J -->|sim| K[Cleanup pré-refine + refine]
-    K --> M[Revisão determinística final]
-    M --> L
-```
+[![Diagrama da pipeline](pipeline.svg)](pipeline.svg)
+
+Fonte editável: [Mermaid](pipeline.mmd). O SVG é uma visualização estática do mesmo fluxo, para leitura em qualquer visualizador de Markdown ou PDF; atualize os dois arquivos quando a ordem das etapas mudar.
 
 ## Regra Por Etapa
 
